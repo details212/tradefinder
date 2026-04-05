@@ -76,6 +76,10 @@ jobs:
       - name: Build renderer (Vite)
         run: npx vite build
 
+      - name: Ensure icon is 512x512 (macOS requirement)
+        run: sips -z 512 512 assets/logo.png
+        working-directory: electron-client
+
       - name: Package — macOS DMG
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
