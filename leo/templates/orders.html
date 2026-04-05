@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open Orders — LEO</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+<style>
+:root {
+    --bg:      #0d1117; --surface: #161b22; --surface2: #21262d;
+    --border:  #30363d; --text:    #e6edf3; --muted:    #8b949e;
+    --blue:    #58a6ff; --green:   #3fb950; --red:      #f85149;
+    --yellow:  #d29922; --purple:  #bc8cff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; font-size: 13px; }
+
+/* ── Topbar ── */
+.topbar { display:flex; align-items:center; gap:.75rem; padding:.5rem 1rem; background:var(--surface); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; }
+.topbar-brand { font-weight:800; font-size:15px; color:var(--text); text-decoration:none; white-space:nowrap; }
+.topbar-brand span { color:var(--blue); }
+.topbar-nav { display:flex; align-items:center; gap:.35rem; margin-left:auto; }
+.btn-nav { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.25rem .6rem; font-size:11px; font-weight:600; cursor:pointer; text-decoration:none; transition:border-color .15s,color .15s; }
+.btn-nav:hover { border-color:var(--blue); color:var(--blue); }
+.btn-nav.active { border-color:var(--blue); color:var(--blue); }
+
+/* ── Layout ── */
+.page { max-width: 1400px; margin: 0 auto; padding: 1.25rem 1rem; }
+.page-header { display:flex; align-items:center; gap:1rem; margin-bottom:1.25rem; flex-wrap:wrap; }
+.page-title { font-size:18px; font-weight:700; }
+.filter-tabs { display:flex; gap:.35rem; }
+.filter-tab { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.2rem .65rem; font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; }
+.filter-tab.active { border-color:var(--blue); color:var(--blue); background:rgba(88,166,255,.08); }
+.actions { display:flex; gap:.5rem; margin-left:auto; }
+.btn-action { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.3rem .75rem; font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; }
+.btn-action:hover { border-color:var(--blue); color:var(--blue); }
+.btn-action.green { border-color:var(--green); color:var(--green); background:rgba(63,185,80,.08); }
+.btn-action.green:hover { background:rgba(63,185,80,.18); }
+.result-info { font-size:11px; color:var(--muted); }
+
+/* ── Table ── */
+.tbl-wrap { overflow-x:auto; border-radius:8px; border:1px solid var(--border); }
+table { width:100%; border-collapse:collapse; }
+th { background:var(--surface); color:var(--muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.4px; padding:.55rem .65rem; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; }
+th:hover { color:var(--blue); }
+th.sorted-asc::after  { content:' ▲'; color:var(--blue); }
+th.sorted-desc::after { content:' ▼'; color:var(--blue); }
+td { padding:.5rem .65rem; border-bottom:1px solid rgba(48,54,61,.6); vertical-align:middle; white-space:nowrap; }
+tr:last-child td { border-bottom:none; }
+tr:hover td { background:rgba(88,166,255,.04); }
+
+.td-sym a { color:var(--blue); font-weight:700; text-decoration:none; }
+.td-sym a:hover { text-decoration:underline; }
+.pos { color:var(--green); }
+.neg { color:var(--red); }
+.neu { color:var(--muted); }
+.badge { font-size:9px; font-weight:700; padding:1px 5px; border-radius:3px; letter-spacing:.3px; }
+.badge-paper { background:rgba(188,140,255,.15); color:var(--purple); }
+.badge-live  { background:rgba(63,185,80,.15);  color:var(--green); }
+.badge-open  { background:rgba(88,166,255,.15); color:var(--blue); }
+.badge-filled { background:rgba(63,185,80,.15); color:var(--green); }
+.badge-closed { background:rgba(139,148,158,.15); color:var(--muted); }
+.badge-canceled { background:rgba(248,81,73,.15); color:var(--red); }
+
+/* P&L coloring */
+.pnl-pos { color:var(--green); font-weight:700; }
+.pnl-neg { color:var(--red);   font-weight:700; }
+
+/* ── Closed stats bar ── */
+.stats-bar { display:none; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.6rem; margin-bottom:1rem; }
+.stats-bar.show { display:grid; }
+.stat-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:.7rem .9rem; }
+.stat-lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:.3rem; }
+.stat-val { font-size:18px; font-weight:700; line-height:1.2; }
+.stat-sub { font-size:10px; color:var(--muted); margin-top:.2rem; }
+.accuracy-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+
+/* ── Close modal ── */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:200; align-items:center; justify-content:center; }
+.modal-overlay.show { display:flex; }
+.modal { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.25rem; width:320px; }
+.modal-title { font-size:14px; font-weight:700; margin-bottom:1rem; }
+.modal-row { margin-bottom:.7rem; }
+.modal-row label { display:block; font-size:11px; color:var(--muted); margin-bottom:.25rem; }
+.modal-input { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:.35rem .5rem; font-size:12px; }
+.modal-input:focus { outline:none; border-color:var(--blue); }
+.modal-btns { display:flex; gap:.5rem; margin-top:1rem; }
+.modal-btn { flex:1; padding:.4rem; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid; }
+.modal-btn.confirm { background:rgba(63,185,80,.12); border-color:var(--green); color:var(--green); }
+.modal-btn.cancel  { background:var(--surface2);      border-color:var(--border); color:var(--muted); }
+.modal-btn:hover { opacity:.85; }
+
+.empty-state { text-align:center; padding:3rem 1rem; color:var(--muted); }
+.sync-status { font-size:11px; color:var(--muted); padding:.4rem 0; }
+
+/* ── Trade Monitor ── */
+.tm-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:.75rem 1rem; margin-bottom:.5rem; }
+.tm-header { display:flex; align-items:center; gap:.75rem; margin-bottom:.55rem; }
+.tm-sym { font-size:14px; font-weight:700; color:var(--text); }
+.tm-meta { font-size:11px; color:var(--muted); flex:1; }
+.tm-rr  { font-size:11px; font-weight:700; }
+.tm-bar-wrap { position:relative; height:28px; border-radius:4px; overflow:visible; }
+.tm-bar-bg { position:absolute; top:50%; left:0; right:0; height:8px; transform:translateY(-50%); border-radius:4px; background:linear-gradient(to right, #c0392b, #e67e22, #27ae60); }
+.tm-bar-fill { position:absolute; top:50%; left:0; height:8px; transform:translateY(-50%); border-radius:4px; opacity:.35; }
+.tm-marker { position:absolute; top:50%; transform:translate(-50%,-50%); width:12px; height:12px; border-radius:50%; border:2px solid var(--bg); z-index:2; }
+.tm-label { position:absolute; top:100%; margin-top:3px; transform:translateX(-50%); font-size:9px; font-weight:600; white-space:nowrap; }
+.tm-edge-label { position:absolute; top:50%; transform:translateY(-50%); font-size:9px; color:var(--muted); white-space:nowrap; }
+.tm-unrlzd { font-size:11px; font-weight:700; }
+@keyframes tm-shimmer { 0%{transform:translateX(-100%)} 100%{transform:translateX(250%)} }
+@keyframes tm-pulse { 0%,100%{opacity:1;box-shadow:0 0 4px currentColor} 50%{opacity:.45;box-shadow:0 0 10px currentColor} }
+
+/* ── Pagination ── */
+.pager { display:flex; align-items:center; justify-content:center; gap:.35rem; padding:.75rem 0; }
+.pager-btn { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.2rem .55rem; font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; min-width:28px; text-align:center; }
+.pager-btn:hover:not(:disabled) { border-color:var(--blue); color:var(--blue); }
+.pager-btn.active { border-color:var(--blue); color:var(--blue); background:rgba(88,166,255,.08); }
+.pager-btn:disabled { opacity:.35; cursor:default; }
+.pager-info { font-size:11px; color:var(--muted); padding:0 .35rem; }
+
+/* ── Order detail ── */
+.od-section { margin-bottom:.9rem; }
+.od-section-title { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:.45rem; }
+.od-grid { display:grid; grid-template-columns:1fr 1fr; gap:.3rem .75rem; }
+.od-row { display:flex; flex-direction:column; }
+.od-lbl { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; margin-bottom:1px; }
+.od-val { font-size:12px; font-weight:600; }
+.od-leg { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:.6rem .75rem; margin-bottom:.45rem; }
+.od-leg-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:.45rem; }
+.od-leg-title { font-size:11px; font-weight:700; }
+.status-dot { width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:4px; }
+.leg-tp  { border-left:3px solid var(--green); }
+.leg-sl  { border-left:3px solid var(--red); }
+.leg-entry { border-left:3px solid var(--blue); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+    <a href="/" class="topbar-brand"><span>LEO</span> / Orders</a>
+    <nav class="topbar-nav">
+        <a href="/scanner" class="btn-nav">Scanner</a>
+        <a href="/developing_scanner" class="btn-nav">Developing</a>
+        <a href="/symbol_history" class="btn-nav">Symbol History</a>
+        <span class="btn-nav active" style="cursor:default;">Orders</span>
+        <a href="/watchlist" class="btn-nav">⭐ Watchlist</a>
+        <a href="/active_symbols" class="btn-nav">📋 Active Symbols</a>
+    </nav>
+</header>
+
+<div class="page">
+    <div class="page-header">
+        <div class="page-title">Orders</div>
+        <div class="filter-tabs">
+            <button class="filter-tab active" data-filter="open"   onclick="setFilter('open',   this)">Open</button>
+            <button class="filter-tab"        data-filter="closed" onclick="setFilter('closed', this)">Closed</button>
+            <button class="filter-tab"        data-filter="all"    onclick="setFilter('all',    this)">All</button>
+        </div>
+        <div class="actions">
+            <div class="sync-status" id="sync-status"></div>
+            <button class="btn-action" onclick="reconcileClosed()" title="Re-fetch actual fill prices for all closed trades from Alpaca">⇄ Reconcile Closed</button>
+            <button class="btn-action green" onclick="syncAlpaca()">⟳ Sync Alpaca</button>
+        </div>
+    </div>
+
+    <!-- Closed trades summary stats (shown only on Closed / All tabs) -->
+    <div class="stats-bar" id="stats-bar"></div>
+
+    <div class="result-info" id="result-info" style="margin-bottom:.75rem;"></div>
+    <div class="tbl-wrap" id="tbl-wrap">
+        <table id="orders-table">
+            <thead>
+                <tr>
+                    <th onclick="clientSort('symbol')">Symbol</th>
+                    <th onclick="clientSort('submitted_at')">Submitted</th>
+                    <th onclick="clientSort('order_status')">Status</th>
+                    <th onclick="clientSort('qty')">Qty</th>
+                    <th onclick="clientSort('entry_price')">Entry</th>
+                    <th onclick="clientSort('stop_price')">Stop</th>
+                    <th onclick="clientSort('target_price')">Target</th>
+                    <th onclick="clientSort('stop_pct')">Risk %</th>
+                    <th onclick="clientSort('_reward_pct')">Reward %</th>
+                    <th onclick="clientSort('rr_ratio')">R:R</th>
+                    <th onclick="clientSort('exit_price')">Exit</th>
+                    <th onclick="clientSort('_pnl')">P&amp;L</th>
+                    <th>Env</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="orders-tbody">
+                <tr><td colspan="14"><div class="empty-state">Loading…</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="pager" id="pager" style="display:none;"></div>
+
+    <!-- Trade Monitor (open trades only) -->
+    <div id="trade-monitor" style="display:none; margin-top:1.5rem;">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.6rem;">
+            Trade Monitor
+            <span id="monitor-refresh-btn" onclick="refreshMonitor()" style="margin-left:.6rem;cursor:pointer;color:var(--blue);font-size:10px;font-weight:600;letter-spacing:0;">⟳ Refresh</span>
+        </div>
+        <div id="monitor-cards"></div>
+    </div>
+</div>
+
+<!-- Alpaca order detail modal -->
+<div class="modal-overlay" id="detail-modal">
+    <div class="modal" style="width:480px;max-width:95vw;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem;">
+            <div class="modal-title" id="detail-modal-title" style="margin:0;">Bracket Order</div>
+            <button onclick="hideDetailModal()" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;">✕</button>
+        </div>
+        <div id="detail-modal-body">Loading…</div>
+    </div>
+</div>
+
+<!-- Close trade modal -->
+<div class="modal-overlay" id="close-modal">
+    <div class="modal">
+        <div class="modal-title">Mark Trade Closed</div>
+        <input type="hidden" id="close-trade-id">
+        <div class="modal-row">
+            <label>Exit Price</label>
+            <input type="number" id="close-exit-price" class="modal-input" step="0.01" placeholder="e.g. 155.00">
+        </div>
+        <div class="modal-row">
+            <label>Notes (optional)</label>
+            <input type="text" id="close-notes" class="modal-input" placeholder="e.g. hit take profit">
+        </div>
+        <div class="modal-btns">
+            <button class="modal-btn confirm" onclick="confirmClose()">✓ Confirm</button>
+            <button class="modal-btn cancel"  onclick="hideCloseModal()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+var _allRows  = [];
+var _filter   = 'open';
+var _sortKey  = 'submitted_at';
+var _sortDir  = 'desc';
+var _page     = 0;
+var PAGE_SIZE = 25;
+
+function p$(id) { return document.getElementById(id); }
+
+function price(v)  { return v != null ? '$' + parseFloat(v).toFixed(2) : '—'; }
+function pct(v)    { return v != null ? parseFloat(v).toFixed(1) + '%'  : '—'; }
+function fmtDate(s) {
+    if (!s) return '—';
+    var d = new Date(s);
+    return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'2-digit'}) +
+           ' ' + d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:false});
+}
+
+function cleanStatus(s) {
+    if (!s) return '';
+    // Strip enum prefix e.g. "orderstatus.filled" → "filled"
+    return s.toLowerCase().replace(/^.*\./, '');
+}
+function statusBadge(s) {
+    var c = cleanStatus(s);
+    var cls = c === 'filled'   ? 'badge-filled'
+            : c === 'closed'   ? 'badge-closed'
+            : c === 'canceled' || c === 'expired' ? 'badge-canceled'
+            : 'badge-open';
+    return '<span class="badge ' + cls + '">' + c.toUpperCase() + '</span>';
+}
+
+function pnlCell(row) {
+    var isClosed = row.closed_at != null;
+
+    // ── Open trade: use Alpaca's exact unrealized P&L if available ──
+    if (!isClosed) {
+        if (row.alpaca_unrlzd_pl != null) {
+            var pl    = parseFloat(row.alpaca_unrlzd_pl);
+            var plPct = row.alpaca_unrlzd_plpc != null ? parseFloat(row.alpaca_unrlzd_plpc) * 100 : null;
+            var cls   = pl >= 0 ? 'pnl-pos' : 'pnl-neg';
+            var sign  = pl >= 0 ? '+' : '';
+            row._pnl  = pl;
+            var pctStr = plPct != null ? ' (' + sign + plPct.toFixed(2) + '%)' : '';
+            return '<td><span class="' + cls + '">' + sign + '$' + Math.abs(pl).toFixed(2) + pctStr +
+                   ' <span style="font-size:9px;font-weight:600;color:var(--muted);opacity:.7;">unrlzd</span></span></td>';
+        }
+        row._pnl = null;
+        return '<td class="neu">—</td>';
+    }
+
+    // ── Closed trade: use actual fill prices for exact match ──
+    var entryPrice = row.filled_avg_price != null ? parseFloat(row.filled_avg_price) : parseFloat(row.entry_price);
+    var exitPrice  = row.exit_price       != null ? parseFloat(row.exit_price)        : null;
+    var qty        = row.filled_qty       != null ? parseFloat(row.filled_qty)        : parseFloat(row.qty);
+    if (exitPrice == null) { row._pnl = null; return '<td class="neu">—</td>'; }
+    var pnl    = (exitPrice - entryPrice) * qty;
+    var pnlPct = (exitPrice - entryPrice) / entryPrice * 100;
+    var cls    = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    var sign   = pnl >= 0 ? '+' : '';
+    row._pnl   = pnl;
+    return '<td><span class="' + cls + '">' + sign + '$' + Math.abs(pnl).toFixed(2) +
+           ' (' + sign + pnlPct.toFixed(1) + '%)</span></td>';
+}
+
+function renderTable(rows) {
+    renderStatsBar(_allRows);
+    var tbody = p$('orders-tbody');
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="14"><div class="empty-state">No orders found</div></td></tr>';
+        p$('result-info').textContent = '0 orders';
+        return;
+    }
+
+    // Sort
+    rows.sort(function(a, b) {
+        var av = a[_sortKey], bv = b[_sortKey];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === 'string') av = av.toLowerCase();
+        if (typeof bv === 'string') bv = bv.toLowerCase();
+        if (av < bv) return _sortDir === 'asc' ? -1 :  1;
+        if (av > bv) return _sortDir === 'asc' ?  1 : -1;
+        return 0;
+    });
+
+    // Update sort indicators on headers
+    document.querySelectorAll('#orders-table th').forEach(function(th) {
+        th.classList.remove('sorted-asc', 'sorted-desc');
+    });
+    document.querySelectorAll('#orders-table th').forEach(function(th) {
+        var key = th.getAttribute('onclick');
+        if (key && key.includes("'" + _sortKey + "'")) {
+            th.classList.add(_sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+        }
+    });
+
+    // Pre-compute derived fields
+    rows.forEach(function(r) {
+        r._reward_pct = (r.stop_pct != null && r.rr_ratio != null)
+            ? parseFloat(r.stop_pct) * parseFloat(r.rr_ratio)
+            : null;
+    });
+
+    // Pagination (closed filter only)
+    var usePaging = (_filter === 'closed');
+    var totalPages = usePaging ? Math.max(1, Math.ceil(rows.length / PAGE_SIZE)) : 1;
+    if (_page >= totalPages) _page = totalPages - 1;
+    var pageRows = usePaging ? rows.slice(_page * PAGE_SIZE, (_page + 1) * PAGE_SIZE) : rows;
+
+    var html = '';
+    pageRows.forEach(function(r) {
+        var isClosed = r.closed_at != null;
+        html += '<tr>' +
+            '<td class="td-sym"><a href="/?ticker=' + r.symbol + '" target="_blank" rel="noopener">' + r.symbol + '</a></td>' +
+            '<td>' + fmtDate(r.submitted_at) + '</td>' +
+            '<td>' + statusBadge(r.order_status) + '</td>' +
+            '<td>' + parseFloat(r.qty) + '</td>' +
+            '<td>' + price(r.entry_price) + '</td>' +
+            '<td class="neg">' + price(r.stop_price) + '</td>' +
+            '<td class="pos">' + price(r.target_price) + '</td>' +
+            '<td class="neg">' + pct(r.stop_pct) + '</td>' +
+            '<td class="pos">' + (r._reward_pct != null ? r._reward_pct.toFixed(1) + '%' : '—') + '</td>' +
+            '<td><span style="color:var(--blue);">1 : ' + (r.rr_ratio != null ? parseFloat(r.rr_ratio).toFixed(1) : '—') + '</span></td>' +
+            '<td>' + price(r.exit_price) + '</td>' +
+            pnlCell(r) +
+            '<td><span class="badge ' + (r.is_paper ? 'badge-paper' : 'badge-live') + '">' + (r.is_paper ? 'PAPER' : 'LIVE') + '</span></td>' +
+            '<td style="display:flex;gap:4px;align-items:center;">' +
+                '<button style="background:rgba(88,166,255,.1);border:1px solid var(--blue);color:var(--blue);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;cursor:pointer;" onclick="showOrderDetail(\'' + r.order_id + '\', \'' + r.symbol + '\')">Detail</button>' +
+                (!isClosed ? '<button style="background:rgba(248,81,73,.1);border:1px solid var(--red);color:var(--red);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;cursor:pointer;" onclick="showCloseModal(' + r.id + ', ' + r.entry_price + ')">Close</button>' : '') +
+            '</td>' +
+        '</tr>';
+    });
+    tbody.innerHTML = html;
+
+    var infoTxt = rows.length + ' order' + (rows.length !== 1 ? 's' : '');
+    if (usePaging && totalPages > 1) infoTxt += ' — page ' + (_page + 1) + ' of ' + totalPages;
+    p$('result-info').textContent = infoTxt;
+
+    renderPager(totalPages, usePaging);
+}
+
+function renderPager(totalPages, show) {
+    var el = p$('pager');
+    if (!show || totalPages <= 1) { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+
+    var MAX_VISIBLE = 7;
+    var html = '';
+
+    // Prev button
+    html += '<button class="pager-btn" ' + (_page === 0 ? 'disabled' : 'onclick="goPage(' + (_page - 1) + ')"') + '>‹</button>';
+
+    // Page number buttons with ellipsis
+    var pages = [];
+    if (totalPages <= MAX_VISIBLE) {
+        for (var i = 0; i < totalPages; i++) pages.push(i);
+    } else {
+        pages.push(0);
+        var start = Math.max(1, _page - 2);
+        var end   = Math.min(totalPages - 2, _page + 2);
+        if (start > 1) pages.push('…');
+        for (var i = start; i <= end; i++) pages.push(i);
+        if (end < totalPages - 2) pages.push('…');
+        pages.push(totalPages - 1);
+    }
+
+    pages.forEach(function(p) {
+        if (p === '…') {
+            html += '<span class="pager-info">…</span>';
+        } else {
+            html += '<button class="pager-btn' + (p === _page ? ' active' : '') + '" onclick="goPage(' + p + ')">' + (p + 1) + '</button>';
+        }
+    });
+
+    // Next button
+    html += '<button class="pager-btn" ' + (_page >= totalPages - 1 ? 'disabled' : 'onclick="goPage(' + (_page + 1) + ')"') + '>›</button>';
+
+    el.innerHTML = html;
+}
+
+function goPage(n) {
+    _page = n;
+    renderTable(_allRows);
+    // Scroll table into view
+    var wrap = p$('tbl-wrap');
+    if (wrap) wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderStatsBar(allRows) {
+    var bar = p$('stats-bar');
+    var closed = allRows.filter(function(r) { return r.closed_at != null; });
+    if (!closed.length || _filter === 'open') { bar.classList.remove('show'); return; }
+
+    // P&L figures — use same logic as pnlCell
+    var plValues = [];
+    closed.forEach(function(r) {
+        var entry = r.filled_avg_price != null ? parseFloat(r.filled_avg_price) : parseFloat(r.entry_price);
+        var exit  = r.exit_price != null ? parseFloat(r.exit_price) : null;
+        var qty   = r.filled_qty  != null ? parseFloat(r.filled_qty)  : parseFloat(r.qty);
+        if (exit != null && entry > 0) plValues.push((exit - entry) * qty);
+    });
+
+    var totalPL   = plValues.reduce(function(s, v) { return s + v; }, 0);
+    var winners   = plValues.filter(function(v) { return v > 0; });
+    var losers    = plValues.filter(function(v) { return v < 0; });
+    var winRate   = plValues.length ? (winners.length / plValues.length * 100) : null;
+    var avgWin    = winners.length ? winners.reduce(function(s,v){return s+v;},0) / winners.length : null;
+    var avgLoss   = losers.length  ? losers.reduce(function(s,v){return s+v;},0)  / losers.length  : null;
+    var profitFactor = losers.length && avgLoss !== 0
+        ? Math.abs(winners.reduce(function(s,v){return s+v;},0) / losers.reduce(function(s,v){return s+v;},0))
+        : null;
+    var expectancy = (winRate != null && avgWin != null && avgLoss != null)
+        ? (winRate/100 * avgWin) + ((1 - winRate/100) * avgLoss)
+        : null;
+
+    // Accuracy flags
+    var reconciled   = closed.filter(function(r) { return r.filled_avg_price != null && r.exit_price != null; }).length;
+    var unreconciled = closed.length - reconciled;
+    var accuracyColor = unreconciled === 0 ? 'var(--green)' : unreconciled <= 2 ? 'var(--yellow)' : 'var(--red)';
+    var accuracyLabel = unreconciled === 0 ? 'Fully reconciled' : unreconciled + ' trade' + (unreconciled>1?'s':'') + ' not reconciled';
+
+    function fmt$(v)  { if (v == null) return '—'; var s = v>=0?'+$':'-$'; return s + Math.abs(v).toFixed(2); }
+    function fmtPct(v){ return v == null ? '—' : v.toFixed(1) + '%'; }
+    function fmtX(v)  { return v == null ? '—' : v.toFixed(2) + 'x'; }
+    function colorPL(v) { return v == null ? '' : v >= 0 ? 'color:var(--green)' : 'color:var(--red)'; }
+
+    bar.innerHTML =
+        statCard('Realized P&L',   '<span style="' + colorPL(totalPL) + '">' + fmt$(totalPL) + '</span>', plValues.length + ' closed trade' + (plValues.length!==1?'s':'')) +
+        statCard('Win Rate',        '<span style="color:' + (winRate!=null&&winRate>=50?'var(--green)':'var(--red)') + '">' + fmtPct(winRate) + '</span>', winners.length + 'W / ' + losers.length + 'L') +
+        statCard('Avg Win',         '<span style="color:var(--green)">' + fmt$(avgWin)  + '</span>', winners.length + ' winning trade' + (winners.length!==1?'s':'')) +
+        statCard('Avg Loss',        '<span style="color:var(--red)">'   + fmt$(avgLoss) + '</span>', losers.length  + ' losing trade'  + (losers.length !==1?'s':'')) +
+        statCard('Profit Factor',   '<span style="' + colorPL(profitFactor!=null?profitFactor-1:null) + '">' + fmtX(profitFactor) + '</span>', 'gross win / gross loss') +
+        statCard('Expectancy',      '<span style="' + colorPL(expectancy) + '">' + fmt$(expectancy) + '</span>', 'avg $ per trade') +
+        statCard('P&L Accuracy',
+            '<span><span class="accuracy-dot" style="background:' + accuracyColor + ';"></span>' +
+            '<span style="color:' + accuracyColor + ';font-size:14px;">' + reconciled + ' / ' + closed.length + '</span></span>',
+            accuracyLabel);
+
+    bar.classList.add('show');
+}
+
+function statCard(label, valHtml, sub) {
+    return '<div class="stat-card"><div class="stat-lbl">' + label + '</div>' +
+           '<div class="stat-val">' + valHtml + '</div>' +
+           '<div class="stat-sub">' + (sub || '') + '</div></div>';
+}
+
+function applyFilter(rows) {
+    if (_filter === 'open')   return rows.filter(function(r) { return r.closed_at == null; });
+    if (_filter === 'closed') return rows.filter(function(r) { return r.closed_at != null; });
+    return rows;
+}
+
+function setFilter(f, btn) {
+    _filter = f;
+    _page   = 0;
+    document.querySelectorAll('.filter-tab').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    renderTable(applyFilter(_allRows));
+}
+
+function clientSort(key) {
+    if (_sortKey === key) {
+        _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        _sortKey = key;
+        _sortDir = key === 'submitted_at' ? 'desc' : 'asc';
+    }
+    _page = 0;
+    renderTable(applyFilter(_allRows));
+}
+
+function loadOrders() {
+    fetch('/api/orders')
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            _allRows = rows;
+            renderTable(applyFilter(_allRows));
+            renderMonitor(_allRows);   // build monitor after data loads
+        })
+        .catch(function(e) {
+            p$('orders-tbody').innerHTML = '<tr><td colspan="14"><div class="empty-state">Error loading orders: ' + e.message + '</div></td></tr>';
+        });
+}
+
+// ── Trade Monitor ─────────────────────────────────────────────────────────────
+var _monitorPrices = {};   // symbol -> current price
+
+function renderMonitor(allRows) {
+    var open  = allRows.filter(function(r) { return r.closed_at == null; });
+    var mon   = p$('trade-monitor');
+    if (!open.length) { mon.style.display = 'none'; return; }
+    mon.style.display = 'block';
+
+    p$('monitor-cards').innerHTML =
+        '<div style="font-size:11px;color:var(--muted);padding:.5rem 0;">Fetching live prices…</div>';
+
+    fetchMonitorPrices(open);
+}
+
+function _monitorBarHTML(r, cur, plDollar, plPct) {
+    var entry  = parseFloat(r.filled_avg_price || r.entry_price);
+    var stop   = parseFloat(r.stop_price);
+    var target = parseFloat(r.target_price);
+
+    // Always anchor left=stop, right=target; current price is clamped inside
+    var lo    = stop;
+    var hi    = target;
+    var range = hi - lo || 1;
+    function bpct(v) { return Math.min(100, Math.max(0, (v - lo) / range * 100)); }
+
+    var stopBarPct  = bpct(stop);
+    var entryBarPct = bpct(entry);
+    var tgtBarPct   = bpct(target);
+    var curPct      = bpct(cur);
+
+    var plColor = plDollar == null ? 'var(--muted)' : plDollar >= 0 ? 'var(--green)' : 'var(--red)';
+    var plStr   = plDollar == null ? '—' :
+        (plDollar >= 0 ? '+$' : '-$') + Math.abs(plDollar).toFixed(2) +
+        (plPct != null ? ' (' + (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '%)' : '');
+
+    return {
+        plColor: plColor,
+        plStr:   plStr,
+        curStr:  '$' + cur.toFixed(2),
+        barHTML:
+          // Full-width gradient bar (stop=0% → target=100%)
+          '<div style="position:absolute;top:50%;left:0;right:0;height:8px;transform:translateY(-50%);border-radius:4px;' +
+            'background:linear-gradient(to right,var(--red),var(--yellow) 40%,var(--green));"></div>' +
+          // Stop Loss marker + label flush-left
+          '<div class="tm-marker" style="left:0%;background:var(--red);top:50%;"></div>' +
+          '<div style="position:absolute;top:100%;margin-top:3px;left:0;font-size:9px;font-weight:600;white-space:nowrap;color:var(--red);">Stop Loss<br>$' + stop.toFixed(2) + '</div>' +
+          // Entry marker + label centred under dot
+          '<div class="tm-marker" style="left:' + entryBarPct.toFixed(1) + '%;background:var(--blue);top:50%;"></div>' +
+          '<div style="position:absolute;top:100%;margin-top:3px;left:' + entryBarPct.toFixed(1) + '%;transform:translateX(-50%);text-align:center;font-size:9px;font-weight:600;white-space:nowrap;color:var(--blue);">Avg Fill<br>$' + entry.toFixed(2) + '</div>' +
+          // Take Profit marker + label flush-right
+          '<div class="tm-marker" style="left:100%;background:var(--green);top:50%;"></div>' +
+          '<div style="position:absolute;top:100%;margin-top:3px;right:0;text-align:right;font-size:9px;font-weight:600;white-space:nowrap;color:var(--green);">Take Profit<br>$' + target.toFixed(2) + '</div>' +
+          // Current price — vertical tick through the bar, id for patching
+          '<div id="tm-cur-' + r.id + '">' +
+            '<div style="position:absolute;left:' + curPct.toFixed(1) + '%;top:50%;transform:translate(-50%,-50%);' +
+              'width:3px;height:18px;background:' + plColor + ';border-radius:2px;z-index:3;color:' + plColor + ';' +
+              'animation:tm-pulse 1.4s ease-in-out infinite;"></div>' +
+          '</div>'
+    };
+}
+
+function buildMonitorCards(open) {
+    var cards = p$('monitor-cards');
+    var html  = '';
+    open.forEach(function(r) {
+        var entry   = parseFloat(r.filled_avg_price || r.entry_price);
+        var stop    = parseFloat(r.stop_price);
+        var target  = parseFloat(r.target_price);
+        var qty     = parseFloat(r.filled_qty || r.qty || 0);
+
+        // Actual R:R from filled price
+        var risk     = entry - stop;
+        var reward   = target - entry;
+        var rrRatio  = (risk > 0 && reward > 0) ? reward / risk : parseFloat(r.rr_ratio || 0);
+        var cur     = _monitorPrices[r.symbol];
+        var hasPrice = cur != null;
+
+        // Static P&L seeded from DB if no live price yet
+        var plDollar = null, plPct = null;
+        if (hasPrice) {
+            plDollar = (cur - entry) * qty;
+            plPct    = (cur - entry) / entry * 100;
+            if (r.alpaca_unrlzd_pl  != null) plDollar = parseFloat(r.alpaca_unrlzd_pl);
+            if (r.alpaca_unrlzd_plpc != null) plPct   = parseFloat(r.alpaca_unrlzd_plpc) * 100;
+        }
+
+        var barData = hasPrice
+            ? _monitorBarHTML(r, cur, plDollar, plPct)
+            : null;
+
+        var plColor = barData ? barData.plColor : 'var(--muted)';
+        var plStr   = barData ? barData.plStr   : '—';
+        var curStr  = hasPrice ? '$' + cur.toFixed(2) : '…';
+
+        // Loading skeleton for bar
+        var barContent = hasPrice ? barData.barHTML :
+            '<div style="position:absolute;top:50%;left:0;right:0;height:8px;transform:translateY(-50%);' +
+              'border-radius:4px;background:var(--surface2);overflow:hidden;">' +
+              '<div style="width:40%;height:100%;background:var(--border);animation:tm-shimmer 1.2s infinite;border-radius:4px;"></div>' +
+            '</div>';
+
+        html +=
+        '<div class="tm-card" id="tm-' + r.id + '">' +
+          '<div class="tm-header">' +
+            '<a href="/?ticker=' + r.symbol + '" target="_blank" style="text-decoration:none;">' +
+              '<span class="tm-sym">' + r.symbol + '</span>' +
+            '</a>' +
+            '<span class="tm-meta" id="tm-meta-' + r.id + '">' +
+              qty + ' shares &nbsp;·&nbsp; Entry <b>$' + entry.toFixed(2) + '</b>' +
+              (hasPrice ? ' &nbsp;·&nbsp; Current <b>' + curStr + '</b>' : ' &nbsp;·&nbsp; <span style="color:var(--muted);">fetching…</span>') +
+            '</span>' +
+            '<span class="tm-unrlzd" id="tm-pl-' + r.id + '" style="color:' + plColor + ';">' + plStr + '</span>' +
+            '<span class="tm-rr" style="color:var(--blue);margin-left:.75rem;">RR&nbsp;1:' + rrRatio.toFixed(1) + '</span>' +
+          '</div>' +
+          '<div class="tm-bar-wrap" id="tm-bar-' + r.id + '" style="margin:0 8px;">' +
+            barContent +
+          '</div>' +
+          '<div style="height:28px;"></div>' +
+        '</div>';
+    });
+    cards.innerHTML = html;
+}
+
+function updateMonitorCard(r, cur) {
+    var entry = parseFloat(r.filled_avg_price || r.entry_price);
+    var qty   = parseFloat(r.filled_qty || r.qty || 0);
+
+    var plDollar = (cur - entry) * qty;
+    var plPct    = (cur - entry) / entry * 100;
+    if (r.alpaca_unrlzd_pl  != null) plDollar = parseFloat(r.alpaca_unrlzd_pl);
+    if (r.alpaca_unrlzd_plpc != null) plPct   = parseFloat(r.alpaca_unrlzd_plpc) * 100;
+
+    var bd = _monitorBarHTML(r, cur, plDollar, plPct);
+
+    var metaEl = p$('tm-meta-' + r.id);
+    var plEl   = p$('tm-pl-'   + r.id);
+    var barEl  = p$('tm-bar-'  + r.id);
+
+    if (metaEl) metaEl.innerHTML =
+        qty + ' shares &nbsp;·&nbsp; Entry <b>$' + entry.toFixed(2) + '</b>' +
+        ' &nbsp;·&nbsp; Current <b>$' + cur.toFixed(2) + '</b>';
+    if (plEl)  { plEl.textContent = bd.plStr; plEl.style.color = bd.plColor; }
+    if (barEl)  barEl.innerHTML = bd.barHTML;
+}
+
+function fetchMonitorPrices(open) {
+    var symbols = open.map(function(r) { return r.symbol; });
+    if (!symbols.length) return;
+    fetch('/api/alpaca/snapshots?symbols=' + symbols.join(','))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            open.forEach(function(r) {
+                if (data[r.symbol] != null) _monitorPrices[r.symbol] = data[r.symbol];
+            });
+            buildMonitorCards(open);   // single render once all prices are ready
+        })
+        .catch(function() {
+            buildMonitorCards(open);   // render anyway on error (prices will show as —)
+        });
+}
+
+function refreshMonitor() {
+    var open = _allRows.filter(function(r) { return r.closed_at == null; });
+    _monitorPrices = {};
+    p$('monitor-cards').innerHTML =
+        '<div style="font-size:11px;color:var(--muted);padding:.5rem 0;">Fetching live prices…</div>';
+    fetchMonitorPrices(open);
+}
+
+function syncAlpaca() {
+    var btn = document.querySelector('.btn-action.green');
+    if (btn) btn.disabled = true;
+    p$('sync-status').textContent = 'Syncing…';
+    fetch('/api/alpaca/sync', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) {
+                p$('sync-status').textContent = '✗ ' + d.error;
+                p$('sync-status').style.color = 'var(--red)';
+            } else {
+                var errCount = d.errors && d.errors.length ? d.errors.length : 0;
+                var errSuffix = errCount > 0 ? ' (' + errCount + ' error' + (errCount > 1 ? 's' : '') + ')' : '';
+                p$('sync-status').textContent = '✓ ' + d.updated + ' updated' + errSuffix;
+                p$('sync-status').style.color = errCount > 0 ? 'var(--yellow)' : 'var(--green)';
+                if (errCount > 0) {
+                    var firstErr = d.errors[0].error || JSON.stringify(d.errors[0]);
+                    p$('sync-status').title = firstErr;
+                    console.warn('[Sync errors]', d.errors);
+                }
+                _monitorPrices = {};   // force price refresh on next render
+                loadOrders();
+            }
+        })
+        .catch(function(e) { p$('sync-status').textContent = '✗ ' + e.message; p$('sync-status').style.color = 'var(--red)'; })
+        .finally(function() { if (btn) btn.disabled = false; });
+}
+
+function showCloseModal(tradeId, entryPrice) {
+    p$('close-trade-id').value    = tradeId;
+    p$('close-exit-price').value  = '';
+    p$('close-notes').value       = '';
+    p$('close-modal').classList.add('show');
+    setTimeout(function() { p$('close-exit-price').focus(); }, 50);
+}
+
+function hideCloseModal() {
+    p$('close-modal').classList.remove('show');
+}
+
+function confirmClose() {
+    var id    = p$('close-trade-id').value;
+    var exit  = p$('close-exit-price').value;
+    var notes = p$('close-notes').value;
+    fetch('/api/orders/' + id + '/close', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ exit_price: exit || null, notes: notes || null }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) { hideCloseModal(); loadOrders(); }
+        else alert('Error: ' + d.error);
+    });
+}
+
+// Close modal on overlay click
+p$('close-modal').addEventListener('click', function(e) {
+    if (e.target === this) hideCloseModal();
+});
+p$('detail-modal').addEventListener('click', function(e) {
+    if (e.target === this) hideDetailModal();
+});
+
+// ── Order detail modal ────────────────────────────────────────────────────────
+function hideDetailModal() {
+    p$('detail-modal').classList.remove('show');
+}
+
+function statusColor(s) {
+    if (!s) return 'var(--muted)';
+    var c = cleanStatus(s);
+    if (c.includes('fill'))                           return 'var(--green)';
+    if (c.includes('cancel') || c.includes('expire')) return 'var(--red)';
+    if (c === 'new' || c === 'held' || c.includes('accept') || c.includes('pending')) return 'var(--blue)';
+    return 'var(--muted)';
+}
+
+function statusDot(s) {
+    return '<span class="status-dot" style="background:' + statusColor(s) + ';"></span>';
+}
+
+function odRow(label, value, color) {
+    return '<div class="od-row"><span class="od-lbl">' + label + '</span>' +
+           '<span class="od-val" style="' + (color ? 'color:' + color : '') + '">' + (value || '—') + '</span></div>';
+}
+
+function fmtOrderDate(s) {
+    if (!s) return '—';
+    return new Date(s).toLocaleString('en-US', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+}
+
+function renderLeg(leg, idx) {
+    var isTp = leg.type && leg.type.toLowerCase().includes('limit') && leg.side && leg.side.toLowerCase().includes('sell');
+    var isSl = leg.type && (leg.type.toLowerCase().includes('stop'));
+    var legClass = isTp ? 'leg-tp' : isSl ? 'leg-sl' : 'leg-entry';
+    var legLabel = isTp ? '🟢 Take Profit' : isSl ? '🔴 Stop Loss' : '🔵 Leg ' + (idx + 1);
+    var price = leg.limit_price || leg.stop_price || '—';
+
+    return '<div class="od-leg ' + legClass + '">' +
+               '<div class="od-leg-header">' +
+                   '<span class="od-leg-title">' + legLabel + '</span>' +
+                   '<span>' + statusDot(leg.status) +
+                       '<span style="font-size:11px;color:' + statusColor(leg.status) + ';font-weight:700;">' + cleanStatus(leg.status).toUpperCase() + '</span>' +
+                   '</span>' +
+               '</div>' +
+               '<div class="od-grid">' +
+                   odRow('Type',        (leg.type || '—').toUpperCase()) +
+                   odRow('Price',       (leg.limit_price ? '$' + parseFloat(leg.limit_price).toFixed(2) : '') || (leg.stop_price ? '$' + parseFloat(leg.stop_price).toFixed(2) : '') || '—') +
+                   odRow('Filled Qty',  leg.filled_qty || '0') +
+                   odRow('Avg Fill',    leg.filled_avg_price ? '$' + parseFloat(leg.filled_avg_price).toFixed(2) : '—') +
+                   odRow('Filled At',   fmtOrderDate(leg.filled_at)) +
+                   odRow('Order ID',    '<span style="font-size:9px;color:var(--muted);">' + (leg.id || '').slice(0,12) + '…</span>', null) +
+               '</div>' +
+           '</div>';
+}
+
+function renderOrderDetail(order) {
+    var legs = order.legs || [];
+    var html =
+        '<div class="od-section">' +
+            '<div class="od-section-title">Main Order</div>' +
+            '<div class="od-grid">' +
+                odRow('Symbol',      '<strong>' + order.symbol + '</strong>') +
+                odRow('Status',      statusDot(order.status) + '<span style="color:' + statusColor(order.status) + ';font-weight:700;">' + cleanStatus(order.status).toUpperCase() + '</span>') +
+                odRow('Class',       (order.order_class || '—').toUpperCase()) +
+                odRow('Type',        (order.type || '—').toUpperCase()) +
+                odRow('Side',        (order.side || '—').toUpperCase()) +
+                odRow('TIF',         (order.time_in_force || '—').toUpperCase()) +
+                odRow('Qty',         order.qty) +
+                odRow('Filled Qty',  order.filled_qty || '0') +
+                odRow('Limit Price', order.limit_price ? '$' + parseFloat(order.limit_price).toFixed(2) : '—') +
+                odRow('Avg Fill',    order.filled_avg_price ? '$' + parseFloat(order.filled_avg_price).toFixed(2) : '—') +
+                odRow('Submitted',   fmtOrderDate(order.submitted_at)) +
+                odRow('Filled At',   fmtOrderDate(order.filled_at)) +
+            '</div>' +
+        '</div>';
+
+    if (legs.length > 0) {
+        html += '<div class="od-section"><div class="od-section-title">Bracket Legs (' + legs.length + ')</div>';
+        legs.forEach(function(leg, i) { html += renderLeg(leg, i); });
+        html += '</div>';
+    } else {
+        html += '<div class="od-section" style="color:var(--muted);font-size:11px;">No bracket legs found on this order.</div>';
+    }
+
+    return html;
+}
+
+function showOrderDetail(orderId, symbol) {
+    p$('detail-modal-title').textContent = 'Bracket Order — ' + symbol;
+    p$('detail-modal-body').innerHTML = '<div style="text-align:center;padding:1.5rem;color:var(--muted);">Loading from Alpaca…</div>';
+    p$('detail-modal').classList.add('show');
+
+    fetch('/api/alpaca/order/' + orderId)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) {
+                p$('detail-modal-body').innerHTML = '<div style="color:var(--red);padding:.5rem;">' + d.error + '</div>';
+            } else {
+                p$('detail-modal-body').innerHTML = renderOrderDetail(d);
+            }
+        })
+        .catch(function(e) {
+            p$('detail-modal-body').innerHTML = '<div style="color:var(--red);">Error: ' + e.message + '</div>';
+        });
+}
+
+function reconcileClosed() {
+    var btn = document.querySelector('[onclick="reconcileClosed()"]');
+    if (btn) btn.disabled = true;
+    p$('sync-status').textContent = 'Reconciling…';
+    p$('sync-status').style.color = 'var(--muted)';
+    fetch('/api/alpaca/reconcile', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) {
+                p$('sync-status').textContent = '✗ ' + d.error;
+                p$('sync-status').style.color = 'var(--red)';
+            } else {
+                var warn = d.errors && d.errors.length
+                    ? ' (' + d.errors.length + ' skipped)' : '';
+                p$('sync-status').textContent = '✓ Reconciled ' + d.reconciled + ' closed trades' + warn;
+                p$('sync-status').style.color = 'var(--green)';
+                loadOrders();
+            }
+        })
+        .catch(function(e) {
+            p$('sync-status').textContent = '✗ ' + e.message;
+            p$('sync-status').style.color = 'var(--red)';
+        })
+        .finally(function() { if (btn) btn.disabled = false; });
+}
+
+// Sync with Alpaca on load (syncAlpaca calls loadOrders on success), then
+// also call loadOrders directly so the table shows immediately while syncing.
+loadOrders();
+
+// Auto-refresh every 3 minutes; show a live countdown in the status bar
+(function() {
+    var INTERVAL_MS = 3 * 60 * 1000;
+    var remaining   = INTERVAL_MS;
+    var countdownId = null;
+
+    function fmtCountdown(ms) {
+        var s = Math.ceil(ms / 1000);
+        var m = Math.floor(s / 60);
+        s = s % 60;
+        return 'Next sync in ' + m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function startCountdown() {
+        remaining = INTERVAL_MS;
+        if (countdownId) clearInterval(countdownId);
+        countdownId = setInterval(function() {
+            remaining -= 1000;
+            if (remaining <= 0) {
+                clearInterval(countdownId);
+                p$('sync-status').textContent = 'Auto-syncing…';
+                p$('sync-status').style.color = 'var(--muted)';
+                syncAlpaca();
+                // syncAlpaca will call loadOrders; restart countdown after a short delay
+                setTimeout(startCountdown, 1500);
+            } else {
+                p$('sync-status').textContent = fmtCountdown(remaining);
+                p$('sync-status').style.color = 'var(--muted)';
+            }
+        }, 1000);
+    }
+
+    // Start countdown after the initial sync settles
+    setTimeout(startCountdown, 1500);
+})();
+</script>
+</body>
+</html>

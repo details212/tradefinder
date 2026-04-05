@@ -1,0 +1,31 @@
+# ── Python backend ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+instance/
+*.db
+*.sqlite3
+migrations/versions/
+
+# ── Electron / Node ──────────────────────────────────────────────────────────
+electron-client/node_modules/
+electron-client/dist/
+electron-client/dist-exe/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ───────────────────────────────────────────────────────────────────
+.vscode/
+*.swp
+*.swo

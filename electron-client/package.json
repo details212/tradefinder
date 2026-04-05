@@ -1,0 +1,94 @@
+{
+  "name": "tradefinder",
+  "version": "0.32.0",
+  "description": "TradeFinder – Stock market data viewer",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vite build",
+    "electron": "electron .",
+    "dist": "vite build && electron-builder",
+    "dist:win": "node scripts/bump-version.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false vite build && electron-builder --win --publish never && node scripts/post-build.js",
+    "dist:mac": "node scripts/bump-version.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false vite build && electron-builder --mac --arch universal --publish never && node scripts/post-build.js",
+    "dist:linux": "node scripts/bump-version.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false vite build && electron-builder --linux --publish never && node scripts/post-build.js"
+  },
+  "keywords": [],
+  "author": "TradeFinder",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "date-fns": "^3.6.0",
+    "highcharts": "^12.5.0",
+    "highcharts-react-official": "^3.2.3",
+    "lightweight-charts": "^5.1.0",
+    "lucide-react": "^0.395.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.24.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^8.2.2",
+    "cross-env": "^10.1.0",
+    "electron": "^31.1.0",
+    "electron-builder": "^24.13.3",
+    "jimp": "^1.6.0",
+    "png-to-ico": "^3.0.1",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.4",
+    "vite": "^5.3.3",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.tradefinder.app",
+    "productName": "TradeFinder",
+    "directories": {
+      "output": "dist-exe"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "TradeFinder.exe"
+    },
+    "mac": {
+      "icon": "assets/logo.png",
+      "category": "public.app-category.finance",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "dmg": {
+      "artifactName": "TradeFinder-${arch}.dmg"
+    },
+    "linux": {
+      "icon": "assets/logo.png",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "appImage": {
+      "artifactName": "TradeFinder.AppImage"
+    }
+  }
+}

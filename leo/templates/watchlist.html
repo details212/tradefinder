@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchlist — LEO</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+    --bg:#0d1117; --surface:#161b22; --surface2:#1c2128; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --green:#3fb950; --red:#f85149;
+    --yellow:#d29922; --blue:#58a6ff; --purple:#bc8cff; --radius:8px;
+}
+body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:13px; }
+
+/* ── Topbar ── */
+.topbar { background:var(--surface); border-bottom:1px solid var(--border); padding:.55rem 1.25rem; display:flex; align-items:center; gap:1rem; position:sticky; top:0; z-index:100; }
+.topbar-brand { font-weight:800; font-size:15px; color:var(--text); text-decoration:none; white-space:nowrap; }
+.topbar-brand span { color:var(--blue); }
+.topbar-nav { display:flex; align-items:center; gap:.35rem; margin-left:auto; }
+.btn-nav { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.25rem .6rem; font-size:11px; font-weight:600; cursor:pointer; text-decoration:none; transition:border-color .15s,color .15s; }
+.btn-nav:hover { border-color:var(--blue); color:var(--blue); }
+.btn-nav.active { border-color:var(--blue); color:var(--blue); }
+
+/* ── Main ── */
+.main { max-width:1000px; margin:0 auto; padding:1.5rem 1.25rem; }
+
+.page-header { display:flex; align-items:center; gap:.75rem; margin-bottom:1.25rem; flex-wrap:wrap; }
+.page-title { font-size:18px; font-weight:700; }
+.page-count { font-size:12px; color:var(--muted); }
+.page-count strong { color:var(--text); }
+
+.refresh-btn {
+    margin-left:auto;
+    background:var(--surface2); border:1px solid var(--border); color:var(--muted);
+    border-radius:5px; padding:.3rem .75rem; font-size:11px; font-weight:600;
+    cursor:pointer; transition:border-color .15s,color .15s;
+    display:flex; align-items:center; gap:.4rem;
+}
+.refresh-btn:hover { border-color:var(--blue); color:var(--blue); }
+.refresh-btn:disabled { opacity:.5; cursor:default; }
+
+/* ── Table ── */
+.tbl-wrap { overflow-x:auto; border-radius:var(--radius); border:1px solid var(--border); }
+table { width:100%; border-collapse:collapse; white-space:nowrap; }
+thead th {
+    background:var(--surface2); padding:.55rem .75rem; text-align:left;
+    font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;
+    border-bottom:1px solid var(--border); cursor:pointer; user-select:none;
+}
+thead th:not([data-col]) { cursor:default; }
+thead th:hover { color:var(--blue); }
+thead th:not([data-col]):hover { color:var(--muted); }
+thead th.sorted-asc::after  { content:' ↑'; color:var(--blue); }
+thead th.sorted-desc::after { content:' ↓'; color:var(--blue); }
+tbody tr { border-bottom:1px solid var(--border); transition:background .1s; }
+tbody tr:last-child { border-bottom:none; }
+tbody tr:hover { background:var(--surface2); }
+tbody tr.row-near-target { animation:near-pulse 1.8s ease-in-out infinite; }
+tbody tr.row-near-target:hover { animation:none; background:var(--surface2); }
+@keyframes near-pulse {
+    0%,100% { background:transparent; }
+    50%      { background:rgba(63,185,80,.22); box-shadow:inset 0 0 0 1px rgba(63,185,80,.35); }
+}
+tbody td { padding:.5rem .75rem; font-size:12px; }
+
+.td-sym a { color:var(--blue); font-weight:700; text-decoration:none; }
+.td-sym a:hover { text-decoration:underline; }
+
+.price { font-weight:600; font-variant-numeric:tabular-nums; }
+
+/* last-price cell states */
+.lp-loading { color:var(--muted); font-size:11px; }
+.lp-above { color:var(--green); font-weight:700; }
+.lp-below { color:var(--red);   font-weight:700; }
+.lp-at    { color:var(--yellow); font-weight:700; }
+
+.chg-pos { color:var(--green); font-size:11px; }
+.chg-neg { color:var(--red);   font-size:11px; }
+.chg-neu { color:var(--muted); font-size:11px; }
+
+.del-btn {
+    background:transparent; border:1px solid var(--border); color:var(--muted);
+    border-radius:4px; padding:.15rem .4rem; font-size:11px; cursor:pointer;
+    transition:border-color .15s, color .15s, background .15s;
+    line-height:1.4;
+}
+.del-btn:hover { border-color:var(--red); color:var(--red); background:rgba(248,81,73,.1); }
+
+.empty-state { text-align:center; padding:4rem 1rem; color:var(--muted); }
+.empty-state .ei { font-size:2.5rem; margin-bottom:.75rem; }
+
+.spinner { display:none; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--blue); border-radius:50%; animation:spin .7s linear infinite; flex-shrink:0; }
+.spinner.show { display:inline-block; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+.price-ts { font-size:10px; color:var(--muted); margin-left:.5rem; }
+
+.note-cell { max-width:200px; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font-style:italic; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+    <a href="/" class="topbar-brand">L<span>E</span>O</a>
+    <nav class="topbar-nav">
+        <a href="/scanner" class="btn-nav">Scanner</a>
+        <a href="/developing_scanner" class="btn-nav">Developing</a>
+        <a href="/symbol_history" class="btn-nav">Symbol History</a>
+        <a href="/orders" class="btn-nav">Orders</a>
+        <span class="btn-nav active" style="cursor:default;">⭐ Watchlist</span>
+        <a href="/active_symbols" class="btn-nav">📋 Active Symbols</a>
+    </nav>
+</header>
+
+<main class="main">
+    <div class="page-header">
+        <div class="page-title">⭐ Watchlist</div>
+        <div class="page-count" id="wl-count"></div>
+        <div class="spinner" id="spinner"></div>
+        <button class="refresh-btn" id="refresh-btn" onclick="refreshPrices(true)" disabled>
+            <span id="refresh-icon">↻</span> Refresh Prices
+        </button>
+        <span class="price-ts" id="price-ts"></span>
+        <span class="price-ts" id="countdown-ts"></span>
+    </div>
+
+    <div class="tbl-wrap" id="tbl-wrap">
+        <div class="empty-state"><div class="ei">⭐</div><div>Loading…</div></div>
+    </div>
+</main>
+
+<script>
+var _rows        = [];
+var _prices      = {};   // { TICKER: { last, prev_close, change_pct } }
+var _sortCol     = '_dist_pct';
+var _sortDir     = -1;
+var _countdown   = 60;
+var _countdownId = null;
+
+var COLS = [
+    { key: 'ticker',       label: 'Symbol',        render: function(r) {
+        return '<td class="td-sym"><a href="/?ticker=' + r.ticker + '" target="_blank" rel="noopener">' + r.ticker + '</a></td>';
+    }},
+    { key: 'created_at',   label: 'Added',          render: function(r) {
+        if (!r.created_at) return '<td style="color:var(--muted);">—</td>';
+        var d = new Date(r.created_at);
+        var s = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) +
+                ' ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+        return '<td style="color:var(--muted);font-size:11px;">' + s + '</td>';
+    }},
+    { key: '_last_price',  label: 'Last Price',     render: function(r) {
+        var p = _prices[r.ticker];
+        if (!p) return '<td class="lp-loading">—</td>';
+        if (p.error) return '<td style="color:var(--muted);font-size:11px;">err</td>';
+        var last = p.last;
+        if (last == null) return '<td class="lp-loading">—</td>';
+        var target = parseFloat(r.price_target);
+        var cls = 'lp-at';
+        if (!isNaN(target)) {
+            if (last > target * 1.001) cls = 'lp-above';
+            else if (last < target * 0.999) cls = 'lp-below';
+        }
+        var chgHtml = '';
+        if (p.change_pct != null) {
+            var sign = p.change_pct >= 0 ? '+' : '';
+            var chgCls = p.change_pct > 0 ? 'chg-pos' : p.change_pct < 0 ? 'chg-neg' : 'chg-neu';
+            chgHtml = ' <span class="' + chgCls + '">(' + sign + p.change_pct.toFixed(2) + '%)</span>';
+        }
+        return '<td><span class="price ' + cls + '">$' + last.toFixed(2) + '</span>' + chgHtml + '</td>';
+    }},
+    { key: '_dist_pct',    label: 'Price Target',   render: function(r) {
+        var v = parseFloat(r.price_target);
+        if (isNaN(v)) return '<td class="price" style="color:var(--muted);">—</td>';
+        // Show distance from last price if available
+        var p = _prices[r.ticker];
+        var distHtml = '';
+        if (p && p.last != null) {
+            var dist = ((p.last - v) / v * 100);
+            var sign = dist >= 0 ? '+' : '';
+            var distCls = dist >= 0 ? 'chg-pos' : 'chg-neg';
+            distHtml = ' <span class="' + distCls + '">' + sign + dist.toFixed(1) + '%</span>';
+        }
+        return '<td><span class="price">$' + v.toFixed(2) + '</span>' + distHtml + '</td>';
+    }},
+    { key: 'box_date',     label: 'Box Date',       render: function(r) {
+        return '<td style="color:var(--muted);">' + (r.box_date || '—') + '</td>';
+    }},
+    { key: 'note',         label: 'Note',           render: function(r) {
+        return '<td class="note-cell">' + (r.note ? escHtml(r.note) : '') + '</td>';
+    }},
+    { key: '_del',         label: '',               render: function(r) {
+        return '<td style="text-align:right;"><button class="del-btn" data-id="' + r.id + '">✕</button></td>';
+    }},
+];
+
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function render() {
+    var wrap  = document.getElementById('tbl-wrap');
+    var count = document.getElementById('wl-count');
+
+    if (!_rows.length) {
+        count.innerHTML = '';
+        wrap.innerHTML = '<div class="empty-state"><div class="ei">⭐</div><div>No watchlist entries yet.<br>Draw a box on a chart and click <strong>+ WL</strong> to add one.</div></div>';
+        return;
+    }
+
+    count.innerHTML = '<strong>' + _rows.length + '</strong> entr' + (_rows.length === 1 ? 'y' : 'ies');
+
+    function distPct(r) {
+        var p = _prices[r.ticker];
+        if (!p || p.last == null) return null;
+        var target = parseFloat(r.price_target);
+        if (isNaN(target) || target === 0) return null;
+        // Signed: positive = above target, negative = below. Sorts descending so
+        // broken-out rows (positive) rise to the top.
+        return (p.last - target) / target * 100;
+    }
+
+    var sorted = _rows.slice().sort(function(a, b) {
+        var av, bv;
+        if (_sortCol === '_dist_pct') {
+            av = distPct(a); bv = distPct(b);
+        } else if (_sortCol === '_last_price') {
+            av = (_prices[a.ticker] || {}).last;
+            bv = (_prices[b.ticker] || {}).last;
+        } else {
+            av = a[_sortCol]; bv = b[_sortCol];
+        }
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        var af = parseFloat(av), bf = parseFloat(bv);
+        if (!isNaN(af) && !isNaN(bf)) return (af - bf) * _sortDir;
+        return String(av).localeCompare(String(bv)) * _sortDir;
+    });
+
+    function shouldPulse(r) {
+        var p      = _prices[r.ticker];
+        var last   = p ? parseFloat(p.last) : NaN;
+        var target = parseFloat(r.price_target);
+        if (isNaN(last) || isNaN(target)) return false;
+        return last > target;
+    }
+
+    var thead = '<thead><tr>' + COLS.map(function(c) {
+        if (!c.key || c.key === '_del') return '<th></th>';
+        var cls = _sortCol === c.key ? (_sortDir === 1 ? ' class="sorted-asc"' : ' class="sorted-desc"') : '';
+        return '<th' + cls + ' data-col="' + c.key + '">' + c.label + '</th>';
+    }).join('') + '</tr></thead>';
+
+    var tbody = '<tbody>' + sorted.map(function(r) {
+        return '<tr' + (shouldPulse(r) ? ' class="row-near-target"' : '') + '>' +
+               COLS.map(function(c) { return c.render(r); }).join('') + '</tr>';
+    }).join('') + '</tbody>';
+
+    wrap.innerHTML = '<table>' + thead + tbody + '</table>';
+
+    wrap.querySelectorAll('thead th[data-col]').forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = this.dataset.col;
+            if (_sortCol === col) { _sortDir *= -1; } else { _sortCol = col; _sortDir = 1; }
+            render();
+        });
+    });
+
+    wrap.querySelectorAll('.del-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            deleteEntry(parseInt(this.dataset.id), this);
+        });
+    });
+}
+
+function startCountdown() {
+    if (_countdownId) clearInterval(_countdownId);
+    _countdown = 60;
+    var el = document.getElementById('countdown-ts');
+    el.textContent = '· next refresh in ' + _countdown + 's';
+    _countdownId = setInterval(function() {
+        _countdown--;
+        if (_countdown <= 0) {
+            clearInterval(_countdownId);
+            _countdownId = null;
+            el.textContent = '· refreshing…';
+            refreshPrices();
+        } else {
+            el.textContent = '· next refresh in ' + _countdown + 's';
+        }
+    }, 1000);
+}
+
+function refreshPrices(manual) {
+    if (!_rows.length) return;
+    var tickers = [...new Set(_rows.map(function(r) { return r.ticker; }))];
+    var btn  = document.getElementById('refresh-btn');
+    var icon = document.getElementById('refresh-icon');
+    btn.disabled = true;
+    icon.style.display = 'inline-block';
+    icon.style.animation = 'spin .7s linear infinite';
+
+    fetch('/api/polygon/snapshots?tickers=' + tickers.join(','))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) throw new Error(data.error);
+            _prices = data;
+            var now = new Date();
+            document.getElementById('price-ts').textContent =
+                'Updated ' + now.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            if (_sortCol === '_dist_pct') _sortDir = -1;
+            render();
+        })
+        .catch(function(e) {
+            document.getElementById('price-ts').textContent = 'Price fetch failed: ' + e;
+        })
+        .finally(function() {
+            btn.disabled = false;
+            icon.style.animation = '';
+            startCountdown();
+        });
+}
+
+function load() {
+    document.getElementById('spinner').classList.add('show');
+    fetch('/api/watchlist')
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            _rows = rows;
+            document.getElementById('spinner').classList.remove('show');
+            document.getElementById('refresh-btn').disabled = !rows.length;
+            render();
+            if (rows.length) refreshPrices();
+        })
+        .catch(function(e) {
+            document.getElementById('spinner').classList.remove('show');
+            document.getElementById('tbl-wrap').innerHTML =
+                '<div class="empty-state"><div class="ei">⚠️</div><div>Failed to load watchlist: ' + e + '</div></div>';
+        });
+}
+
+function deleteEntry(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '…';
+    fetch('/api/watchlist/' + id, { method: 'DELETE' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) { btn.disabled = false; btn.textContent = '✕'; return; }
+            _rows = _rows.filter(function(r) { return r.id !== id; });
+            render();
+        })
+        .catch(function() { btn.disabled = false; btn.textContent = '✕'; });
+}
+
+load();
+</script>
+</body>
+</html>

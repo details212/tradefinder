@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TradeFinder — About</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                400: "#53c3ff",
+                500: "#2ba5ff",
+                600: "#0d85f5",
+              },
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="min-h-screen bg-slate-900 text-slate-100 antialiased">
+    <div class="absolute inset-0 opacity-5 pointer-events-none" style="
+        background-image: linear-gradient(#3b82f6 1px, transparent 1px),
+          linear-gradient(90deg, #3b82f6 1px, transparent 1px);
+        background-size: 40px 40px;
+      "></div>
+
+    <div class="relative min-h-screen flex items-center justify-center p-4">
+      <div class="w-full max-w-lg">
+        <header class="text-center mb-8">
+          <div
+            class="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 shadow-lg overflow-hidden bg-slate-800 border border-slate-600"
+          >
+            <!-- Optional: replace with <img src="logo.png" alt="TradeFinder" class="w-full h-full object-cover" /> -->
+            <svg class="w-9 h-9 text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M4 19h16M4 15l4-4 4 4 8-8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <h1 class="text-3xl font-bold text-white tracking-tight">TradeFinder</h1>
+          <p class="mt-1 text-slate-400 text-sm">Real-time stock market trade ideas</p>
+        </header>
+
+        <main class="bg-slate-800 rounded-2xl border border-slate-700 p-8 shadow-2xl">
+          <h2 class="text-lg font-semibold text-white mb-3">What is TradeFinder?</h2>
+          <p class="text-slate-300 text-sm leading-relaxed mb-6">
+            TradeFinder is a desktop app for active traders. It brings together trade ideas, charts, and market
+            context so you can spot opportunities and review setups in one workspace. Sign in with your account to
+            sync preferences and use the full app.
+          </p>
+
+          <ul class="space-y-3 mb-8 text-sm text-slate-300">
+            <li class="flex gap-3">
+              <svg class="w-5 h-5 text-brand-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span>Curated trade ideas and tools tuned for real-time market work.</span>
+            </li>
+            <li class="flex gap-3">
+              <svg class="w-5 h-5 text-brand-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+              <span>Charts and analysis to dig into symbols and patterns in one place.</span>
+            </li>
+            <li class="flex gap-3">
+              <svg class="w-5 h-5 text-brand-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span>Secure sign-in; your session stays on your machine under your control.</span>
+            </li>
+          </ul>
+
+          <a
+            href="/download/TradeFinder.exe"
+            class="block w-full text-center bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm"
+          >
+            Download TradeFinder for Windows
+          </a>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

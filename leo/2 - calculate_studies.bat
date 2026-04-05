@@ -1,0 +1,2 @@
+python calculate_studies.py
+pause

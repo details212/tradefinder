@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Active Symbols — LEO</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+    --bg:#0d1117; --surface:#161b22; --surface2:#1c2128; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --green:#3fb950; --red:#f85149;
+    --yellow:#d29922; --blue:#58a6ff; --purple:#bc8cff; --radius:8px;
+}
+body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:13px; }
+
+/* ── Topbar ── */
+.topbar { background:var(--surface); border-bottom:1px solid var(--border); padding:.55rem 1.25rem; display:flex; align-items:center; gap:1rem; position:sticky; top:0; z-index:100; }
+.topbar-brand { font-weight:800; font-size:15px; color:var(--text); text-decoration:none; white-space:nowrap; }
+.topbar-brand span { color:var(--blue); }
+.topbar-nav { display:flex; align-items:center; gap:.35rem; margin-left:auto; }
+.btn-nav { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.25rem .6rem; font-size:11px; font-weight:600; cursor:pointer; text-decoration:none; transition:border-color .15s,color .15s; }
+.btn-nav:hover { border-color:var(--blue); color:var(--blue); }
+.btn-nav.active { border-color:var(--blue); color:var(--blue); }
+
+/* ── Layout ── */
+.main { padding:1.5rem 1.25rem; max-width:1100px; margin:0 auto; }
+
+.page-header { display:flex; align-items:center; gap:.75rem; margin-bottom:1.1rem; flex-wrap:wrap; }
+.page-title { font-size:18px; font-weight:700; }
+.page-count { font-size:12px; color:var(--muted); }
+.page-count strong { color:var(--text); }
+
+.search-wrap { margin-left:auto; }
+.search-input {
+    background:var(--surface2); border:1px solid var(--border); color:var(--text);
+    border-radius:5px; padding:.3rem .6rem; font-size:12px; width:180px;
+    transition:border-color .15s;
+}
+.search-input:focus { outline:none; border-color:var(--blue); }
+
+/* ── Table ── */
+.tbl-wrap { overflow-x:auto; border-radius:var(--radius); border:1px solid var(--border); }
+table { width:100%; border-collapse:collapse; white-space:nowrap; }
+thead th {
+    background:var(--surface2); padding:.5rem .7rem; text-align:left;
+    font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;
+    border-bottom:1px solid var(--border); cursor:pointer; user-select:none; position:sticky; top:0;
+}
+thead th:hover { color:var(--blue); }
+thead th.sorted-asc::after  { content:' ↑'; color:var(--blue); }
+thead th.sorted-desc::after { content:' ↓'; color:var(--blue); }
+tbody tr { border-bottom:1px solid var(--border); transition:background .1s; }
+tbody tr:last-child { border-bottom:none; }
+tbody tr:hover { background:var(--surface2); }
+tbody td { padding:.4rem .7rem; font-size:12px; }
+
+.td-sym a { color:var(--blue); font-weight:700; text-decoration:none; }
+.td-sym a:hover { text-decoration:underline; }
+.td-name { color:var(--muted); max-width:200px; overflow:hidden; text-overflow:ellipsis; }
+.td-sector { color:var(--muted); font-size:11px; max-width:140px; overflow:hidden; text-overflow:ellipsis; }
+
+.empty-state { text-align:center; padding:4rem 1rem; color:var(--muted); }
+.empty-state .ei { font-size:2.5rem; margin-bottom:.75rem; }
+
+.spinner { display:none; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--blue); border-radius:50%; animation:spin .7s linear infinite; }
+.spinner.show { display:inline-block; }
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+    <a href="/" class="topbar-brand">L<span>E</span>O</a>
+    <nav class="topbar-nav">
+        <a href="/scanner" class="btn-nav">Scanner</a>
+        <a href="/developing_scanner" class="btn-nav">Developing</a>
+        <a href="/symbol_history" class="btn-nav">Symbol History</a>
+        <a href="/orders" class="btn-nav">Orders</a>
+        <a href="/watchlist" class="btn-nav">⭐ Watchlist</a>
+        <span class="btn-nav active" style="cursor:default;">📋 Active Symbols</span>
+    </nav>
+</header>
+
+<main class="main">
+    <div class="page-header">
+        <div class="page-title">📋 Active Symbols</div>
+        <div class="page-count" id="sym-count"></div>
+        <div class="spinner" id="spinner"></div>
+        <div class="search-wrap">
+            <input class="search-input" id="search" type="text" placeholder="Filter ticker / name…" oninput="applyFilter()">
+        </div>
+    </div>
+
+    <div class="tbl-wrap" id="tbl-wrap">
+        <div class="empty-state"><div class="ei">📋</div><div>Loading…</div></div>
+    </div>
+</main>
+
+<script>
+var _rows    = [];
+var _sortCol = 'manual_check';
+var _sortDir = 1;
+
+var COLS = [
+    { key: 'ticker',          label: 'Symbol',   render: function(r) {
+        return '<td class="td-sym"><a href="/?ticker=' + r.ticker + '" target="_blank" rel="noopener" data-ticker="' + r.ticker + '" class="sym-link">' + r.ticker + '</a></td>';
+    }},
+    { key: 'name',            label: 'Name',     render: function(r) {
+        return '<td class="td-name" title="' + esc(r.name || '') + '">' + esc(r.name || '—') + '</td>';
+    }},
+    { key: 'last_day_close',  label: 'Close',    render: function(r) {
+        var v = parseFloat(r.last_day_close);
+        return '<td>' + (isNaN(v) ? '—' : '$' + v.toFixed(2)) + '</td>';
+    }},
+    { key: 'last_day_volume', label: 'Volume',   render: function(r) {
+        var v = parseInt(r.last_day_volume);
+        return '<td style="color:var(--muted);">' + (isNaN(v) ? '—' : fmtVol(v)) + '</td>';
+    }},
+    { key: 'market_cap',      label: 'Mkt Cap',  render: function(r) {
+        var v = parseFloat(r.market_cap);
+        return '<td style="color:var(--muted);">' + (isNaN(v) || v === 0 ? '—' : fmtCap(v)) + '</td>';
+    }},
+    { key: 'sector',          label: 'Sector',   render: function(r) {
+        return '<td class="td-sector" title="' + esc(r.sector || '') + '">' + esc(r.sector || '—') + '</td>';
+    }},
+    { key: 'manual_check',    label: 'Checked',  render: function(r) {
+        if (!r.manual_check) return '<td data-check style="color:var(--muted);">—</td>';
+        var d = new Date(r.manual_check);
+        var s = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        return '<td data-check style="color:var(--muted);font-size:11px;">' + s + '</td>';
+    }},
+];
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function fmtVol(v) {
+    if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+    return v;
+}
+
+function fmtCap(v) {
+    if (v >= 1e12) return '$' + (v / 1e12).toFixed(2) + 'T';
+    if (v >= 1e9)  return '$' + (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6)  return '$' + (v / 1e6).toFixed(1) + 'M';
+    return '$' + v.toFixed(0);
+}
+
+function applyFilter() {
+    var q = document.getElementById('search').value.trim().toUpperCase();
+    var filtered = q
+        ? _rows.filter(function(r) {
+            return r.ticker.indexOf(q) >= 0 ||
+                   (r.name || '').toUpperCase().indexOf(q) >= 0;
+          })
+        : _rows;
+    renderTable(filtered);
+}
+
+function renderTable(rows) {
+    var wrap  = document.getElementById('tbl-wrap');
+    var count = document.getElementById('sym-count');
+
+    if (!rows.length) {
+        count.innerHTML = '';
+        wrap.innerHTML = '<div class="empty-state"><div class="ei">🔍</div><div>No symbols found.</div></div>';
+        return;
+    }
+
+    count.innerHTML = '<strong>' + rows.length + '</strong> symbol' + (rows.length !== 1 ? 's' : '');
+
+    var sorted = rows.slice().sort(function(a, b) {
+        if (_sortCol === 'manual_check') {
+            // Nulls (unchecked) first, then oldest → newest, tiebreak by volume DESC
+            var an = a.manual_check == null, bn = b.manual_check == null;
+            if (an && bn) return (parseFloat(b.last_day_volume) || 0) - (parseFloat(a.last_day_volume) || 0);
+            if (an) return -1;
+            if (bn) return  1;
+            var dateCmp = String(a.manual_check).localeCompare(String(b.manual_check)) * _sortDir;
+            return dateCmp !== 0 ? dateCmp : (parseFloat(b.last_day_volume) || 0) - (parseFloat(a.last_day_volume) || 0);
+        }
+        var av = a[_sortCol], bv = b[_sortCol];
+        if (av == null && bv == null) return (parseFloat(b.last_day_volume) || 0) - (parseFloat(a.last_day_volume) || 0);
+        if (av == null) return -1;
+        if (bv == null) return  1;
+        var af = parseFloat(av), bf = parseFloat(bv);
+        var cmp = (!isNaN(af) && !isNaN(bf))
+            ? (af - bf) * _sortDir
+            : String(av).localeCompare(String(bv)) * _sortDir;
+        return cmp !== 0 ? cmp : (parseFloat(b.last_day_volume) || 0) - (parseFloat(a.last_day_volume) || 0);
+    });
+
+    var thead = '<thead><tr>' + COLS.map(function(c) {
+        var cls = _sortCol === c.key ? (_sortDir === 1 ? ' class="sorted-asc"' : ' class="sorted-desc"') : '';
+        return '<th' + cls + ' data-col="' + c.key + '">' + c.label + '</th>';
+    }).join('') + '</tr></thead>';
+
+    var tbody = '<tbody>' + sorted.map(function(r) {
+        return '<tr>' + COLS.map(function(c) { return c.render(r); }).join('') + '</tr>';
+    }).join('') + '</tbody>';
+
+    wrap.innerHTML = '<table>' + thead + tbody + '</table>';
+
+    wrap.querySelectorAll('thead th[data-col]').forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = this.dataset.col;
+            if (_sortCol === col) { _sortDir *= -1; } else { _sortCol = col; _sortDir = 1; }
+            applyFilter();
+        });
+    });
+
+    // Symbol click: open chart in new tab + silently stamp manual_check
+    wrap.querySelectorAll('a.sym-link').forEach(function(a) {
+        a.addEventListener('click', function() {
+            var ticker = this.dataset.ticker;
+            // Update the in-memory row so re-renders stay current
+            var now = new Date();
+            _rows.forEach(function(r) {
+                if (r.ticker === ticker) r.manual_check = now.toISOString();
+            });
+            // Update the Checked cell in this row without full re-render
+            var td = this.closest('tr').querySelector('td[data-check]');
+            if (td) td.textContent = now.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+            // Fire and forget
+            fetch('/api/active_symbols/check/' + ticker, { method: 'POST' }).catch(function() {});
+        });
+    });
+}
+
+function load() {
+    document.getElementById('spinner').classList.add('show');
+    fetch('/api/active_symbols')
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            _rows = rows;
+            document.getElementById('spinner').classList.remove('show');
+            document.getElementById('sym-count').innerHTML =
+                '<strong>' + rows.length + '</strong> symbol' + (rows.length !== 1 ? 's' : '');
+            renderTable(rows);
+        })
+        .catch(function(e) {
+            document.getElementById('spinner').classList.remove('show');
+            document.getElementById('tbl-wrap').innerHTML =
+                '<div class="empty-state"><div class="ei">⚠️</div><div>Failed to load: ' + e + '</div></div>';
+        });
+}
+
+load();
+</script>
+</body>
+</html>

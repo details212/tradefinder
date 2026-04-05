@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scanner — LEO</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+    --bg:#0d1117; --surface:#161b22; --surface2:#1c2128; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --green:#3fb950; --red:#f85149;
+    --yellow:#d29922; --blue:#58a6ff; --purple:#bc8cff; --radius:8px;
+}
+body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:13px; }
+
+/* ── Topbar ── */
+.topbar { background:var(--surface); border-bottom:1px solid var(--border); padding:.55rem 1.25rem; display:flex; align-items:center; gap:1rem; position:sticky; top:0; z-index:100; }
+.topbar-brand { font-weight:800; font-size:15px; color:var(--text); text-decoration:none; white-space:nowrap; }
+.topbar-brand span { color:var(--blue); }
+.topbar-nav { display:flex; align-items:center; gap:.35rem; margin-left:auto; }
+.btn-nav { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.25rem .6rem; font-size:11px; font-weight:600; cursor:pointer; text-decoration:none; transition:border-color .15s,color .15s; }
+.btn-nav:hover { border-color:var(--blue); color:var(--blue); }
+.btn-nav.active { border-color:var(--blue); color:var(--blue); }
+
+/* ── Layout ── */
+.page { display:flex; gap:0; min-height:calc(100vh - 45px); }
+
+/* ── Sidebar ── */
+.sidebar {
+    width:268px; flex-shrink:0; background:var(--surface); border-right:1px solid var(--border);
+    padding:1rem; overflow-y:auto; position:sticky; top:45px; height:calc(100vh - 45px);
+}
+.sidebar-title { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:.85rem; }
+
+.filter-section { margin-bottom:1rem; }
+.filter-section-label {
+    font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;
+    margin-bottom:.4rem; display:flex; align-items:center; gap:.35rem; cursor:pointer; user-select:none;
+}
+.filter-section-label::after { content:''; flex:1; height:1px; background:var(--border); }
+
+.filter-row { display:flex; gap:.4rem; margin-bottom:.3rem; align-items:center; }
+.filter-row label { font-size:11px; color:var(--muted); white-space:nowrap; min-width:72px; }
+.filter-input {
+    background:var(--surface2); border:1px solid var(--border); color:var(--text);
+    border-radius:5px; padding:.22rem .45rem; font-size:11px; width:100%;
+    transition:border-color .15s;
+}
+.filter-input:focus { outline:none; border-color:var(--blue); }
+.filter-select { appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b949e'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right .45rem center; padding-right:1.4rem; }
+
+.cb-row { display:flex; align-items:center; gap:.45rem; margin-bottom:.25rem; font-size:11px; color:var(--text); cursor:pointer; }
+.cb-row input[type=checkbox] { accent-color:var(--blue); width:13px; height:13px; cursor:pointer; flex-shrink:0; }
+
+/* Volume label chips */
+.vol-chips { display:flex; flex-wrap:wrap; gap:.3rem; }
+.vol-chip { border:1px solid var(--border); background:var(--surface2); color:var(--muted); border-radius:4px; padding:.15rem .4rem; font-size:10px; font-weight:600; cursor:pointer; transition:all .15s; user-select:none; }
+.vol-chip:hover { border-color:var(--blue); color:var(--blue); }
+.vol-chip.on { border-color:var(--yellow); color:var(--yellow); background:rgba(210,153,34,.12); }
+.vol-chip[data-v="XHigh"].on { border-color:var(--red);    color:var(--red);    background:rgba(248,81,73,.12); }
+.vol-chip[data-v="High"].on  { border-color:#ff7800;       color:#ff7800;       background:rgba(255,120,0,.1); }
+.vol-chip[data-v="Med"].on   { border-color:var(--yellow); color:var(--yellow); background:rgba(210,153,34,.12); }
+.vol-chip[data-v="Norm"].on  { border-color:#a0d6dc;       color:#a0d6dc;       background:rgba(160,214,220,.1); }
+.vol-chip[data-v="Low"].on   { border-color:#1f9cac;       color:#1f9cac;       background:rgba(31,156,172,.1); }
+
+
+/* Buttons */
+.run-btn {
+    width:100%; background:var(--blue); color:#0d1117; border:none; border-radius:6px;
+    padding:.5rem; font-size:12px; font-weight:700; cursor:pointer; margin-top:.6rem;
+    transition:opacity .15s;
+}
+.run-btn:hover { opacity:.85; }
+.reset-btn { width:100%; background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:.38rem; font-size:11px; font-weight:600; cursor:pointer; margin-top:.35rem; transition:border-color .15s,color .15s; }
+.reset-btn:hover { border-color:var(--red); color:var(--red); }
+
+/* Active filter count badge */
+.filter-badge { display:inline-block; background:var(--blue); color:#0d1117; border-radius:10px; padding:0 .4rem; font-size:9px; font-weight:800; margin-left:.3rem; vertical-align:middle; }
+
+/* ── Main content ── */
+.main { flex:1; padding:1.25rem; overflow:auto; min-width:0; }
+
+/* Result header */
+.results-header { display:flex; align-items:center; gap:.75rem; margin-bottom:.85rem; flex-wrap:wrap; }
+.results-count { font-size:12px; color:var(--muted); }
+.results-count strong { color:var(--text); }
+.days-tabs { display:flex; gap:.3rem; }
+.day-tab { background:var(--surface2); border:1px solid var(--border); color:var(--muted); border-radius:5px; padding:.2rem .5rem; font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; }
+.day-tab.active { border-color:var(--blue); color:var(--blue); background:rgba(88,166,255,.08); }
+
+.sort-row { display:flex; align-items:center; gap:.5rem; margin-left:auto; font-size:11px; color:var(--muted); }
+.sort-row select { background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:.2rem .45rem; font-size:11px; }
+
+/* Table */
+.tbl-wrap { overflow-x:auto; border-radius:var(--radius); border:1px solid var(--border); }
+table { width:100%; border-collapse:collapse; white-space:nowrap; }
+thead th {
+    background:var(--surface2); padding:.5rem .6rem; text-align:left;
+    font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;
+    border-bottom:1px solid var(--border); position:sticky; top:0; cursor:pointer; user-select:none;
+}
+thead th:hover { color:var(--blue); }
+thead th.sorted-asc::after  { content:' ↑'; color:var(--blue); }
+thead th.sorted-desc::after { content:' ↓'; color:var(--blue); }
+thead th.no-sort { cursor:default; }
+thead th.no-sort:hover { color:var(--muted); }
+tbody tr { border-bottom:1px solid var(--border); transition:background .1s; }
+tbody tr:last-child { border-bottom:none; }
+tbody tr:hover { background:var(--surface2); }
+tbody td { padding:.42rem .6rem; font-size:12px; }
+.td-sym { font-weight:700; }
+.td-sym a { color:var(--blue); text-decoration:none; }
+.td-sym a:hover { text-decoration:underline; }
+.td-name { color:var(--muted); max-width:150px; overflow:hidden; text-overflow:ellipsis; }
+.pos { color:var(--green); }
+.neg { color:var(--red); }
+.neu { color:var(--muted); }
+
+/* Badges */
+.vol-badge { display:inline-block; border-radius:3px; padding:.1rem .35rem; font-size:10px; font-weight:700; }
+.vb-XHigh { background:rgba(248,81,73,.18);  color:var(--red); }
+.vb-High  { background:rgba(255,120,0,.15);  color:#ff7800; }
+.vb-Med   { background:rgba(210,153,34,.15); color:var(--yellow); }
+.vb-Norm  { background:rgba(160,214,220,.1); color:#a0d6dc; }
+.vb-Low   { background:rgba(31,156,172,.1);  color:#1f9cac; }
+
+.row-open-trade { background: rgba(63,185,80,0.06) !important; }
+.row-open-trade td { border-bottom-color: rgba(63,185,80,0.15) !important; }
+.open-trade-badge { display:inline-block; font-size:9px; font-weight:700; background:rgba(63,185,80,.18); color:#3fb950; border-radius:3px; padding:1px 4px; margin-left:3px; vertical-align:middle; letter-spacing:.2px; }
+
+.rs-badge { display:inline-block; padding:.1rem .45rem; border-radius:3px; font-size:11px; font-weight:700; }
+.rs-above { background:rgba(173,216,230,0.18); color:#a8d8ea; }
+.rs-below { background:rgba(210,180,140,0.18); color:#c8a97e; }
+
+.empty-state { text-align:center; padding:4rem 2rem; color:var(--muted); }
+.empty-state .ei { font-size:2.5rem; margin-bottom:.75rem; }
+.spinner { display:none; text-align:center; padding:3rem; color:var(--muted); }
+.spinner.show { display:block; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+    <a href="/" class="topbar-brand"><span>LEO</span> / Scanner</a>
+    <nav class="topbar-nav">
+        <span class="btn-nav active" style="cursor:default;">Scanner</span>
+        <a href="/developing_scanner" class="btn-nav">Developing</a>
+        <a href="/symbol_history" class="btn-nav">Symbol History</a>
+        <a href="/orders" class="btn-nav">Orders</a>
+        <a href="/watchlist" class="btn-nav">⭐ Watchlist</a>
+        <a href="/active_symbols" class="btn-nav">📋 Active Symbols</a>
+    </nav>
+</header>
+
+<div class="page">
+
+    <!-- ── Sidebar ────────────────────────────────────────────────── -->
+    <aside class="sidebar">
+        <div class="sidebar-title">Filters <span class="filter-badge" id="filter-badge" style="display:none;"></span></div>
+
+
+        <!-- Date Window -->
+        <div class="filter-section">
+            <div class="filter-section-label">Date Window</div>
+            <div class="filter-row">
+                <label>Look back</label>
+                <select id="f-days" class="filter-input filter-select" onchange="setDays(parseInt(this.value))">
+                    <option value="1">Loading…</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Price -->
+        <div class="filter-section">
+            <div class="filter-section-label">Price</div>
+            <div class="filter-row">
+                <label>Min close</label>
+                <input id="f-price-min" type="number" step="0.01" placeholder="e.g. 10" class="filter-input">
+            </div>
+            <div class="filter-row">
+                <label>Max close</label>
+                <input id="f-price-max" type="number" step="0.01" placeholder="e.g. 500" class="filter-input">
+            </div>
+        </div>
+
+        <!-- Moving Averages -->
+        <div class="filter-section">
+            <div class="filter-section-label">Moving Averages</div>
+
+            <label class="cb-row"><input type="checkbox" id="f-above-sma50"> Close above SMA 50</label>
+            <label class="cb-row"><input type="checkbox" id="f-below-sma50"> Close below SMA 50</label>
+            <label class="cb-row"><input type="checkbox" id="f-above-sma150" checked> Close above SMA 150</label>
+            <label class="cb-row"><input type="checkbox" id="f-above-sma200" checked> Close above SMA 200</label>
+
+        </div>
+
+        <!-- RSI -->
+        <div class="filter-section">
+            <div class="filter-section-label">RSI 14</div>
+            <div class="filter-row">
+                <label>Min RSI</label>
+                <input id="f-rsi-min" type="number" min="0" max="100" placeholder="0" class="filter-input">
+            </div>
+            <div class="filter-row">
+                <label>Max RSI</label>
+                <input id="f-rsi-max" type="number" min="0" max="100" placeholder="100" class="filter-input">
+            </div>
+
+            <label class="cb-row"><input type="checkbox" id="f-rsi-above50"> RSI above 50</label>
+            <label class="cb-row"><input type="checkbox" id="f-rsi-below50"> RSI below 50</label>
+        </div>
+
+        <!-- Volume -->
+        <div class="filter-section">
+            <div class="filter-section-label">Volume</div>
+            <div style="margin-bottom:.4rem;font-size:10px;color:var(--muted);">Volume label</div>
+            <div class="vol-chips" id="vol-chips">
+                <span class="vol-chip on" data-v="XHigh">XHigh</span>
+                <span class="vol-chip on" data-v="High">High</span>
+                <span class="vol-chip on" data-v="Med">Med</span>
+                <span class="vol-chip" data-v="Norm">Norm</span>
+                <span class="vol-chip" data-v="Low">Low</span>
+            </div>
+            <div class="filter-row" style="margin-top:.45rem;">
+                <label>Vol/MA ≥</label>
+                <input id="f-vol-ratio" type="number" step="0.1" placeholder="e.g. 2.0" class="filter-input">
+            </div>
+        </div>
+
+        <!-- 52-Week Range -->
+        <div class="filter-section">
+            <div class="filter-section-label">52-Week Range</div>
+            <div class="filter-row">
+                <label>% from high ≤</label>
+                <input id="f-pct-high" type="number" step="1" placeholder="e.g. 10" class="filter-input">
+            </div>
+            <div class="filter-row">
+                <label>% from low ≥</label>
+                <input id="f-pct-low" type="number" step="1" placeholder="e.g. 50" class="filter-input">
+            </div>
+        </div>
+
+
+        <!-- ATR Squeeze -->
+        <div class="filter-section">
+            <div class="filter-section-label">ATR Compression</div>
+            <label class="cb-row"><input type="checkbox" id="f-atr-squeeze"> ATR squeeze active</label>
+            <label class="cb-row"><input type="checkbox" id="f-atr-squeeze-break"> Squeeze just released (prev=squeeze, cur=none)</label>
+        </div>
+
+        <!-- RMV 15 -->
+        <div class="filter-section">
+            <div class="filter-section-label">RMV 15</div>
+            <label class="cb-row"><input type="checkbox" id="f-rmv15-compressed"> Compressed (RMV 15 &lt; 20)</label>
+            <div class="filter-row" style="margin-top:.3rem;">
+                <label>Max RMV</label>
+                <input id="f-rmv15-max" type="number" step="1" placeholder="e.g. 30" class="filter-input">
+            </div>
+        </div>
+
+        <!-- Accumulation Score -->
+        <div class="filter-section">
+            <div class="filter-section-label">Accum. Score (1M)</div>
+            <div class="filter-row">
+                <label>Min AS 1M</label>
+                <input id="f-as1m-min" type="number" min="1" max="99" placeholder="e.g. 70" value="70" class="filter-input">
+            </div>
+            <div class="filter-row">
+                <label>Max AS 1M</label>
+                <input id="f-as1m-max" type="number" min="1" max="99" placeholder="e.g. 99" class="filter-input">
+            </div>
+        </div>
+
+        <!-- RS Line vs SPY -->
+        <div class="filter-section">
+            <div class="filter-section-label">RS Line vs SPY</div>
+            <label class="cb-row"><input type="checkbox" id="f-rs-above-sma50"> RS Line above RS SMA 50</label>
+            <label class="cb-row"><input type="checkbox" id="f-rs-below-sma50"> RS Line below RS SMA 50</label>
+        </div>
+
+        <button class="run-btn" onclick="runScan()">▶ Run Scanner</button>
+        <button class="reset-btn" onclick="resetFilters()">Reset Filters</button>
+    </aside>
+
+    <!-- ── Main ────────────────────────────────────────────────────── -->
+    <main class="main">
+        <div class="results-header">
+            <div class="days-tabs" id="day-tabs">
+                <!-- populated dynamically by loadTradingDates() -->
+            </div>
+            <div class="results-count" id="results-count">Run a scan to see results.</div>
+            <div class="sort-row">
+                Sort by
+                <select id="sort-by" onchange="runScan()">
+                    <option value="default">Default</option>
+                    <option value="ticker">Symbol</option>
+                    <option value="close">Close</option>
+                    <option value="rsi_14">RSI</option>
+                    <option value="vol_ratio">Vol Ratio</option>
+                    <option value="pct_from_high">% from High</option>
+                    <option value="pct_from_low">% from Low</option>
+
+                    <option value="as_1m">AS 1M</option>
+                    <option value="rmv_15">RMV 15</option>
+                    <option value="sma50_dist">% vs SMA 50</option>
+                    <option value="sma200_dist">% vs SMA 200</option>
+                    <option value="bar_date">Date</option>
+                </select>
+                <select id="sort-dir" onchange="runScan()">
+                    <option value="asc">Asc</option>
+                    <option value="desc">Desc</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="spinner" id="spinner">Loading…</div>
+
+        <div id="results-area">
+            <div class="empty-state">
+                <div class="ei">🔍</div>
+                <div>Select filters and click <strong>Run Scanner</strong></div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────
+var currentDays  = 1;
+var sortState    = { col: null, dir: 1 };
+var _openSymbols      = {};
+var _watchlistSymbols = {};
+
+// ── Vol chips toggle ──────────────────────────────────────────────
+document.querySelectorAll('.vol-chip').forEach(function(chip) {
+    chip.addEventListener('click', function() { this.classList.toggle('on'); updateBadge(); runScan(); });
+});
+
+function setDays(d) {
+    currentDays = d;
+    document.getElementById('f-days').value = d;
+    document.querySelectorAll('.day-tab').forEach(function(b) {
+        b.classList.toggle('active', parseInt(b.dataset.days) === d);
+    });
+    runScan();
+}
+
+function loadTradingDates() {
+    fetch('/api/trading_dates')
+        .then(function(r) { return r.json(); })
+        .then(function(dates) {
+            if (!dates || !dates.length) return;
+
+            var DAY_NAMES  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            var MON_NAMES  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            function fmtDate(iso) {
+                var parts = iso.split('-');
+                var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                return DAY_NAMES[d.getDay()] + ' ' + MON_NAMES[d.getMonth()] + ' ' + d.getDate();
+            }
+            function fmtShort(iso) {
+                var parts = iso.split('-');
+                var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                return MON_NAMES[d.getMonth()] + ' ' + d.getDate();
+            }
+
+            // Populate the <select> with all dates
+            var sel = document.getElementById('f-days');
+            sel.innerHTML = '';
+            dates.forEach(function(item) {
+                var opt = document.createElement('option');
+                opt.value = item.n;
+                opt.textContent = fmtDate(item.date);
+                sel.appendChild(opt);
+            });
+            sel.value = currentDays;
+
+            // Populate day-tabs with the first 10 dates (most recent)
+            var tabContainer = document.getElementById('day-tabs');
+            tabContainer.innerHTML = '';
+            dates.slice(0, 10).forEach(function(item) {
+                var btn = document.createElement('button');
+                btn.className = 'day-tab' + (item.n === currentDays ? ' active' : '');
+                btn.dataset.days = item.n;
+                btn.textContent = fmtShort(item.date);
+                btn.addEventListener('click', function() { setDays(item.n); });
+                tabContainer.appendChild(btn);
+            });
+        });
+}
+
+
+// ── Reset ─────────────────────────────────────────────────────────
+function resetFilters(silent) {
+    ['f-price-min','f-price-max','f-rsi-min','f-rsi-max',
+     'f-pct-high','f-pct-low','f-vol-ratio',
+     'f-rmv15-max','f-as1m-max'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    document.getElementById('f-as1m-min').value = '70';
+    var defaultChecked = ['f-above-sma150', 'f-above-sma200'];
+    ['f-above-sma50','f-below-sma50',
+     'f-above-sma150','f-above-sma200',
+     'f-rsi-above50','f-rsi-below50',
+     'f-atr-squeeze','f-atr-squeeze-break','f-rmv15-compressed',
+     'f-rs-above-sma50','f-rs-below-sma50'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.checked = defaultChecked.indexOf(id) >= 0;
+    });
+    var defaultVol = ['XHigh','High','Med'];
+    document.querySelectorAll('.vol-chip').forEach(function(c) {
+        c.classList.toggle('on', defaultVol.indexOf(c.dataset.v) >= 0);
+    });
+    updateBadge();
+    if (!silent) {
+        document.getElementById('results-area').innerHTML =
+            '<div class="empty-state"><div class="ei">🔍</div><div>Select filters and click <strong>Run Scanner</strong></div></div>';
+        document.getElementById('results-count').textContent = 'Run a scan to see results.';
+    }
+}
+
+// ── Active filter badge ───────────────────────────────────────────
+function countActiveFilters() {
+    var n = 0;
+    ['f-price-min','f-price-max','f-rsi-min','f-rsi-max',
+     'f-pct-high','f-pct-low','f-vol-ratio',
+     'f-rmv15-max','f-as1m-max'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el && el.value.trim()) n++;
+    });
+    var as1mMin = document.getElementById('f-as1m-min');
+    if (as1mMin && as1mMin.value.trim() && as1mMin.value.trim() !== '70') n++;
+    var nonDefaultCb = ['f-above-sma50','f-below-sma50',
+     'f-rsi-above50','f-rsi-below50',
+     'f-rmv15-compressed',
+     'f-rs-above-sma50','f-rs-below-sma50',
+     'f-atr-squeeze-break'];
+    nonDefaultCb.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el && el.checked) n++;
+    });
+    // default-on checkboxes: count only when unchecked
+    ['f-above-sma150','f-above-sma200'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el && !el.checked) n++;
+    });
+    var nonDefaultVol = ['Low'];
+    document.querySelectorAll('.vol-chip').forEach(function(c) {
+        var inDefault = ['XHigh','High','Med'].indexOf(c.dataset.v) >= 0;
+        if (inDefault && !c.classList.contains('on')) n++;
+        if (!inDefault && c.classList.contains('on')) n++;
+    });
+    return n;
+}
+
+function updateBadge() {
+    var n   = countActiveFilters();
+    var el  = document.getElementById('filter-badge');
+    if (n > 0) { el.textContent = n; el.style.display = 'inline-block'; }
+    else        { el.style.display = 'none'; }
+}
+
+// Track live changes to inputs/checkboxes
+var _scanDebounce = null;
+function debouncedScan() {
+    updateBadge();
+    clearTimeout(_scanDebounce);
+    _scanDebounce = setTimeout(runScan, 400);
+}
+
+document.querySelector('.sidebar').addEventListener('change', function(e) {
+    updateBadge();
+    // f-days has its own onchange handler (setDays); skip it here to avoid double scan
+    if (e.target.id === 'f-days') return;
+    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') runScan();
+});
+document.querySelector('.sidebar').addEventListener('input', function(e) {
+    if (e.target.type === 'number') debouncedScan();
+});
+
+// ── Build query params ────────────────────────────────────────────
+function buildParams() {
+    var p = new URLSearchParams();
+    p.set('days',     document.getElementById('f-days').value || '1');
+    var sortByVal = document.getElementById('sort-by').value;
+    p.set('sort_by',  sortByVal === 'default' ? 'ticker' : sortByVal);
+    p.set('sort_dir', document.getElementById('sort-dir').value);
+
+    function num(id, key) {
+        var v = document.getElementById(id).value.trim();
+        if (v) p.set(key, v);
+    }
+    function cb(id, key) {
+        if (document.getElementById(id).checked) p.set(key, '1');
+    }
+
+    num('f-price-min',       'price_min');
+    num('f-price-max',       'price_max');
+    num('f-rsi-min',         'rsi_min');
+    num('f-rsi-max',         'rsi_max');
+    num('f-pct-high',        'pct_from_high_max');
+    num('f-pct-low',         'pct_from_low_min');
+    num('f-vol-ratio',       'vol_ratio_min');
+
+    num('f-rmv15-max',       'rmv_15_max');
+    num('f-as1m-min',        'as_1m_min');
+    num('f-as1m-max',        'as_1m_max');
+
+
+    cb('f-above-sma50',       'above_sma50');
+    cb('f-below-sma50',       'below_sma50');
+    cb('f-above-sma150',      'above_sma150');
+    cb('f-above-sma200',      'above_sma200');
+
+
+    cb('f-rsi-above50',       'rsi_above50');
+    cb('f-rsi-below50',       'rsi_below50');
+
+        cb('f-atr-squeeze',       'atr_squeeze');
+        cb('f-atr-squeeze-break', 'atr_squeeze_break');
+    cb('f-rmv15-compressed',  'rmv_15_compressed');
+    cb('f-rs-above-sma50',    'rs_above_sma50');
+    cb('f-rs-below-sma50',    'rs_below_sma50');
+
+    var chips = [];
+    document.querySelectorAll('.vol-chip.on').forEach(function(c) { chips.push(c.dataset.v); });
+    if (chips.length) p.set('vol_labels', chips.join(','));
+
+    return p;
+}
+
+// ── Run scan ──────────────────────────────────────────────────────
+function runScan() {
+    sortState.col = null;
+    sortState.dir = 1;
+    var spinner = document.getElementById('spinner');
+    var area    = document.getElementById('results-area');
+    spinner.classList.add('show');
+    area.innerHTML = '';
+
+    fetch('/api/scanner?' + buildParams())
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            spinner.classList.remove('show');
+            // Refresh watchlist then render so stars are current
+            loadWatchlistSymbols().then(function() { renderResults(rows); });
+        })
+        .catch(function(e) {
+            spinner.classList.remove('show');
+            area.innerHTML = '<div class="empty-state"><div class="ei">⚠️</div><div>' + e + '</div></div>';
+        });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+function pct(v) {
+    if (v == null) return '<span class="neu">—</span>';
+    var cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'neu';
+    return '<span class="' + cls + '">' + (v > 0 ? '+' : '') + parseFloat(v).toFixed(1) + '%</span>';
+}
+function price(v)  { return v == null ? '—' : '$' + parseFloat(v).toFixed(2); }
+function fmtVol(v) {
+    if (v == null) return '—';
+    v = parseInt(v);
+    if (v >= 1e9) return (v/1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v/1e3).toFixed(0) + 'K';
+    return v;
+}
+function maAlign(row) {
+    var c   = parseFloat(row.close);
+    var mas = [
+        { label: 'E10',  val: parseFloat(row.ema_10),  color: '#3fb950' },
+        { label: 'E20',  val: parseFloat(row.ema_20),  color: '#bc8cff' },
+        { label: '|',    val: null, sep: true },
+        { label: 'S50',  val: parseFloat(row.sma_50),  color: '#58a6ff' },
+        { label: 'S150', val: parseFloat(row.sma_150), color: '#d29922' },
+        { label: 'S200', val: parseFloat(row.sma_200), color: '#f85149' },
+    ];
+    return mas.map(function(m) {
+        if (m.sep) return '<span style="display:inline-block;width:18px;"></span>';
+        if (isNaN(m.val) || m.val == null) return '';
+        var above  = c >= m.val;
+        var arrow  = above ? '▲' : '▼';
+        var aColor = above ? '#3fb950' : '#f85149';
+        return '<span title="' + m.label + ': $' + m.val.toFixed(2) + '" style="display:inline-flex;flex-direction:column;align-items:center;margin:0 2px;line-height:1;">' +
+                   '<span style="font-size:11px;color:' + aColor + ';">' + arrow + '</span>' +
+                   '<span style="font-size:8px;color:' + m.color + ';font-weight:700;">' + m.label + '</span>' +
+               '</span>';
+    }).join('');
+}
+
+// ── Render table ──────────────────────────────────────────────────
+function loadOpenSymbols() {
+    fetch('/api/orders/open_symbols')
+        .then(function(r) { return r.json(); })
+        .then(function(syms) {
+            _openSymbols = {};
+            syms.forEach(function(s) { _openSymbols[s] = true; });
+        })
+        .catch(function() {});
+}
+
+function loadWatchlistSymbols() {
+    return fetch('/api/watchlist')
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            _watchlistSymbols = {};
+            rows.forEach(function(row) {
+                if (row.ticker) _watchlistSymbols[row.ticker.toUpperCase()] = true;
+            });
+        })
+        .catch(function() {});
+}
+
+function renderResults(rows) {
+    var area  = document.getElementById('results-area');
+    var count = document.getElementById('results-count');
+
+    var VOL_RANK = { XHigh: 4, High: 3, Med: 2, Norm: 1, Low: 0 };
+    rows.forEach(function(r) {
+        r._vol_rank = VOL_RANK[r.vol_label] != null ? VOL_RANK[r.vol_label] : -1;
+        var c = parseFloat(r.close);
+        r._ma_score = [r.ema_10, r.ema_20, r.sma_50, r.sma_150, r.sma_200]
+            .filter(function(v) { return v != null && !isNaN(parseFloat(v)) && c >= parseFloat(v); })
+            .length;
+    });
+
+    if (sortState.col === null) {
+        rows.sort(function(a, b) {
+            if (a._vol_rank !== b._vol_rank) return b._vol_rank - a._vol_rank;
+            var pa = a.pct_from_high != null ? parseFloat(a.pct_from_high) : 9999;
+            var pb = b.pct_from_high != null ? parseFloat(b.pct_from_high) : 9999;
+            if (pa !== pb) return pa - pb;
+            return b._ma_score - a._ma_score;
+        });
+    }
+
+    if (!rows.length) {
+        count.textContent = 'No results.';
+        area.innerHTML = '<div class="empty-state"><div class="ei">🔍</div><div>No results matched the current filters.</div></div>';
+        return;
+    }
+
+    count.innerHTML = '<strong>' + rows.length + '</strong> result' + (rows.length !== 1 ? 's' : '');
+    if (rows.length === 500) count.innerHTML += ' <span style="color:var(--yellow)">(capped at 500)</span>';
+
+    var VOL_COLOR  = { XHigh: '#ff0000', High: '#ff7800', Med: '#ffcf03', Norm: '#a0d6dc', Low: '#1f9cac' };
+    var VOL_HEIGHT = { XHigh: 22, High: 17, Med: 13, Norm: 9, Low: 5 };
+
+    var cols = [
+        { key: 'ticker',             label: 'Symbol',       sort: true,  render: function(r) {
+            var open = _openSymbols[r.ticker] ? '<span class="open-trade-badge">OPEN</span>' : '';
+            return '<td class="td-sym"><a href="/?ticker=' + r.ticker + '" target="_blank" rel="noopener">' + r.ticker + '</a>' + open + '</td>';
+        }},
+        { key: '_wl',                label: '',             sort: false, render: function(r) {
+            return _watchlistSymbols[r.ticker] ?
+                '<td style="text-align:center;font-size:14px;" title="On watchlist">⭐</td>' :
+                '<td></td>';
+        }},
+        { key: 'name',               label: 'Name',         sort: false, render: function(r) {
+            return '<td class="td-name" title="'+(r.name||'')+'">'+( r.name||'—')+'</td>';
+        }},
+        { key: 'bar_date',           label: 'Date',         sort: true,  render: function(r) {
+            return '<td style="color:var(--muted);font-size:11px;">' + r.bar_date + '</td>';
+        }},
+        { key: 'manual_check',       label: 'Checked',      sort: true,  render: function(r) {
+            if (!r.manual_check) return '<td style="color:var(--muted);font-size:11px;">—</td>';
+            var d = new Date(r.manual_check);
+            if ((Date.now() - d.getTime()) > 7 * 24 * 60 * 60 * 1000)
+                return '<td style="color:var(--muted);font-size:11px;">—</td>';
+            var s = d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) +
+                    ' ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+            return '<td style="color:var(--muted);font-size:11px;">' + s + '</td>';
+        }},
+        { key: 'close',              label: 'Close',        sort: true,  render: function(r) {
+            return '<td>' + price(r.close) + '</td>';
+        }},
+        { key: 'ma_align',           label: 'MA Align',     sort: false, render: function(r) {
+            return '<td style="text-align:center">' + maAlign(r) + '</td>';
+        }},
+        { key: 'rsi_14',             label: 'RSI',          sort: true,  render: function(r) {
+            var v = r.rsi_14;
+            if (v == null) return '<td><span class="neu">—</span></td>';
+            var color = v >= 70 ? 'var(--green)' : v <= 30 ? 'var(--red)' : 'var(--text)';
+            return '<td><span style="color:' + color + ';font-weight:600;">' + parseFloat(v).toFixed(1) + '</span></td>';
+        }},
+
+        { key: 'volume',             label: 'Volume',       sort: true,  render: function(r) {
+            return '<td>' + fmtVol(r.volume) + '</td>';
+        }},
+        { key: 'vol_ratio',          label: 'Vol Ratio',    sort: true,  render: function(r) {
+            var v = parseFloat(r.vol_ratio);
+            if (isNaN(v)) return '<td><span class="neu">—</span></td>';
+            var cls = v >= 2 ? 'pos' : v >= 1 ? 'neu' : 'neg';
+            return '<td><span class="' + cls + '">' + v.toFixed(2) + 'x</span></td>';
+        }},
+        { key: 'vol_label',          label: 'Vol',          sort: true,  render: function(r) {
+            return '<td><span class="vol-badge vb-' + r.vol_label + '">' + (r.vol_label||'—') + '</span></td>';
+        }},
+        { key: 'vol_history',        label: 'Vol Bars',     sort: false, render: function(r) {
+            if (!r.vol_history) return '<td></td>';
+            var bars = r.vol_history.split(',').map(function(lbl) {
+                lbl = lbl.trim();
+                var color = VOL_COLOR[lbl] || '#30363d';
+                var h     = VOL_HEIGHT[lbl] || 5;
+                return '<div style="width:5px;height:' + h + 'px;background:' + color + ';border-radius:1px 1px 0 0;flex-shrink:0;"></div>';
+            }).join('');
+            return '<td><div style="display:flex;align-items:flex-end;gap:2px;height:22px;padding:0 2px;">' + bars + '</div></td>';
+        }},
+        { key: 'pct_from_high',      label: '% from High',  sort: true,  render: function(r) {
+            var v = r.pct_from_high;
+            if (v == null) return '<td><span class="neu">—</span></td>';
+            var color = v <= 10 ? 'var(--green)' : v <= 20 ? 'var(--yellow)' : v <= 30 ? 'var(--red)' : 'var(--muted)';
+            return '<td><span style="color:' + color + '">' + parseFloat(v).toFixed(1) + '%</span></td>';
+        }},
+
+        { key: 'atr_squeeze',        label: 'ATR Sq',       sort: false, render: function(r) {
+            if (!r.atr_squeeze) return '<td></td>';
+            return '<td style="text-align:center"><span title="ATR at 20-bar low" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3fb950;box-shadow:0 0 4px #3fb950;"></span></td>';
+        }},
+        { key: 'rmv_15',             label: 'RMV 15',       sort: true,  render: function(r) {
+            if (r.rmv_15 == null) return '<td></td>';
+            var v = parseFloat(r.rmv_15);
+            if (v < 20)
+                return '<td style="text-align:center"><span title="RMV 15: ' + v.toFixed(1) + '" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#58a6ff;box-shadow:0 0 4px #58a6ff;"></span></td>';
+            return '<td></td>';
+        }},
+        { key: '_rs_vs_spy',         label: 'RS v SPY',     sort: false, render: function(r) {
+            if (r.rs_line == null || r.rs_sma_50 == null) return '<td><span class="neu">—</span></td>';
+            var above = parseFloat(r.rs_line) > parseFloat(r.rs_sma_50);
+            return '<td><span class="rs-badge ' + (above ? 'rs-above' : 'rs-below') + '">' + (above ? 'Above' : 'Below') + '</span></td>';
+        }},
+        { key: 'as_1m',              label: 'AS 1M',        sort: true,  render: function(r) {
+            var v = r.as_1m;
+            if (v == null) return '<td><span class="neu">—</span></td>';
+            var color = v >= 80 ? 'var(--green)' : v >= 50 ? 'var(--yellow)' : 'var(--red)';
+            return '<td><span style="color:' + color + ';font-weight:700;">' + v + '</span></td>';
+        }},
+    ];
+
+    var thead = '<thead><tr>';
+    cols.forEach(function(c) {
+        if (!c.sort) {
+            thead += '<th class="no-sort">' + c.label + '</th>';
+        } else {
+            var sortCls = '';
+            if (sortState.col === c.key) {
+                sortCls = ' class="' + (sortState.dir === 1 ? 'sorted-asc' : 'sorted-desc') + '"';
+            }
+            thead += '<th' + sortCls + ' onclick="clientSort(\'' + c.key + '\')">' + c.label + '</th>';
+        }
+    });
+    thead += '</tr></thead>';
+
+    var tbody = '<tbody>';
+    rows.forEach(function(r) {
+        var rowCls = _openSymbols[r.ticker] ? ' class="row-open-trade"' : '';
+        tbody += '<tr' + rowCls + '>';
+        cols.forEach(function(c) { tbody += c.render(r); });
+        tbody += '</tr>';
+    });
+    tbody += '</tbody>';
+
+    area.innerHTML = '<div class="tbl-wrap"><table>' + thead + tbody + '</table></div>';
+    window._scanRows = rows;
+    window._scanCols = cols;
+}
+
+// ── Client-side re-sort ───────────────────────────────────────────
+function clientSort(col) {
+    if (!window._scanRows) return;
+    if (sortState.col === col) {
+        sortState.dir *= -1;
+    } else {
+        sortState.col = col;
+        sortState.dir = 1;
+    }
+    var d = sortState.dir;
+    window._scanRows.sort(function(a, b) {
+        var av = a[col], bv = b[col];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (col === 'bar_date' || col === 'manual_check') return String(av).localeCompare(String(bv)) * d;
+        if (!isNaN(parseFloat(av))) return (parseFloat(av) - parseFloat(bv)) * d;
+        return String(av).localeCompare(String(bv)) * d;
+    });
+    renderResults(window._scanRows);
+}
+
+window.addEventListener('load', function() { loadOpenSymbols(); loadWatchlistSymbols(); loadTradingDates(); runScan(); });
+</script>
+</body>
+</html>

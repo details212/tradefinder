@@ -1,0 +1,2749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Candlestick Charts — LEO</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2/dist/css/tom-select.css">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #1c2128; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --green: #3fb950; --red: #f85149;
+    --yellow: #d29922; --blue: #58a6ff; --purple: #bc8cff; --radius: 8px;
+}
+html, body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    font-size: 13px; min-height: 100vh;
+}
+.shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ── Topbar ──────────────────────────────────────────────────── */
+.topbar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 1.5rem; display: flex; align-items: center; gap: 1rem;
+    height: 56px; position: sticky; top: 0; z-index: 100;
+    flex-wrap: nowrap; position: relative;
+}
+.topbar-logo { font-size: 15px; font-weight: 700; color: var(--blue); white-space: nowrap; flex-shrink: 0; }
+.topbar-logo a { color: var(--blue); text-decoration: none; }
+.topbar-logo a:hover { text-decoration: underline; }
+.topbar-logo span { color: var(--muted); font-weight: 400; }
+.topbar-search { flex: 1; min-width: 0; max-width: 240px; }
+.topbar-nav { display: flex; align-items: center; gap: .35rem; flex-shrink: 0; margin-left: auto; }
+.btn-nav {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+    border-radius: 5px; padding: .25rem .6rem; font-size: 11px; font-weight: 600;
+    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+    transition: border-color .15s, color .15s;
+}
+.btn-nav:hover { border-color: var(--blue); color: var(--blue); }
+.btn-nav.active { border-color: var(--blue); color: var(--blue); }
+
+/* ── Topbar ticker info ──────────────────────────────────────── */
+#topbar-ticker {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: .5rem;
+    pointer-events: none; white-space: nowrap;
+}
+#topbar-ticker #hdr-symbol {
+    font-size: 15px; font-weight: 800; color: var(--text); white-space: nowrap; flex-shrink: 0;
+}
+#topbar-ticker #hdr-name {
+    font-size: 12px; color: var(--muted); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+
+/* ── Main ────────────────────────────────────────────────────── */
+.main { padding: .75rem 1.5rem 1.5rem; max-width: 100%; width: 100%; margin: 0 auto; flex: 1; }
+
+/* ── Cards ───────────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: .65rem; margin-bottom: 1.25rem; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .8rem .95rem; }
+.card-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: .3rem; }
+.card-value { font-size: 18px; font-weight: 700; line-height: 1.2; }
+.card-sub { font-size: 11px; color: var(--muted); margin-top: .25rem; }
+.card-value.sm { font-size: 14px; }
+.card-value.xs { font-size: 13px; }
+
+/* ── Chart wrap ──────────────────────────────────────────────── */
+.chart-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1rem 1rem .5rem; margin-bottom: 1.5rem;
+    position: relative; display: flex; gap: 1rem; align-items: flex-start;
+}
+#chart-container { height: 1100px; flex: 1; min-width: 0; }
+#chart-info-panel {
+    width: 180px; flex-shrink: 0;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: .85rem 1rem;
+    font-size: 12px; line-height: 1.5;
+    position: sticky; top: 68px; align-self: flex-start;
+}
+.pi-date  { font-size: 11px; color: var(--muted); }
+.pi-close { font-size: 22px; font-weight: 700; margin: .15rem 0 .1rem; }
+.pi-chg   { font-size: 11px; margin-bottom: .1rem; }
+.pi-sep   { border-top: 1px solid var(--border); margin: .55rem 0; }
+.pi-row   { display: flex; justify-content: space-between; align-items: baseline; padding: .1rem 0; }
+.pi-lbl   { color: var(--muted); font-size: 11px; white-space: nowrap; margin-right: .5rem; }
+.pi-val   { font-family: monospace; text-align: right; }
+
+.badge {
+    display: inline-flex; align-items: center; padding: .15rem .5rem;
+    border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .3px;
+}
+.badge-sector { background: rgba(88,166,255,.12); color: var(--blue); }
+.badge-exchange { background: rgba(188,140,255,.12); color: var(--purple); }
+.badge-up { background: rgba(63,185,80,.15); color: var(--green); }
+.badge-down { background: rgba(248,81,73,.15); color: var(--red); }
+.badge-neutral { background: rgba(139,148,158,.12); color: var(--muted); }
+
+/* ── Empty / loading states ──────────────────────────────────── */
+.empty-state {
+    text-align: center; padding: 5rem 2rem; color: var(--muted);
+}
+.empty-state-icon { font-size: 48px; margin-bottom: 1rem; opacity: .4; }
+.empty-state h2 { font-size: 18px; font-weight: 600; margin-bottom: .5rem; color: var(--text); }
+.empty-state p { font-size: 13px; line-height: 1.6; max-width: 360px; margin: 0 auto; }
+
+.chart-toggles {
+    display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
+    padding: 0 0 .6rem 0;
+}
+.chart-toggles-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-right: .15rem; }
+.toggle-btn {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+    border-radius: 5px; padding: .2rem .55rem; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: border-color .15s, color .15s, background .15s;
+    display: inline-flex; align-items: center; gap: .3rem;
+}
+.toggle-btn:hover { border-color: var(--blue); color: var(--blue); }
+.toggle-btn.active { border-color: var(--blue); color: var(--blue); background: rgba(88,166,255,.08); }
+@keyframes open-trade-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(230,59,122,.5); }
+    50%       { opacity: .15; box-shadow: 0 0 0 4px rgba(230,59,122,0); }
+}
+#open-trade-badge {
+    display: none; align-items: center; gap: .35rem;
+    font-size: 11px; font-weight: 700; color: #e63b7a;
+    border: 1px solid #e63b7a; border-radius: 5px;
+    padding: .2rem .55rem; background: rgba(230,59,122,.08);
+    animation: open-trade-pulse 1.6s ease-in-out infinite;
+    cursor: pointer; text-decoration: none; white-space: nowrap;
+}
+#open-trade-badge.show { display: inline-flex; }
+#open-trade-badge:not(.show) ~ button { margin-left: auto; }
+#box-capture { user-select: none; }
+.box-html-btn {
+    position: absolute;
+    z-index: 6;
+    padding: 1px 5px;
+    font-size: 9px;
+    font-weight: 700;
+    border: 1px solid;
+    border-radius: 3px;
+    cursor: pointer;
+    line-height: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    pointer-events: all;
+    white-space: nowrap;
+}
+.box-html-btn:hover { filter: brightness(1.25); }
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.toggle-btn .tb-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+/* ── Trade planner panel ── */
+#panel-trade { margin-top: .85rem; padding-top: .85rem; border-top: 1px solid var(--border); }
+.trade-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: .55rem; }
+.trade-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: .28rem; }
+.trade-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-right: .4rem; }
+.trade-pill { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
+.trade-hint { font-size: 10px; color: var(--muted); text-align: center; padding: .35rem 0; line-height: 1.4; }
+.trade-clear { display: block; width: 100%; text-align: center; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: .3rem; font-size: 11px; cursor: pointer; margin-top: .5rem; transition: border-color .15s, color .15s; }
+.trade-clear:hover { border-color: var(--red); color: var(--red); }
+.trade-alpaca-wrap { margin-top: .6rem; border-top: 1px solid var(--border); padding-top: .6rem; }
+.trade-qty-row { display: flex; align-items: center; gap: 5px; margin-bottom: .45rem; }
+.trade-qty-row label { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.trade-qty-input { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: .25rem .4rem; font-size: 11px; text-align: right; }
+.trade-qty-input:focus { outline: none; border-color: var(--blue); }
+.trade-send-btn { display: block; width: 100%; text-align: center; background: rgba(63,185,80,.12); border: 1px solid #3fb950; color: #3fb950; border-radius: 5px; padding: .35rem; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .15s; }
+.trade-send-btn:hover { background: rgba(63,185,80,.22); }
+.trade-send-btn:disabled { opacity: .4; cursor: default; pointer-events: none; }
+.trade-feedback { font-size: 10px; text-align: center; margin-top: .35rem; line-height: 1.4; min-height: 1.2em; }
+
+/* ── Replay panel ── */
+#panel-replay { margin-top: .85rem; padding-top: .85rem; border-top: 1px solid var(--border); }
+.replay-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: .55rem; }
+.replay-date-input {
+    width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    border-radius: 5px; padding: .3rem .5rem; font-size: 11px; margin-bottom: .5rem;
+    color-scheme: dark;
+}
+.replay-date-input:focus { outline: none; border-color: var(--blue); }
+.replay-btn {
+    display: block; width: 100%; text-align: center;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 5px; padding: .35rem; font-size: 11px; font-weight: 600;
+    cursor: pointer; margin-bottom: .35rem; transition: border-color .15s, color .15s;
+}
+.replay-btn:hover { border-color: var(--blue); color: var(--blue); }
+.replay-btn.primary { border-color: var(--blue); color: var(--blue); background: rgba(88,166,255,.08); }
+.replay-btn.danger  { border-color: var(--red);  color: var(--red);  background: rgba(248,81,73,.07); }
+.replay-btn:disabled { opacity: .35; cursor: default; pointer-events: none; }
+.replay-current {
+    text-align: center; font-size: 13px; font-weight: 700; color: var(--text);
+    margin-bottom: .4rem; letter-spacing: .3px;
+}
+.replay-badge {
+    display: inline-block; background: rgba(248,81,73,.15); color: var(--red);
+    border: 1px solid var(--red); border-radius: 4px; font-size: 9px; font-weight: 700;
+    padding: .1rem .35rem; letter-spacing: .5px; text-transform: uppercase;
+    margin-bottom: .5rem;
+}
+.replay-hint { font-size: 10px; color: var(--muted); text-align: center; margin-top: .2rem; }
+
+.loading-bar {
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--blue), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+    border-radius: var(--radius) var(--radius) 0 0;
+    display: none;
+}
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+/* ── Pos / neg colours ───────────────────────────────────────── */
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+.muted { color: var(--muted); }
+
+/* ── Scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ── Tom Select dark theme ───────────────────────────────────── */
+.ts-wrapper { width: 100%; }
+.ts-wrapper .ts-control {
+    background: var(--surface2) !important;
+    border-color: var(--border) !important;
+    border-radius: var(--radius) !important;
+    color: var(--text) !important;
+    box-shadow: none !important;
+    min-height: 34px !important;
+    font-size: 13px !important;
+    padding: .3rem .6rem !important;
+}
+.ts-wrapper.focus .ts-control { border-color: var(--blue) !important; }
+.ts-wrapper .ts-control input {
+    color: var(--text) !important;
+    font-size: 13px !important;
+}
+.ts-wrapper .ts-control input::placeholder { color: var(--muted) !important; }
+.ts-wrapper .ts-dropdown {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5) !important;
+    font-size: 13px !important;
+    color: var(--text) !important;
+    margin-top: 2px !important;
+}
+.ts-wrapper .ts-dropdown .option {
+    padding: .45rem .75rem !important;
+    color: var(--text) !important;
+    cursor: pointer;
+}
+.ts-wrapper .ts-dropdown .option:hover,
+.ts-wrapper .ts-dropdown .option.active {
+    background: var(--surface2) !important;
+    color: var(--blue) !important;
+}
+.ts-wrapper .ts-dropdown .no-results {
+    padding: .75rem 1rem; color: var(--muted); font-size: 12px;
+}
+.ts-option-inner { display: flex; align-items: baseline; gap: .6rem; min-width: 0; }
+.ts-opt-ticker { font-weight: 700; font-size: 13px; flex-shrink: 0; color: var(--text); }
+.ts-opt-name { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.ts-opt-sector { font-size: 10px; color: var(--purple); flex-shrink: 0; }
+.ts-wrapper .ts-dropdown .option:hover .ts-opt-ticker,
+.ts-wrapper .ts-dropdown .option.active .ts-opt-ticker { color: var(--blue); }
+
+.ts-wrapper .ts-control .item { color: var(--text) !important; font-weight: 700; }
+.ts-wrapper .ts-control .clear-button { color: var(--muted) !important; }
+.ts-wrapper .ts-control .clear-button:hover { color: var(--red) !important; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── Topbar ─────────────────────────────────────────────────── -->
+<header class="topbar">
+    <div class="topbar-logo"><a href="#">LEO</a> <span>/ Candlestick</span></div>
+
+    <div class="topbar-search">
+        <select id="ticker-select" placeholder="Search ticker or company name…" autocomplete="off"></select>
+    </div>
+
+    <div id="topbar-ticker" style="display:none;">
+        <span id="hdr-symbol"></span>
+        <span id="hdr-name"></span>
+        <span class="badge badge-sector"   id="hdr-sector"   style="display:none;"></span>
+        <span class="badge badge-exchange" id="hdr-exchange" style="display:none;"></span>
+    </div>
+
+    <nav class="topbar-nav">
+        <a href="/scanner" class="btn-nav">Scanner</a>
+        <a href="/developing_scanner" class="btn-nav">Developing</a>
+        <a href="/symbol_history" class="btn-nav">Symbol History</a>
+        <a href="/orders" class="btn-nav">Orders</a>
+        <a href="/watchlist" class="btn-nav">⭐ Watchlist</a>
+        <a href="/active_symbols" class="btn-nav">📋 Active Symbols</a>
+        <span class="btn-nav active" style="cursor:default;">Chart</span>
+    </nav>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────────────── -->
+<main class="main">
+
+    <!-- Empty state -->
+    <div id="empty-state" class="empty-state">
+        <div class="empty-state-icon">📈</div>
+        <h2>Select a Ticker</h2>
+        <p>Search for a stock symbol or company name in the bar above to load a candlestick chart.</p>
+    </div>
+
+    <!-- Ticker content (hidden until ticker selected) -->
+    <div id="ticker-content" style="display:none;">
+
+        <!-- Chart -->
+        <div class="chart-wrap">
+            <div class="loading-bar" id="loading-bar"></div>
+            <div style="flex:1;min-width:0;">
+            <div class="chart-toggles" id="chart-toggles">
+                <span class="chart-toggles-label">Show</span>
+                <button class="toggle-btn" id="tog-52w"    data-key="52week"  onclick="toggleSeries('52week',   this)"><span class="tb-dot" style="background:#56d0c8;"></span>52W Range</button>
+                <button class="toggle-btn active" id="tog-sma50"  data-key="sma50"   onclick="toggleSeries('sma50',    this)"><span class="tb-dot" style="background:#58a6ff;"></span>SMA 50</button>
+                <button class="toggle-btn active" id="tog-sma150" data-key="sma150"  onclick="toggleSeries('sma150',   this)"><span class="tb-dot" style="background:#d29922;"></span>SMA 150</button>
+                <button class="toggle-btn active" id="tog-sma200" data-key="sma200"  onclick="toggleSeries('sma200',   this)"><span class="tb-dot" style="background:#f85149;"></span>SMA 200</button>
+                <button class="toggle-btn active" id="tog-ema"    data-key="emas"    onclick="toggleSeries('emas',     this)"><span class="tb-dot" style="background:#3fb950;"></span>EMA 10/20</button>
+                <button class="toggle-btn" id="tog-vcp"    data-key="vcpmark" onclick="toggleSeries('vcpmark',  this)"><span class="tb-dot" style="background:#3fb950;"></span>Pivots</button>
+                <button class="toggle-btn" id="tog-zones" onclick="toggleZones(this)"><span class="tb-dot" style="background:#3fb950;"></span><span class="tb-dot" style="background:#bc8cff;margin-left:2px;"></span> Zones</button>
+                <button class="toggle-btn" id="tog-develop" onclick="toggleDevelop(this)"><span class="tb-dot" style="background:#d29922;"></span><span class="tb-dot" style="background:#38bdf8;margin-left:2px;"></span> Develop</button>
+                <button class="toggle-btn" id="tog-pane-rsi" onclick="togglePane('rsi')" title="Show/hide RSI pane" style="margin-left:12px;padding-left:12px;border-left:1px solid var(--border);"><span class="tb-dot" style="background:#bc8cff;"></span>RSI</button>
+                <button class="toggle-btn active" id="tog-pane-atr" onclick="togglePane('atr')" title="Show/hide ATR pane"><span class="tb-dot" style="background:#38bdf8;"></span>ATR</button>
+                <button class="toggle-btn active" id="tog-pane-rs"  onclick="togglePane('rs')"  title="Show/hide RS Line pane"><span class="tb-dot" style="background:#58a6ff;"></span>RS</button>
+                <button class="toggle-btn active" id="tog-pane-rmv" onclick="togglePane('rmv')" title="Show/hide RMV pane"><span class="tb-dot" style="background:#f0883e;"></span>RMV</button>
+                <a id="open-trade-badge" href="/orders" title="Open trade — view in Orders" style="margin-left:auto;">● Open Trade</a>
+                <span id="open-trade-sep" style="display:none;width:1px;background:var(--border);height:14px;margin:0 8px;flex-shrink:0;"></span>
+                <button class="toggle-btn" onclick="window.jumpToLatest()" title="Jump to most recent bar">→ Latest</button>
+                <span style="display:inline-block;width:1px;background:var(--border);height:14px;margin:0 8px;flex-shrink:0;"></span>
+                <button class="toggle-btn" id="btn-box-draw" onclick="window.toggleBoxDraw()" title="Draw a box on the chart">☐ Box</button>
+                <button class="toggle-btn" id="btn-box-clear" onclick="window.clearAllBoxes()" title="Remove all boxes" style="display:none;">✕ Clear</button>
+            </div>
+            <div style="position:relative;" id="chart-wrapper">
+            <div id="chart-container"></div>
+            <svg id="box-overlay" style="position:absolute;top:0;left:0;pointer-events:none;overflow:hidden;"></svg>
+            <div id="box-capture" style="position:absolute;top:0;left:0;width:100%;height:100%;display:none;z-index:10;cursor:crosshair;"></div>
+            </div>
+            </div>
+            <div id="chart-info-panel">
+                <div id="panel-hover">
+                    <div class="pi-date" style="text-align:center;padding:.75rem 0;color:var(--muted);">Hover over the chart</div>
+                </div>
+                <div id="panel-trade">
+                    <div class="trade-label">Trade Planner</div>
+                    <div id="trade-content">
+                        <div class="trade-hint">Click on the chart to set an entry level</div>
+                    </div>
+                    <div id="trade-clear-wrap" style="display:none;">
+                        <div class="trade-alpaca-wrap">
+                            <div class="trade-qty-row">
+                                <label>Shares</label>
+                                <input type="number" id="trade-qty" class="trade-qty-input" value="1" min="1" step="1">
+                            </div>
+                            <button class="trade-send-btn" id="trade-send-btn" onclick="window.sendToAlpaca()">▶ Send to Alpaca</button>
+                            <div class="trade-feedback" id="trade-feedback"></div>
+                        </div>
+                        <button class="trade-clear" onclick="window.clearTradePlan()">✕ Clear</button>
+                    </div>
+                </div>
+                <div id="panel-vcp"></div>
+                <div id="panel-as1m"></div>
+                <div id="panel-replay">
+                    <div class="replay-label">Replay</div>
+                    <div id="replay-idle">
+                        <input type="date" id="replay-date-input" class="replay-date-input">
+                        <button class="replay-btn primary" onclick="window.startReplay()">▶ Start Replay</button>
+                    </div>
+                    <div id="replay-active" style="display:none;">
+                        <div style="text-align:center;margin-bottom:.4rem;"><span class="replay-badge">● LIVE REPLAY</span></div>
+                        <div class="replay-current" id="replay-current-date"></div>
+                        <button class="replay-btn primary" id="replay-next-btn" onclick="window.replayNextDay()">Next Day →</button>
+                        <button class="replay-btn" onclick="window.replayPrevDay()">← Prev Day</button>
+                        <button class="replay-btn danger" onclick="window.exitReplay()">✕ Exit Replay</button>
+                        <div class="replay-hint">or use ← → arrow keys</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Price cards -->
+        <div class="cards" id="price-cards" style="margin-top:1.25rem;"></div>
+
+        <!-- Fundamentals cards -->
+        <div id="fund-section" style="display:none;">
+            <h2 style="font-size:15px;font-weight:700;margin-bottom:.85rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-size:11px;">Fundamentals</h2>
+            <div class="cards" id="fund-cards"></div>
+        </div>
+
+    </div>
+</main>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2/dist/js/tom-select.complete.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highcharts@12/highstock.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highcharts@12/highcharts-more.js"></script>
+<script>
+(function () {
+'use strict';
+
+// ── Series Toggles ──────────────────────────────────────────────
+var TOGGLE_MAP = {
+    '52week':  ['52 Week High', '52 Week Low'],
+    'sma50':   ['SMA 50'],
+    'sma150':  ['SMA 150'],
+    'sma200':  ['SMA 200'],
+    'emas':    ['EMA 10', 'EMA 20'],
+    'vcpmark': ['Pivots'],
+};
+function toggleSeries(key, btn) {
+    if (!currentChart) return;
+    var names = TOGGLE_MAP[key] || [key];
+    var anyVisible = currentChart.series.some(function(s) {
+        return names.indexOf(s.name) >= 0 && s.visible;
+    });
+    currentChart.series.forEach(function(s) {
+        if (names.indexOf(s.name) >= 0) s.setVisible(!anyVisible, false);
+    });
+    currentChart.redraw();
+    if (btn) {
+        btn.classList.toggle('active', !anyVisible);
+    }
+}
+window.toggleSeries = toggleSeries;
+
+// ── Zones (consolidation start/end vertical lines) ─────────────────
+var _zonesActive = false;
+var _zonesData   = [];
+
+function _dateToUtcTs(dateStr) {
+    // dateStr is 'YYYY-MM-DD'; parse as UTC midnight
+    var p = dateStr.split('-');
+    return Date.UTC(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
+}
+
+function _applyZonePlotLines() {
+    if (!currentChart) return;
+    var axis = currentChart.xAxis[0];
+    _zonesData.forEach(function(z, i) {
+        if (z.zone_start_date) {
+            axis.addPlotLine({
+                id:        'zone-s-' + i,
+                value:     _dateToUtcTs(z.zone_start_date),
+                color:     '#3fb950',
+                width:     1,
+                dashStyle: 'Solid',
+                zIndex:    3
+            });
+        }
+        if (z.zone_end_date) {
+            axis.addPlotLine({
+                id:        'zone-e-' + i,
+                value:     _dateToUtcTs(z.zone_end_date),
+                color:     '#bc8cff',
+                width:     1,
+                dashStyle: 'Solid',
+                zIndex:    3
+            });
+        }
+    });
+}
+
+function _clearZonePlotLines() {
+    if (!currentChart) return;
+    var axis = currentChart.xAxis[0];
+    _zonesData.forEach(function(z, i) {
+        axis.removePlotLine('zone-s-' + i);
+        axis.removePlotLine('zone-e-' + i);
+    });
+}
+
+function toggleZones(btn) {
+    _zonesActive = !_zonesActive;
+    if (btn) {
+        if (_zonesActive) btn.classList.add('active');
+        else btn.classList.remove('active');
+    }
+    if (!_zonesActive) {
+        _clearZonePlotLines();
+        return;
+    }
+    if (!currentTicker) return;
+    fetch('/api/zones/' + encodeURIComponent(currentTicker))
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            _zonesData = rows;
+            _applyZonePlotLines();
+        })
+        .catch(function(e) { console.error('zones fetch error', e); });
+}
+window.toggleZones = toggleZones;
+
+// Re-apply zones when a new ticker loads while the overlay is active
+(function() {
+    var _prev = window._onTickerLoaded;
+    window._onTickerLoaded = function(ticker) {
+        if (_prev) _prev(ticker);
+        if (_zonesActive) {
+            _clearZonePlotLines();
+            fetch('/api/zones/' + encodeURIComponent(ticker))
+                .then(function(r) { return r.json(); })
+                .then(function(rows) {
+                    _zonesData = rows;
+                    _applyZonePlotLines();
+                })
+                .catch(function(e) { console.error('zones fetch error', e); });
+        }
+        if (_developActive) {
+            _clearDevelopPlotLines();
+            fetch('/api/developing_zones/' + encodeURIComponent(ticker))
+                .then(function(r) { return r.json(); })
+                .then(function(rows) {
+                    _developData = rows;
+                    _applyDevelopPlotLines();
+                })
+                .catch(function(e) { console.error('develop fetch error', e); });
+        }
+    };
+}());
+
+// ── Develop (consolidation_developing start/end vertical lines) ────
+var _developActive = false;
+var _developData   = [];
+
+function _applyDevelopPlotLines() {
+    if (!currentChart) return;
+    var axis = currentChart.xAxis[0];
+    _developData.forEach(function(z, i) {
+        if (z.zone_start_date) {
+            axis.addPlotLine({
+                id:        'dev-s-' + i,
+                value:     _dateToUtcTs(z.zone_start_date),
+                color:     '#d29922',
+                width:     1,
+                dashStyle: 'Solid',
+                zIndex:    3
+            });
+        }
+        if (z.zone_end_date) {
+            axis.addPlotLine({
+                id:        'dev-e-' + i,
+                value:     _dateToUtcTs(z.zone_end_date),
+                color:     '#38bdf8',
+                width:     1,
+                dashStyle: 'Solid',
+                zIndex:    3
+            });
+        }
+    });
+}
+
+function _clearDevelopPlotLines() {
+    if (!currentChart) return;
+    var axis = currentChart.xAxis[0];
+    _developData.forEach(function(z, i) {
+        axis.removePlotLine('dev-s-' + i);
+        axis.removePlotLine('dev-e-' + i);
+    });
+}
+
+function toggleDevelop(btn) {
+    _developActive = !_developActive;
+    if (btn) {
+        if (_developActive) btn.classList.add('active');
+        else btn.classList.remove('active');
+    }
+    if (!_developActive) {
+        _clearDevelopPlotLines();
+        return;
+    }
+    if (!currentTicker) return;
+    fetch('/api/developing_zones/' + encodeURIComponent(currentTicker))
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            _developData = rows;
+            _applyDevelopPlotLines();
+        })
+        .catch(function(e) { console.error('develop fetch error', e); });
+}
+window.toggleDevelop = toggleDevelop;
+
+function updatePaneLayout() {
+    if (!currentChart) return;
+    var showRsi = paneState.rsi;
+    var showAtr = paneState.atr;
+    var showRs  = paneState.rs;
+    var showRmv = paneState.rmv;
+
+    // Heights — tuned so all 4 sub-panes fit in 99% total
+    var GAP = 3, VOL_H = 11, RSI_H = 11, ATR_H = 11, RS_H = 11, RMV_H = 11;
+    var PRICE_H = 26;  // price pane stays fixed; sub-panes slide up when one is hidden
+
+    // Volume always sits directly below the price pane
+    var volTop = PRICE_H + GAP;  // 29
+
+    // Sub-panes pack upward after the volume pane — order: ATR → RS → RMV → RSI (bottom)
+    var cursor = volTop + VOL_H + GAP;  // 42
+
+    var atrTop = cursor;
+    if (showAtr) cursor += ATR_H + GAP;
+
+    var rsTop = cursor;
+    if (showRs) cursor += RS_H + GAP;
+
+    var rmvTop = cursor;
+    if (showRmv) cursor += RMV_H + GAP;
+
+    var rsiTop = cursor;
+
+    currentChart.yAxis[0].update({ height: PRICE_H + '%' }, false);
+    currentChart.yAxis[1].update({ top: volTop + '%' }, false);
+    currentChart.yAxis[2].update({ top: atrTop + '%', height: (showAtr ? ATR_H : 0) + '%' }, false);
+    currentChart.yAxis[3].update({ top: rsTop  + '%', height: (showRs  ? RS_H  : 0) + '%' }, false);
+    currentChart.yAxis[4].update({ top: rmvTop + '%', height: (showRmv ? RMV_H : 0) + '%' }, false);
+    currentChart.yAxis[5].update({ top: rsiTop + '%', height: (showRsi ? RSI_H : 0) + '%' }, false);
+
+    var RSI_SERIES = ['RSI (14)', 'RSI Cross Up', 'RSI Cross Down'];
+    var ATR_SERIES = ['ATR (10)', 'ATR Squeeze'];
+    var RS_SERIES  = ['RS Line', 'RS SMA 50', 'RS New High', 'RS Fill Above', 'RS Fill Below'];
+    var RMV_SERIES = ['RMV 15'];
+    currentChart.series.forEach(function(s) {
+        if (RSI_SERIES.indexOf(s.name) >= 0) s.setVisible(showRsi, false);
+        if (ATR_SERIES.indexOf(s.name) >= 0) s.setVisible(showAtr, false);
+        if (RS_SERIES.indexOf(s.name)  >= 0) s.setVisible(showRs,  false);
+        if (RMV_SERIES.indexOf(s.name) >= 0) s.setVisible(showRmv, false);
+    });
+
+    // Resize chart to hug the bottom of the last visible pane — no empty space
+    var contentBottom = volTop + VOL_H;
+    if (showAtr) contentBottom = atrTop + ATR_H;
+    if (showRs)  contentBottom = rsTop  + RS_H;
+    if (showRmv) contentBottom = rmvTop + RMV_H;
+    if (showRsi) contentBottom = rsiTop + RSI_H;
+    // 16px per % of plot height, +130px for navigator + axis labels
+    var newH = Math.max(700, Math.round(contentBottom * 16) + 130);
+    var container = document.getElementById('chart-container');
+    if (container) container.style.height = newH + 'px';
+    currentChart.setSize(null, newH, false);
+
+    currentChart.redraw();
+
+    var btnRsi = document.getElementById('tog-pane-rsi');
+    var btnAtr = document.getElementById('tog-pane-atr');
+    var btnRs  = document.getElementById('tog-pane-rs');
+    var btnRmv = document.getElementById('tog-pane-rmv');
+    if (btnRsi) btnRsi.classList.toggle('active', showRsi);
+    if (btnAtr) btnAtr.classList.toggle('active', showAtr);
+    if (btnRs)  btnRs.classList.toggle('active',  showRs);
+    if (btnRmv) btnRmv.classList.toggle('active',  showRmv);
+
+    updatePaneLabels();
+}
+
+function togglePane(pane) {
+    paneState[pane] = !paneState[pane];
+    updatePaneLayout();
+}
+window.togglePane = togglePane;
+
+// ── Helpers ─────────────────────────────────────────────────────
+function fmtPrice(v) {
+    if (v == null) return '—';
+    return '$' + parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtNum(v, dec) {
+    if (v == null) return '—';
+    return parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: dec ?? 2, maximumFractionDigits: dec ?? 2 });
+}
+function fmtPct(v, isDecimalFraction) {
+    if (v == null) return '—';
+    var n = isDecimalFraction ? parseFloat(v) * 100 : parseFloat(v);
+    return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+function fmtCap(v) {
+    if (v == null) return '—';
+    var n = parseInt(v);
+    if (n >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+    if (n >= 1e9)  return '$' + (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6)  return '$' + (n / 1e6).toFixed(1) + 'M';
+    return '$' + n.toLocaleString();
+}
+function fmtVol(v) {
+    if (v == null) return '—';
+    var n = parseInt(v);
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
+    return n.toLocaleString();
+}
+function recText(mean) {
+    if (mean == null) return null;
+    var v = parseFloat(mean);
+    if (v <= 1.5) return { text: 'Strong Buy', cls: 'pos' };
+    if (v <= 2.5) return { text: 'Buy',         cls: 'pos' };
+    if (v <= 3.5) return { text: 'Hold',         cls: 'muted' };
+    if (v <= 4.5) return { text: 'Sell',         cls: 'neg' };
+    return           { text: 'Strong Sell', cls: 'neg' };
+}
+function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Tom Select ──────────────────────────────────────────────────
+var ts = new TomSelect('#ticker-select', {
+    valueField: 'ticker',
+    labelField: 'ticker',
+    searchField: ['ticker', 'name'],
+    maxOptions: 100,
+    placeholder: 'Search ticker or company name…',
+    shouldLoad: function(q) { return q.length >= 1; },
+    load: function(query, callback) {
+        fetch('/api/tickers?q=' + encodeURIComponent(query))
+            .then(function(r) { return r.json(); })
+            .then(function(data) { callback(data); })
+            .catch(function() { callback(); });
+    },
+    render: {
+        option: function(item, escape) {
+            return '<div class="ts-option-inner">' +
+                '<span class="ts-opt-ticker">' + escape(item.ticker) + '</span>' +
+                '<span class="ts-opt-name">' + escape(item.name || '') + '</span>' +
+                (item.sector ? '<span class="ts-opt-sector">' + escape(item.sector) + '</span>' : '') +
+                '</div>';
+        },
+        item: function(item, escape) {
+            return '<div style="font-weight:700;">' + escape(item.ticker) +
+                (item.name ? '<span style="font-weight:400;color:var(--muted);margin-left:.5rem;font-size:12px;">' + escape(item.name) + '</span>' : '') +
+                '</div>';
+        }
+    },
+    onChange: function(value) {
+        if (value) {
+            history.replaceState(null, '', '?ticker=' + encodeURIComponent(value));
+            loadTicker(value);
+        }
+    },
+    onFocus: function() {
+        // Clear the selected value so the user can type a fresh search
+        this.clear(true);
+        this.clearOptions();
+    }
+});
+
+// ── RSI Calculator (Wilder's smoothing) ─────────────────────────
+function calcRSI(ohlcv, period) {
+    period = period || 14;
+    var result = [];
+    if (ohlcv.length < period + 1) return result;
+
+    // Build close-to-close changes
+    var changes = [];
+    for (var i = 1; i < ohlcv.length; i++) {
+        changes.push((ohlcv[i][4] || 0) - (ohlcv[i - 1][4] || 0));
+    }
+
+    // Seed: simple average of first `period` changes
+    var avgGain = 0, avgLoss = 0;
+    for (var i = 0; i < period; i++) {
+        if (changes[i] > 0) avgGain += changes[i];
+        else                 avgLoss += Math.abs(changes[i]);
+    }
+    avgGain /= period;
+    avgLoss /= period;
+
+    function rsiFrom(ag, al) {
+        if (al === 0) return 100;
+        if (ag === 0) return 0;
+        return 100 - (100 / (1 + ag / al));
+    }
+
+    // First RSI value corresponds to ohlcv index `period`
+    result.push([ohlcv[period][0], parseFloat(rsiFrom(avgGain, avgLoss).toFixed(2))]);
+
+    // Subsequent values: Wilder's smoothing
+    for (var i = period; i < changes.length; i++) {
+        var gain = changes[i] > 0 ? changes[i] : 0;
+        var loss = changes[i] < 0 ? Math.abs(changes[i]) : 0;
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+        result.push([ohlcv[i + 1][0], parseFloat(rsiFrom(avgGain, avgLoss).toFixed(2))]);
+    }
+    return result;
+}
+
+// ── Heatmap Volume (port of xdecow's Pine Script) ────────────────
+// Colors each bar by how many std-devs its volume is above the rolling mean.
+// maLen/stdLen both default to 5 (matching Pine Script defaults).
+function calcHeatmapVolume(ohlcv, volume, maLen, stdLen) {
+    maLen  = maLen  || 5;
+    stdLen = stdLen || 5;
+
+    // Thresholds (stdbar z-score cutoffs)
+    var T_XHIGH = 1.75, T_HIGH = 1.5, T_MED = 1.0, T_NORM = -1.0;
+
+    // Heatmap colors (same as Pine Script defaults)
+    var C_XHIGH = '#ff0000';   // extra high – red
+    var C_HIGH  = '#ff7800';   // high – orange
+    var C_MED   = '#ffcf03';   // medium – yellow
+    var C_NORM  = '#a0d6dc';   // normal – light teal
+    var C_LOW   = '#1f9cac';   // low – dark teal
+
+    var bars = [], ma = [], thresh = [];
+    var n = volume.length;
+
+    for (var i = 0; i < n; i++) {
+        var ts  = volume[i][0];
+        var vol = volume[i][1];
+
+        // Rolling mean (SMA of volume over maLen bars)
+        var mStart = Math.max(0, i - maLen + 1);
+        var mSum = 0, mCount = i - mStart + 1;
+        for (var j = mStart; j <= i; j++) mSum += volume[j][1];
+        var mean = mSum / mCount;
+
+        // Population std over stdLen bars (pstdev in Pine Script)
+        var sStart = Math.max(0, i - stdLen + 1);
+        var sSum = 0, sCount = i - sStart + 1;
+        for (var j = sStart; j <= i; j++) sSum += volume[j][1];
+        var sMean = sSum / sCount;
+        var variance = 0;
+        for (var j = sStart; j <= i; j++) {
+            var d = volume[j][1] - sMean;
+            variance += d * d;
+        }
+        var std = Math.sqrt(variance / sCount);
+
+        var stdbar = std > 0 ? (vol - mean) / std : 0;
+
+        var color;
+        if      (stdbar > T_XHIGH) color = C_XHIGH;
+        else if (stdbar > T_HIGH)  color = C_HIGH;
+        else if (stdbar > T_MED)   color = C_MED;
+        else if (stdbar > T_NORM)  color = C_NORM;
+        else                       color = C_LOW;
+
+        bars.push({ x: ts, y: vol, color: color });
+        ma.push([ts, Math.round(mean)]);
+
+        // Threshold level lines: ts1..ts4 (std * threshold + mean)
+        thresh.push({
+            x:   ts,
+            ts1: parseFloat((std * T_XHIGH + mean).toFixed(0)),
+            ts2: parseFloat((std * T_HIGH  + mean).toFixed(0)),
+            ts3: parseFloat((std * T_MED   + mean).toFixed(0)),
+            ts4: parseFloat((std * T_NORM  + mean).toFixed(0))
+        });
+    }
+
+    return { bars: bars, ma: ma, thresh: thresh };
+}
+
+// ── Donchian Channel ─────────────────────────────────────────────
+function calcDonchian(ohlcv, period) {
+    var upper = [], lower = [];
+    for (var i = period - 1; i < ohlcv.length; i++) {
+        var ts = ohlcv[i][0];
+        var hi = -Infinity, lo = Infinity;
+        for (var j = i - period + 1; j <= i; j++) {
+            if ((ohlcv[j][2] || 0) > hi) hi = ohlcv[j][2];
+            if ((ohlcv[j][3] || 0) < lo) lo = ohlcv[j][3];
+        }
+        upper.push([ts, parseFloat(hi.toFixed(4))]);
+        lower.push([ts, parseFloat(lo.toFixed(4))]);
+    }
+    return { upper: upper, lower: lower };
+}
+
+// ── Simple Moving Average ────────────────────────────────────────
+function calcSMA(ohlcv, period) {
+    var result = [];
+    if (ohlcv.length < period) return result;
+    var sum = 0;
+    for (var i = 0; i < period - 1; i++) sum += (ohlcv[i][4] || 0);
+    for (var i = period - 1; i < ohlcv.length; i++) {
+        sum += (ohlcv[i][4] || 0);
+        result.push([ohlcv[i][0], parseFloat((sum / period).toFixed(4))]);
+        sum -= (ohlcv[i - period + 1][4] || 0);
+    }
+    return result;
+}
+
+// ── Exponential Moving Average ───────────────────────────────────
+function calcEMA(ohlcv, period) {
+    var result = [];
+    if (ohlcv.length < period) return result;
+    var k = 2 / (period + 1);
+    // Seed with SMA of first `period` closes
+    var sum = 0;
+    for (var i = 0; i < period; i++) sum += (ohlcv[i][4] || 0);
+    var ema = sum / period;
+    result.push([ohlcv[period - 1][0], parseFloat(ema.toFixed(4))]);
+    for (var i = period; i < ohlcv.length; i++) {
+        ema = ((ohlcv[i][4] || 0) - ema) * k + ema;
+        result.push([ohlcv[i][0], parseFloat(ema.toFixed(4))]);
+    }
+    return result;
+}
+
+// ── Average True Range (Wilder's smoothing) ──────────────────────
+function calcATR(ohlcv, period) {
+    period = period || 10;
+    var result = [];
+    if (ohlcv.length < 2) return result;
+    var trs = [];
+    for (var i = 1; i < ohlcv.length; i++) {
+        var h = ohlcv[i][2], l = ohlcv[i][3], pc = ohlcv[i - 1][4];
+        trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    }
+    if (trs.length < period) return result;
+    var sum = 0;
+    for (var i = 0; i < period; i++) sum += trs[i];
+    var atr = sum / period;
+    result.push([ohlcv[period][0], parseFloat(atr.toFixed(4))]);
+    for (var i = period; i < trs.length; i++) {
+        atr = (atr * (period - 1) + trs[i]) / period;
+        result.push([ohlcv[i + 1][0], parseFloat(atr.toFixed(4))]);
+    }
+    return result;
+}
+
+// ── Swing-high pivot levels ──────────────────────────────────────
+// Returns the last `count` swing highs using a `lb`-bar lookback on each side.
+function calcPivotHighs(ohlcv, lb, count) {
+    lb    = lb    || 5;
+    count = count || 5;
+    var result = [], n = ohlcv.length;
+    for (var i = lb; i < n - lb; i++) {
+        var h = ohlcv[i][2], ok = true;
+        for (var j = i - lb; j <= i + lb; j++) {
+            if (j !== i && ohlcv[j][2] >= h) { ok = false; break; }
+        }
+        if (ok) result.push({ ts: ohlcv[i][0], high: h });
+    }
+    return result.slice(-count);
+}
+
+// Returns points where ATR is at a `lookback`-bar low (compression zones)
+function calcATRSqueeze(atrData, lookback) {
+    lookback = lookback || 20;
+    var result = [];
+    for (var i = lookback - 1; i < atrData.length; i++) {
+        var cur = atrData[i][1], isLow = true;
+        for (var j = i - lookback + 1; j < i; j++) {
+            if (atrData[j][1] <= cur) { isLow = false; break; }
+        }
+        if (isLow) result.push([atrData[i][0], cur]);
+    }
+    return result;
+}
+
+// ── RSI 50 crossover detector ────────────────────────────────────
+// Returns timestamps where RSI crossed from below 50 to above 50
+function calcRSICrossovers(rsiData, level) {
+    level = level || 50;
+    var up = [], down = [];
+    for (var i = 1; i < rsiData.length; i++) {
+        var prev = rsiData[i - 1][1], curr = rsiData[i][1];
+        if (prev < level && curr >= level) up.push(rsiData[i][0]);
+        if (prev > level && curr <= level) down.push(rsiData[i][0]);
+    }
+    return { up: up, down: down };
+}
+
+// ── VCP Detector (port of Minervini walk-forward detector) ───────
+function runVCPScan(ohlcv, volume) {
+    var LB = 5, MIN_LEGS = 2, MAX_LEGS = 5;
+    var MAX_FIRST = 0.35, MIN_LAST = 0.01, MAX_LAST = 0.08, VW = 1.5;
+
+    var n      = ohlcv.length;
+    var highs  = ohlcv.map(function(b) { return b[2]; });
+    var lows   = ohlcv.map(function(b) { return b[3]; });
+    var vols   = volume.map(function(v) { return v[1]; });
+    var tss    = ohlcv.map(function(b) { return b[0]; });
+
+    function isSwingHigh(i) {
+        if (i < LB || i + LB >= n) return false;
+        var c = highs[i];
+        for (var j = i-LB; j < i; j++)       if (c <= highs[j]) return false;
+        for (var j = i+1; j <= i+LB; j++)    if (c < highs[j])  return false;
+        return true;
+    }
+    function isSwingLow(i) {
+        if (i < LB || i + LB >= n) return false;
+        var c = lows[i];
+        for (var j = i-LB; j < i; j++)       if (c >= lows[j]) return false;
+        for (var j = i+1; j <= i+LB; j++)    if (c > lows[j])  return false;
+        return true;
+    }
+    function buildLeg(s, e) {
+        var h = highs[s], l = lows[e], depth = (h - l) / h;
+        if (depth < 0.005) return null;
+        var sum = 0;
+        for (var j = s; j <= e; j++) sum += vols[j];
+        return { s: s, e: e, high: h, low: l, depth: depth, avgVol: sum / (e-s+1), bars: e-s+1, ts: tss[e] };
+    }
+    function contractionScore(vals, wr) {
+        wr = wr !== undefined ? wr : 1.0;
+        if (vals.length < 2) return 0;
+        var np = vals.length - 1, totalW = 0, score = 0;
+        for (var i = 0; i < np; i++) {
+            var w = np === 1 ? 1.0 : 1.0 + (wr - 1.0) * i / (np - 1);
+            totalW += w;
+            if (vals[i+1] < vals[i])      score += w;
+            else if (vals[i+1] === vals[i]) score += w * 0.5;
+        }
+        return totalW > 0 ? (score / totalW) * 100 : 0;
+    }
+    function evalVCP(legs) {
+        if (legs.length < MIN_LEGS) return null;
+        var ls = legs.slice(-MAX_LEGS);
+        if (ls[0].depth > MAX_FIRST) return null;
+        var last = ls[ls.length - 1];
+        if (last.depth < MIN_LAST || last.depth > MAX_LAST) return null;
+        var ds = contractionScore(ls.map(function(l) { return l.depth; }));
+        if (ds < 50) return null;
+        var vs = contractionScore(ls.map(function(l) { return l.avgVol; }), VW);
+        if (vs < 50) return null;
+        var combined = ds * 0.4 + vs * 0.6;
+        var last2 = ls.slice(-2);
+        var pivot = Math.max.apply(null, last2.map(function(l) { return l.high; }));
+        return { depthScore: ds, volScore: vs, combined: combined, legs: ls, pivot: pivot };
+    }
+
+    // Raw scorer — no hard gates, just measure contraction quality
+    function evalVCPRaw(legs) {
+        if (legs.length < MIN_LEGS) return null;
+        var ls = legs.slice(-MAX_LEGS);
+        var ds = contractionScore(ls.map(function(l) { return l.depth; }));
+        var vs = contractionScore(ls.map(function(l) { return l.avgVol; }), VW);
+        var pivot = Math.max.apply(null, ls.slice(-2).map(function(l) { return l.high; }));
+        return { combined: parseFloat((ds * 0.4 + vs * 0.6).toFixed(1)), volScore: vs, depthScore: ds, numLegs: ls.length, pivot: pivot };
+    }
+
+    var signals = [], completedLegs = [], inDown = false, legStart = null;
+    var rawAtIdx = {}; // swing-low bar-index → raw score
+
+    for (var idx = LB * 2; idx < n; idx++) {
+        var ci = idx - LB;
+        if (isSwingHigh(ci)) { inDown = true; legStart = ci; }
+        if (isSwingLow(ci) && inDown && legStart !== null) {
+            var leg = buildLeg(legStart, ci);
+            if (leg) {
+                completedLegs.push(leg);
+                if (completedLegs.length > MAX_LEGS) completedLegs.shift();
+            }
+            inDown = false;
+            var sig = evalVCP(completedLegs);
+            if (sig) { sig.idx = ci; sig.ts = tss[ci]; signals.push(sig); }
+            var raw = evalVCPRaw(completedLegs);
+            if (raw) rawAtIdx[ci] = raw;
+        }
+    }
+
+    // Build per-bar step function: carry last known score forward
+    // Also collect pivot change events (one per raw evaluation) for pivot line segments
+    var perBar = [], pivotChanges = [], curRaw = null;
+    for (var i = 0; i < n; i++) {
+        if (rawAtIdx[i]) {
+            curRaw = rawAtIdx[i];
+            pivotChanges.push({ ts: tss[i], pivot: curRaw.pivot, combined: curRaw.combined });
+        }
+        if (curRaw !== null) {
+            var bc = curRaw.combined >= 75 ? '#3fb950' : curRaw.combined >= 60 ? '#d29922' : '#f85149';
+            perBar.push({ x: tss[i], y: curRaw.combined, color: bc,
+                          volScore: curRaw.volScore, depthScore: curRaw.depthScore,
+                          numLegs: curRaw.numLegs, pivot: curRaw.pivot });
+        }
+    }
+
+    return { signals: signals, perBar: perBar, pivotChanges: pivotChanges };
+}
+
+// precomputedDecl: integer from DB atr_declining_bars (or undefined to calculate from atrData)
+function renderVCPPanel(atrData, precomputedDecl) {
+    var el = document.getElementById('panel-vcp');
+    if (!el) return;
+
+    if (!atrData || !atrData.length) { el.innerHTML = ''; return; }
+
+    var atrCurrent = atrData[atrData.length - 1][1];
+    var atrDeclining;
+    if (precomputedDecl !== undefined) {
+        atrDeclining = precomputedDecl;
+    } else {
+        atrDeclining = 0;
+        for (var i = atrData.length - 1; i > 0; i--) {
+            if (atrData[i][1] < atrData[i - 1][1]) atrDeclining++;
+            else break;
+        }
+    }
+
+    var trendColor = atrDeclining >= 5 ? '#3fb950' : atrDeclining >= 2 ? '#d29922' : '#8b949e';
+
+    el.innerHTML =
+        '<div class="pi-sep"></div>' +
+        '<div style="font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.45rem;">Volatility</div>' +
+        '<div class="pi-row"><span class="pi-lbl">ATR</span><span class="pi-val">' + fmtPrice(atrCurrent) + '</span></div>' +
+        '<div class="pi-row"><span class="pi-lbl">Declining</span><span class="pi-val" style="color:' + trendColor + ';">' + atrDeclining + ' bars</span></div>';
+}
+
+function updateOpenTradeBadge(ticker) {
+    var badge = document.getElementById('open-trade-badge');
+    var sep   = document.getElementById('open-trade-sep');
+    if (!badge) return;
+    fetch('/api/orders/open_symbols')
+        .then(function(r) { return r.json(); })
+        .then(function(symbols) {
+            var isOpen = symbols.indexOf(ticker.toUpperCase()) >= 0;
+            badge.classList.toggle('show', isOpen);
+            if (sep) sep.style.display = isOpen ? 'inline-block' : 'none';
+        })
+        .catch(function() {
+            badge.classList.remove('show');
+            if (sep) sep.style.display = 'none';
+        });
+}
+
+function renderAs1mPanel(as1m) {
+    var el = document.getElementById('panel-as1m');
+    if (!el) return;
+    if (as1m == null) { el.innerHTML = ''; return; }
+    var color = as1m >= 80 ? '#3fb950' : as1m >= 50 ? '#d29922' : '#f85149';
+    el.innerHTML =
+        '<div class="pi-sep"></div>' +
+        '<div style="font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.45rem;">Momentum</div>' +
+        '<div class="pi-row"><span class="pi-lbl">AS 1M</span><span class="pi-val" style="color:' + color + ';font-weight:700;">' + as1m + '</span></div>';
+}
+
+
+// ── Chart ────────────────────────────────────────────────────────
+var currentChart  = null;
+var currentTicker = null;
+var fullOhlcv     = null;
+var fullVolume    = null;
+var fullStudies   = null;
+var replayIndex   = -1;
+var inReplayMode  = false;
+var paneState     = { rsi: false, atr: true, rs: true, rmv: true };
+var _paneLabels   = [];  // SVG text elements for pane name labels
+
+// Render pane name labels at the top-left of each visible sub-pane.
+// Called after every layout update and after initial chart creation.
+function updatePaneLabels() {
+    _paneLabels.forEach(function(el) { try { el.destroy(); } catch(e) {} });
+    _paneLabels = [];
+    if (!currentChart) return;
+
+    var r = currentChart.renderer;
+    var px = currentChart.plotLeft + 6;  // 6px from left edge of plot area
+    var LABEL_STYLE = {
+        color: 'rgba(139,148,158,0.65)',
+        fontSize: '10px',
+        textTransform: 'uppercase',
+        letterSpacing: '0.8px',
+        fontFamily: '"Inter",system-ui,sans-serif',
+        pointerEvents: 'none'
+    };
+    var defs = [
+        { idx: 1, text: 'Volume',     show: true },
+        { idx: 2, text: 'ATR',        show: paneState.atr },
+        { idx: 3, text: 'RS vs SPY',  show: paneState.rs  },
+        { idx: 4, text: 'RMV 15',     show: paneState.rmv },
+        { idx: 5, text: 'RSI 14',     show: paneState.rsi }
+    ];
+    defs.forEach(function(d) {
+        if (!d.show) return;
+        var axis = currentChart.yAxis[d.idx];
+        if (!axis || axis.height <= 0) return;
+        var el = r.text(d.text, px, axis.top + 15)
+            .attr({ zIndex: 6 })
+            .css(LABEL_STYLE)
+            .add();
+        _paneLabels.push(el);
+    });
+}
+
+function loadTicker(ticker) {
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('ticker-content').style.display = 'block';
+    document.getElementById('loading-bar').style.display = 'block';
+    var _tt = document.getElementById('topbar-ticker');
+    if (_tt) _tt.style.display = 'none'; // hide until renderHeader populates it
+    paneState = { rsi: false, atr: true, rs: true, rmv: true };
+    document.querySelectorAll('.toggle-btn').forEach(function(b) {
+        // restore each button to its original default state
+        b.classList.toggle('active', b.id !== 'tog-52w' && b.id !== 'tog-vcp' && b.id !== 'tog-zones' && b.id !== 'tog-develop');
+    });
+
+    // exit any active replay / trade plan
+    inReplayMode = false;
+    replayIndex  = -1;
+    fullStudies  = null;
+    tradeEntry   = null;
+    var _as1mEl = document.getElementById('panel-as1m');
+    if (_as1mEl) _as1mEl.innerHTML = '';
+    var _otBadge = document.getElementById('open-trade-badge');
+    if (_otBadge) _otBadge.classList.remove('show');
+    var _otSep = document.getElementById('open-trade-sep');
+    if (_otSep) _otSep.style.display = 'none';
+    tradeEntryTs = null;
+    tradeStopPct = 5.0;
+    var _tc = document.getElementById('trade-content');
+    if (_tc) _tc.innerHTML = '<div class="trade-hint">Click on the chart to set an entry level</div>';
+    var _tw = document.getElementById('trade-clear-wrap');
+    if (_tw) _tw.style.display = 'none';
+    document.getElementById('replay-idle').style.display   = '';
+    document.getElementById('replay-active').style.display = 'none';
+
+    fetch('/api/chart/' + encodeURIComponent(ticker))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            document.getElementById('loading-bar').style.display = 'none';
+            currentTicker = ticker;
+            fullOhlcv     = data.ohlcv;
+            fullVolume    = data.volume;
+            fullStudies   = data.studies || null;
+            if (window._onTickerLoaded) window._onTickerLoaded(ticker);
+
+            // set date picker bounds: min = max(earliest bar, 2 years ago), max = last bar
+            var inp = document.getElementById('replay-date-input');
+            if (fullOhlcv && fullOhlcv.length) {
+                var twoYearsAgo = new Date();
+                twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+                var firstTs  = Math.max(fullOhlcv[0][0], twoYearsAgo.getTime());
+                var lastTs   = fullOhlcv[fullOhlcv.length - 1][0];
+                inp.min = new Date(firstTs).toISOString().slice(0, 10);
+                inp.max = new Date(lastTs).toISOString().slice(0, 10);
+                // default to 3 months before last bar
+                var defTs = lastTs - 90 * 24 * 60 * 60 * 1000;
+                inp.value = new Date(Math.max(defTs, firstTs)).toISOString().slice(0, 10);
+            }
+
+            renderHeader(data.info);
+            renderPriceCards(data.info);
+            renderFundCards(data.info);
+            renderAs1mPanel(data.info ? data.info.as_1m : null);
+            updateOpenTradeBadge(ticker);
+            renderChart(ticker, fullOhlcv, fullVolume, fullStudies);
+        })
+        .catch(function(e) {
+            document.getElementById('loading-bar').style.display = 'none';
+            console.error(e);
+        });
+}
+
+function renderHeader(info) {
+    var topbarTicker = document.getElementById('topbar-ticker');
+    if (!info) { if (topbarTicker) topbarTicker.style.display = 'none'; return; }
+
+    document.getElementById('hdr-symbol').textContent = info.ticker || '';
+    document.getElementById('hdr-name').textContent   = info.name   || '';
+
+    var sEl = document.getElementById('hdr-sector');
+    if (info.sector) { sEl.textContent = info.sector; sEl.style.display = ''; }
+    else             { sEl.style.display = 'none'; }
+
+    var eEl = document.getElementById('hdr-exchange');
+    if (info.primary_exchange) { eEl.textContent = info.primary_exchange; eEl.style.display = ''; }
+    else                       { eEl.style.display = 'none'; }
+
+    if (topbarTicker) topbarTicker.style.display = 'flex';
+}
+
+function renderPriceCards(info) {
+    if (!info) { document.getElementById('price-cards').innerHTML = ''; return; }
+
+    var close = info.last_day_close != null ? parseFloat(info.last_day_close) : null;
+    var open  = info.last_day_open  != null ? parseFloat(info.last_day_open)  : null;
+    var chg   = (close != null && open != null) ? close - open : null;
+    var chgPct = (chg != null && open) ? (chg / open * 100) : null;
+    var chgCls = chg == null ? '' : (chg >= 0 ? 'pos' : 'neg');
+    var chgSign = chg == null ? '' : (chg >= 0 ? '+' : '');
+
+    var html = card('Last Close', fmtPrice(close), info.last_day_date || null, chgCls) +
+        card('Day Open',  fmtPrice(open),  null) +
+        card('Day High',  fmtPrice(info.last_day_high),  null) +
+        card('Day Low',   fmtPrice(info.last_day_low),   null) +
+        card('Change',
+            chg != null ? '<span class="' + chgCls + '">' + chgSign + fmtNum(chg) + '</span>' : '—',
+            chgPct != null ? '<span class="' + chgCls + '">' + chgSign + chgPct.toFixed(2) + '%</span>' : null,
+            '', true) +
+        card('Volume',    fmtVol(info.last_day_volume), 'avg ' + fmtVol(info.average_volume)) +
+        card('Market Cap', fmtCap(info.market_cap), null, '', false, 'sm');
+
+    document.getElementById('price-cards').innerHTML = html;
+}
+
+function renderFundCards(info) {
+    if (!info) { document.getElementById('fund-section').style.display = 'none'; return; }
+
+    var cards = [];
+    if (info.trailing_pe   != null) cards.push(card('P/E (TTM)',       fmtNum(info.trailing_pe, 2), null));
+    if (info.forward_pe    != null) cards.push(card('P/E (Forward)',   fmtNum(info.forward_pe, 2), null));
+    if (info.price_to_book != null) cards.push(card('Price / Book',    fmtNum(info.price_to_book, 2), null));
+    if (info.trailing_eps  != null) cards.push(card('EPS (TTM)',       fmtNum(info.trailing_eps, 2), null));
+    if (info.forward_eps   != null) cards.push(card('EPS (Fwd)',       fmtNum(info.forward_eps, 2), null));
+    if (info.earnings_growth != null) cards.push(card('Earnings Growth', fmtPct(info.earnings_growth, true), null, info.earnings_growth >= 0 ? 'pos' : 'neg'));
+    if (info.revenue_growth  != null) cards.push(card('Revenue Growth',  fmtPct(info.revenue_growth, true),  null, info.revenue_growth  >= 0 ? 'pos' : 'neg'));
+    if (info.profit_margins  != null) cards.push(card('Profit Margin',   fmtPct(info.profit_margins, true),  null, info.profit_margins  >= 0 ? 'pos' : 'neg'));
+    if (info.debt_to_equity  != null) cards.push(card('Debt / Equity',   fmtNum(info.debt_to_equity, 2), null));
+    if (info.current_ratio   != null) cards.push(card('Current Ratio',   fmtNum(info.current_ratio, 2), null));
+    if (info.short_ratio     != null) cards.push(card('Short Ratio',     fmtNum(info.short_ratio, 2), null));
+    if (info.short_percent_of_float != null) cards.push(card('Short % Float', fmtPct(info.short_percent_of_float * 100, false), null));
+    if (info.held_percent_institutions != null) cards.push(card('Inst. Held', fmtPct(info.held_percent_institutions * 100, false), null));
+    if (info.held_percent_insiders     != null) cards.push(card('Insider Held', fmtPct(info.held_percent_insiders * 100, false), null));
+    if (info.target_mean_price != null) cards.push(card('Analyst Target', fmtPrice(info.target_mean_price), null, 'pos'));
+
+    var rec = recText(info.recommendation_mean);
+    if (rec) cards.push(card('Analyst Rec.', '<span class="' + rec.cls + '">' + esc(rec.text) + '</span>', fmtNum(info.recommendation_mean, 1) + ' / 5', '', true));
+
+    if (cards.length > 0) {
+        document.getElementById('fund-cards').innerHTML = cards.join('');
+        document.getElementById('fund-section').style.display = 'block';
+    } else {
+        document.getElementById('fund-section').style.display = 'none';
+    }
+}
+
+function card(label, value, sub, colorCls, rawHtml, valueCls) {
+    var valHtml = rawHtml
+        ? value
+        : '<span class="' + (colorCls || '') + '">' + esc(String(value)) + '</span>';
+    return '<div class="card">' +
+        '<div class="card-label">' + esc(label) + '</div>' +
+        '<div class="card-value ' + (valueCls || '') + '">' + valHtml + '</div>' +
+        (sub != null ? '<div class="card-sub">' + (rawHtml ? sub : esc(String(sub))) + '</div>' : '') +
+        '</div>';
+}
+
+// ── Replay ───────────────────────────────────────────────────────
+function _tsToDateStr(ts) {
+    return new Date(ts).toISOString().slice(0, 10);
+}
+
+function _findReplayIndex(targetTs) {
+    var idx = -1;
+    for (var i = 0; i < fullOhlcv.length; i++) {
+        if (fullOhlcv[i][0] <= targetTs) idx = i;
+        else break;
+    }
+    return idx;
+}
+
+function _reapplyToggles() {
+    if (!currentChart) return;
+    document.querySelectorAll('.toggle-btn[data-key]').forEach(function(btn) {
+        var names = TOGGLE_MAP[btn.getAttribute('data-key')] || [];
+        var visible = btn.classList.contains('active');
+        currentChart.series.forEach(function(s) {
+            if (names.indexOf(s.name) >= 0) s.setVisible(visible, false);
+        });
+    });
+    currentChart.redraw();
+}
+
+function _applyReplay() {
+    var slicedOhlcv  = fullOhlcv.slice(0, replayIndex + 1);
+    var slicedVolume = fullVolume.slice(0, replayIndex + 1);
+    var maxTs = fullOhlcv[replayIndex][0];
+    renderChart(currentTicker, slicedOhlcv, slicedVolume, sliceStudiesToTs(fullStudies, maxTs));
+    _reapplyToggles();
+
+    var ts = fullOhlcv[replayIndex][0];
+    document.getElementById('replay-current-date').textContent = _tsToDateStr(ts);
+
+    var nextBtn = document.getElementById('replay-next-btn');
+    nextBtn.disabled = (replayIndex >= fullOhlcv.length - 1);
+}
+
+function startReplay() {
+    if (!fullOhlcv || !fullOhlcv.length) return;
+    var dateStr   = document.getElementById('replay-date-input').value;
+    if (!dateStr) return;
+    var targetTs  = new Date(dateStr + 'T00:00:00Z').getTime();
+    var idx       = _findReplayIndex(targetTs);
+    if (idx < 0) { alert('No data on or before that date.'); return; }
+
+    inReplayMode = true;
+    replayIndex  = idx;
+    document.getElementById('replay-idle').style.display   = 'none';
+    document.getElementById('replay-active').style.display = '';
+    _applyReplay();
+}
+
+function replayNextDay() {
+    if (!inReplayMode || replayIndex >= fullOhlcv.length - 1) return;
+    replayIndex++;
+    _applyReplay();
+}
+
+function replayPrevDay() {
+    if (!inReplayMode || replayIndex <= 0) return;
+    replayIndex--;
+    _applyReplay();
+}
+
+function exitReplay() {
+    inReplayMode = false;
+    replayIndex  = -1;
+    document.getElementById('replay-idle').style.display   = '';
+    document.getElementById('replay-active').style.display = 'none';
+    renderChart(currentTicker, fullOhlcv, fullVolume, fullStudies);
+}
+
+window.startReplay   = startReplay;
+window.replayNextDay = replayNextDay;
+window.replayPrevDay = replayPrevDay;
+window.exitReplay    = exitReplay;
+
+window.jumpToLatest = function() {
+    if (!currentChart) return;
+    var xAxis    = currentChart.xAxis[0];
+    var extremes = xAxis.getExtremes();
+    var range    = extremes.max - extremes.min;   // keep current zoom width
+    var dataMax  = extremes.dataMax;
+    xAxis.setExtremes(dataMax - range, dataMax, true, true);
+};
+
+// ── Trade Planner ────────────────────────────────────────────────────────────
+var TRADE_RR_RATIO    = 2.9;  // fixed reward:risk ratio
+var tradeStopPct      = 5.0;  // current stop % (mutable, steps by 0.1)
+
+// Returns the ATR(10) value at or immediately before the given timestamp.
+function _getAtrAtTs(ts) {
+    var atr = window._atr10;
+    if (!atr || !atr.length) return null;
+    for (var i = atr.length - 1; i >= 0; i--) {
+        if (atr[i][0] <= ts) return atr[i][1];
+    }
+    return atr[0][1];
+}
+var tradeEntry        = null;
+var tradeEntryTs      = null; // x-timestamp of the clicked bar
+var _tradeZoneEls     = [];   // SVG rect elements for the colored zones
+var _lastHoveredClose = null; // updated by tooltip on every mouseover
+
+function _destroyTradeZones() {
+    _tradeZoneEls.forEach(function(el) { try { el.destroy(); } catch(e){} });
+    _tradeZoneEls = [];
+}
+
+function _drawTradeZones() {
+    _destroyTradeZones();
+    if (!currentChart || tradeEntry === null || tradeEntryTs === null) return;
+
+    var tgtPct = tradeStopPct * TRADE_RR_RATIO;
+    var sl     = tradeEntry * (1 - tradeStopPct / 100);
+    var tp     = tradeEntry * (1 + tgtPct       / 100);
+
+    var xAxis  = currentChart.xAxis[0];
+    var yAxis  = currentChart.yAxis[0];
+
+    // x: start at the entry bar, end 30 bars to the right (capped at plot edge)
+    var x1Raw = xAxis.toPixels(tradeEntryTs);
+    var x1    = Math.max(x1Raw, currentChart.plotLeft);
+
+    var _src = fullOhlcv && fullOhlcv.length >= 2 ? fullOhlcv : null;
+    var _avgStep = _src
+        ? (_src[_src.length - 1][0] - _src[Math.max(0, _src.length - 6)][0]) / Math.min(5, _src.length - 1)
+        : 24 * 60 * 60 * 1000;
+    var x2Ts  = tradeEntryTs + _avgStep * 30;
+    var x2    = Math.min(xAxis.toPixels(x2Ts), currentChart.plotLeft + currentChart.plotWidth);
+    var width = x2 - x1;
+    if (width <= 0) return;
+
+    // y: absolute pixel positions, clamped to the price pane bounds
+    var paneTop    = yAxis.top;
+    var paneBottom = yAxis.top + yAxis.height;
+    function clampY(y) { return Math.min(Math.max(y, paneTop), paneBottom); }
+
+    var yTp    = clampY(yAxis.toPixels(tp));
+    var yEntry = clampY(yAxis.toPixels(tradeEntry));
+    var ySl    = clampY(yAxis.toPixels(sl));
+
+    var r = currentChart.renderer;
+    var labelX = x2 - 4; // labels flush to right edge
+
+    function addLine(y, color, dash, label, labelColor) {
+        // Dashed line from x1 to x2
+        var dashArr = dash ? '4,3' : null;
+        var lineEl = r.path(['M', x1, y, 'L', x2, y])
+            .attr({ stroke: color, 'stroke-width': 1, zIndex: 5,
+                    'stroke-dasharray': dashArr, 'pointer-events': 'none' })
+            .add();
+        _tradeZoneEls.push(lineEl);
+        // Label at right edge
+        var txtEl = r.text(label, labelX, y - 3)
+            .attr({ align: 'right', zIndex: 6 })
+            .css({ color: labelColor || color, fontSize: '10px', fontWeight: '700' })
+            .add();
+        _tradeZoneEls.push(txtEl);
+    }
+
+    // Green zone: entry → tp
+    if (yEntry > yTp) {
+        _tradeZoneEls.push(
+            r.rect(x1, yTp, width, yEntry - yTp)
+             .attr({ fill: 'rgba(63,185,80,0.10)', zIndex: 2, 'pointer-events': 'none' })
+             .add()
+        );
+    }
+    // Red zone: sl → entry
+    if (ySl > yEntry) {
+        _tradeZoneEls.push(
+            r.rect(x1, yEntry, width, ySl - yEntry)
+             .attr({ fill: 'rgba(248,81,73,0.10)', zIndex: 2, 'pointer-events': 'none' })
+             .add()
+        );
+    }
+
+    // Lines (drawn on top of zones)
+    addLine(yTp,    '#3fb950', true,  'TP +' + tgtPct.toFixed(1) + '%  $' + tp.toFixed(2));
+    addLine(yEntry, '#58a6ff', false, 'Entry  $' + tradeEntry.toFixed(2));
+    addLine(ySl,    '#f85149', true,  'SL -' + tradeStopPct.toFixed(1) + '%  $' + sl.toFixed(2));
+}
+
+window.adjustRisk = function(delta) {
+    tradeStopPct = Math.round((tradeStopPct + delta) * 10) / 10;
+    if (tradeStopPct < 0.1) tradeStopPct = 0.1;
+    if (tradeStopPct > 50)  tradeStopPct = 50;
+    if (tradeEntry !== null) _drawTradePlan(tradeEntry);
+};
+
+window.clearTradePlan = function() {
+    tradeEntry   = null;
+    tradeEntryTs = null;
+    tradeStopPct = 5.0;
+    _drawTradePlan(null);
+    var content = document.getElementById('trade-content');
+    if (content) content.innerHTML = '<div class="trade-hint">Click on the chart to set an entry level</div>';
+    var wrap = document.getElementById('trade-clear-wrap');
+    if (wrap) wrap.style.display = 'none';
+};
+
+function _drawTradePlan(entry) {
+    if (!currentChart) return;
+
+    // Remove previous SVG zones + lines
+    _destroyTradeZones();
+
+    if (entry === null) return;
+
+    var tgtPct = tradeStopPct * TRADE_RR_RATIO;
+    var sl     = entry * (1 - tradeStopPct / 100);
+    var tp     = entry * (1 + tgtPct       / 100);
+
+    // Draw SVG zones + lines (all right-of-entry only)
+    _drawTradeZones();
+
+    // Update sidebar panel
+    var content = document.getElementById('trade-content');
+    if (content) {
+        content.innerHTML =
+            '<div class="trade-row">' +
+                '<span style="display:flex;align-items:center;"><span class="trade-dot" style="background:#3fb950;"></span><span style="color:var(--muted);">Take Profit</span></span>' +
+                '<span style="color:#3fb950;font-weight:700;">$' + tp.toFixed(2) + '</span>' +
+            '</div>' +
+            '<div class="trade-row">' +
+                '<span style="display:flex;align-items:center;"><span class="trade-dot" style="background:#3fb950;opacity:.5;"></span><span style="color:var(--muted);font-size:10px;">+' + tgtPct.toFixed(1) + '%</span></span>' +
+            '</div>' +
+            '<div class="trade-row" style="border-top:1px solid var(--border);padding-top:.3rem;margin-top:.1rem;">' +
+                '<span style="display:flex;align-items:center;"><span class="trade-dot" style="background:#58a6ff;"></span><span style="color:var(--muted);">Entry</span></span>' +
+                '<span style="color:#58a6ff;font-weight:700;">$' + entry.toFixed(2) + '</span>' +
+            '</div>' +
+            '<div class="trade-row" style="border-top:1px solid var(--border);padding-top:.3rem;margin-top:.1rem;">' +
+                '<span style="display:flex;align-items:center;"><span class="trade-dot" style="background:#f85149;"></span><span style="color:var(--muted);">Stop Loss</span></span>' +
+                '<span style="color:#f85149;font-weight:700;">$' + sl.toFixed(2) + '</span>' +
+            '</div>' +
+            '<div class="trade-row" style="border-top:1px solid var(--border);padding-top:.3rem;margin-top:.2rem;">' +
+                '<span style="color:var(--muted);">Risk</span>' +
+                '<span style="display:flex;align-items:center;gap:4px;">' +
+                    '<button onclick="window.adjustRisk(-0.1)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:3px;width:20px;height:20px;font-size:13px;line-height:1;cursor:pointer;padding:0;">−</button>' +
+                    '<span id="trade-stop-pct" style="color:#f85149;font-weight:700;min-width:32px;text-align:center;">' + tradeStopPct.toFixed(1) + '%</span>' +
+                    '<button onclick="window.adjustRisk(+0.1)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:3px;width:20px;height:20px;font-size:13px;line-height:1;cursor:pointer;padding:0;">+</button>' +
+                '</span>' +
+            '</div>' +
+            '<div class="trade-row">' +
+                '<span style="color:var(--muted);">R:R Ratio</span>' +
+                '<span><span class="trade-pill" style="background:rgba(88,166,255,.15);color:#58a6ff;">1 : ' + TRADE_RR_RATIO + '</span></span>' +
+            '</div>';
+    }
+    var wrap = document.getElementById('trade-clear-wrap');
+    if (wrap) wrap.style.display = 'block';
+}
+
+window.sendToAlpaca = function() {
+    if (tradeEntry === null || !currentTicker) return;
+    var qty = parseFloat(document.getElementById('trade-qty').value);
+    if (!qty || qty <= 0) { _tradeFeedback('Enter a valid share quantity', 'var(--red)'); return; }
+
+    var tgtPct = tradeStopPct * TRADE_RR_RATIO;
+
+    var btn = document.getElementById('trade-send-btn');
+    if (btn) btn.disabled = true;
+    _tradeFeedback('Fetching ask price…', 'var(--muted)');
+
+    fetch('/api/alpaca/order', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            ticker:     currentTicker,
+            stop_pct:   tradeStopPct,
+            target_pct: tgtPct,
+            qty:        qty,
+        }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            var env      = d.paper ? ' <span style="color:var(--muted);font-size:9px;">[PAPER]</span>' : '';
+            var legCount = (d.legs || []).length;
+            var legInfo  = legCount > 0
+                ? ' + ' + legCount + ' leg' + (legCount > 1 ? 's' : '')
+                : ' <span style="color:#f85149;">⚠ no legs</span>';
+            var srcLabel = d.price_src && d.price_src !== 'ask'
+                ? '<br><span style="color:var(--yellow);font-size:9px;">⚠ market closed — used ' + d.price_src + '</span>'
+                : '';
+            _tradeFeedback(
+                '✓ ' + (d.order_class || 'order') + legInfo + env +
+                '<br>Entry: $' + d.ask + '  TP: $' + d.tp + '  SL: $' + d.sl +
+                srcLabel +
+                '<br><span style="color:var(--muted);">ID: ' + d.order_id.slice(0, 8) + '…</span>',
+                '#3fb950'
+            );
+        } else {
+            _tradeFeedback('✗ ' + (d.error || 'Unknown error'), 'var(--red)');
+        }
+    })
+    .catch(function(e) { _tradeFeedback('✗ ' + e.message, 'var(--red)'); })
+    .finally(function() { if (btn) btn.disabled = false; });
+};
+
+function _tradeFeedback(msg, color) {
+    var el = document.getElementById('trade-feedback');
+    if (el) { el.innerHTML = msg; el.style.color = color || 'var(--muted)'; }
+}
+
+// Arrow key navigation in replay mode
+document.addEventListener('keydown', function(e) {
+    if (!inReplayMode) return;
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); replayNextDay(); }
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); replayPrevDay(); }
+});
+
+// Build arearange fill data between the RS line and its SMA 50.
+// Points where rs >= sma50 go into the "above" series (blue fill),
+// points where rs < sma50 go into the "below" series (gray fill).
+function buildRsFill(rsLineData, rsSma50Data) {
+    var smaMap = {};
+    (rsSma50Data || []).forEach(function(d) { smaMap[d[0]] = d[1]; });
+    var above = [], below = [];
+    (rsLineData || []).forEach(function(d) {
+        var ts = d[0], rv = d[1], sv = smaMap[ts];
+        if (sv == null) return;
+        if (rv >= sv) {
+            above.push([ts, sv, rv]);
+            below.push([ts, null, null]);   // null break keeps the gray fill from bridging
+        } else {
+            above.push([ts, null, null]);   // null break keeps the blue fill from bridging
+            below.push([ts, rv, sv]);
+        }
+    });
+    return { above: above, below: below };
+}
+
+function sliceStudiesToTs(studies, maxTs) {
+    if (!studies) return null;
+    var s = {};
+    ['sma50','sma150','sma200','ema10','ema20','rsi14','volMa',
+     'dcUpper','dcLower','atr10','atrSqueeze','atrDeclining',
+     'rsLine','rsEma21','rsSma50','rmv15'].forEach(function(k) {
+        s[k] = (studies[k] || []).filter(function(d) { return d[0] <= maxTs; });
+    });
+    s.rsiCrossUpTs   = (studies.rsiCrossUpTs   || []).filter(function(ts) { return ts <= maxTs; });
+    s.rsiCrossDownTs = (studies.rsiCrossDownTs || []).filter(function(ts) { return ts <= maxTs; });
+    s.rsNewHighTs    = (studies.rsNewHighTs    || []).filter(function(ts) { return ts <= maxTs; });
+    s.volBars    = (studies.volBars    || []).filter(function(b) { return b.x  <= maxTs; });
+    s.pivotHighs = (studies.pivotHighs || []).filter(function(p) { return p.ts <= maxTs; });
+    return s;
+}
+
+function renderChart(ticker, ohlcv, volume, studies) {
+    if (currentChart) { currentChart.destroy(); currentChart = null; }
+
+    // Append empty bars to the right so trade-plan lines have visible space
+    var PADDING_BARS = 10;
+    var chartOhlcv = ohlcv.slice();
+    if (ohlcv.length >= 2) {
+        var _nSamp = Math.min(5, ohlcv.length - 1);
+        var _step  = Math.round((ohlcv[ohlcv.length - 1][0] - ohlcv[ohlcv.length - 1 - _nSamp][0]) / _nSamp);
+        var _lastT = ohlcv[ohlcv.length - 1][0];
+        for (var _pi = 1; _pi <= PADDING_BARS; _pi++) {
+            chartOhlcv.push([_lastT + _step * _pi, null, null, null, null]);
+        }
+    }
+
+    // Use pre-computed DB values when available, fall back to client-side calculation
+    var st = studies || null;
+    var rsiData, rsiCrossUpTs, rsiCrossDownTs, sma50, sma150, sma200,
+        ema10, ema20, donchianUpper, donchianLower, atr10, atrSqueeze,
+        volBars, volMa, pivotHighsList,
+        rsLineData, rsEma21Data, rsSma50Data, rsNewHighTs,
+        rmv15Data;
+
+    if (st) {
+        rsiData        = st.rsi14;
+        rsiCrossUpTs   = st.rsiCrossUpTs   || [];
+        rsiCrossDownTs = st.rsiCrossDownTs || [];
+        sma50          = st.sma50;
+        sma150         = st.sma150;
+        sma200         = st.sma200;
+        ema10          = st.ema10;
+        ema20          = st.ema20;
+        donchianUpper  = st.dcUpper;
+        donchianLower  = st.dcLower;
+        atr10          = st.atr10;
+        atrSqueeze     = st.atrSqueeze;
+        volBars        = st.volBars;
+        volMa          = st.volMa;
+        pivotHighsList = st.pivotHighs  || [];
+        rsLineData     = st.rsLine      || [];
+        rsEma21Data    = st.rsEma21     || [];
+        rsSma50Data    = st.rsSma50     || [];
+        rsNewHighTs    = st.rsNewHighTs || [];
+        rmv15Data      = st.rmv15       || [];
+    } else {
+        var hvol        = calcHeatmapVolume(ohlcv, volume, 5, 5);
+        rsiData         = calcRSI(ohlcv, 14);
+        var rsiCross    = calcRSICrossovers(rsiData, 50);
+        rsiCrossUpTs    = rsiCross.up;
+        rsiCrossDownTs  = rsiCross.down;
+        sma50           = calcSMA(ohlcv, 50);
+        sma150          = calcSMA(ohlcv, 150);
+        sma200          = calcSMA(ohlcv, 200);
+        ema10           = calcEMA(ohlcv, 10);
+        ema20           = calcEMA(ohlcv, 20);
+        var donchian    = calcDonchian(ohlcv, 252);
+        donchianUpper   = donchian.upper;
+        donchianLower   = donchian.lower;
+        atr10           = calcATR(ohlcv, 10);
+        atrSqueeze      = calcATRSqueeze(atr10, 20);
+        volBars         = hvol.bars;
+        volMa           = hvol.ma;
+        pivotHighsList  = calcPivotHighs(ohlcv, 5, 5);
+        rsLineData = rsEma21Data = rsSma50Data = [];
+        rsNewHighTs = [];
+        rmv15Data = [];
+    }
+
+    // RS fill bands (above = blue, below = gray)
+    var rsFill = buildRsFill(rsLineData, rsSma50Data);
+
+    // RS new high scatter: plot each marker on the RS line at that timestamp
+    var rsLineMap = {};
+    rsLineData.forEach(function(d) { rsLineMap[d[0]] = d[1]; });
+    var rsNewHighData = rsNewHighTs.map(function(ts) {
+        var v = rsLineMap[ts];
+        return v != null ? [ts, v] : null;
+    }).filter(Boolean);
+
+    // Build horizontal pivot line segments: each swing high extends to the chart's right edge
+    var pivotLineData = (function() {
+        var lastTs = ohlcv.length ? ohlcv[ohlcv.length - 1][0] : 0;
+        var pts = [];
+        pivotHighsList.forEach(function(ph) {
+            pts.push([ph.ts, ph.high], [lastTs, ph.high], [lastTs, null]);
+        });
+        return pts;
+    })();
+
+    var GREEN  = '#3fb950';
+    var RED    = '#f85149';
+    var MUTED  = '#8b949e';
+    var BORDER = '#30363d';
+    var SURF   = '#161b22';
+    var SURF2  = '#1c2128';
+    var BLUE   = '#58a6ff';
+    var PURPLE = '#bc8cff';
+
+    currentChart = Highcharts.stockChart('chart-container', {
+        chart: {
+            backgroundColor: SURF,
+            style: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace', color: MUTED },
+            margin: [8, 8, 8, 8],
+            cursor: 'crosshair',
+            events: {
+                redraw:   function() { _drawTradeZones(); },
+                mouseOut: function() {
+                    var _decl = window._atrDeclining;
+                    var _last = _decl && _decl.length ? _decl[_decl.length - 1][1] : undefined;
+                    renderVCPPanel(window._atr10, _last);
+                }
+            }
+        },
+
+        rangeSelector: {
+            selected: 2,
+            inputStyle: { color: '#e6edf3', background: SURF2, border: '1px solid ' + BORDER },
+            labelStyle: { color: MUTED },
+            buttonTheme: {
+                fill: SURF2, stroke: BORDER,
+                style: { color: MUTED, fontSize: '11px' },
+                states: {
+                    hover:  { fill: SURF2, stroke: BLUE, style: { color: BLUE } },
+                    select: { fill: BLUE,  stroke: BLUE, style: { color: '#0d1117', fontWeight: '700' } }
+                }
+            },
+            buttons: [
+                { type: 'month', count: 1,  text: '1M' },
+                { type: 'month', count: 3,  text: '3M' },
+                { type: 'month', count: 6,  text: '6M' },
+                { type: 'ytd',               text: 'YTD' },
+                { type: 'year',  count: 1,  text: '1Y' },
+                { type: 'all',               text: 'All' }
+            ]
+        },
+
+        title: { text: null },
+
+        xAxis: {
+            lineColor: BORDER, tickColor: BORDER,
+            labels: { style: { color: MUTED, fontSize: '11px' } },
+            crosshair: { color: BORDER },
+            plotLines: rsiCrossUpTs.map(function(ts) {
+                return {
+                    value: ts,
+                    color: 'rgba(188,140,255,0.18)',
+                    width: 1,
+                    dashStyle: 'Solid',
+                    zIndex: 2
+                };
+            })
+        },
+
+        yAxis: [{
+            // ── Price pane  (initial: all 4 sub-panes visible → PRICE_H=26, GAP=3)
+            labels: { align: 'right', x: -4, style: { color: MUTED, fontSize: '11px' } },
+            title: { text: null },
+            height: '26%',
+            lineColor: BORDER, gridLineColor: BORDER,
+            crosshair: { dashStyle: 'Dash', color: BORDER },
+            plotLines: []
+        }, {
+            // ── Volume pane  top = 26+3 = 29
+            labels: { align: 'right', x: -4, style: { color: MUTED, fontSize: '11px' } },
+            title: { text: null },
+            top: '29%', height: '11%', offset: 0,
+            lineColor: BORDER, gridLineColor: BORDER
+        }, {
+            // ── ATR(10) pane  [2]  top = 29+11+3 = 43
+            labels: { align: 'right', x: -4, style: { color: MUTED, fontSize: '10px' }, format: '{value:.2f}' },
+            title: {
+                text: null
+            },
+            top: '43%', height: '11%', offset: 0,
+            lineColor: BORDER, gridLineColor: BORDER
+        }, {
+            // ── RS Line pane  [3]  top = 43+11+3 = 57
+            labels: { align: 'right', x: -4, style: { color: MUTED, fontSize: '10px' }, format: '{value:.3f}' },
+            title: {
+                text: null
+            },
+            top: '57%', height: '11%', offset: 0,
+            lineColor: BORDER, gridLineColor: BORDER
+        }, {
+            // ── RMV 15 pane  [4]  top = 57+11+3 = 71
+            labels: { align: 'right', x: -4, style: { color: MUTED, fontSize: '10px' }, format: '{value:.0f}' },
+            title: {
+                text: null
+            },
+            top: '71%', height: '11%', offset: 0,
+            lineColor: BORDER, gridLineColor: BORDER,
+            plotLines: [{
+                value: 100, width: 1, dashStyle: 'Dash',
+                color: 'rgba(139,148,158,0.5)', zIndex: 3,
+                label: { text: '100', align: 'right', x: -4, style: { color: MUTED, fontSize: '10px' } }
+            }, {
+                value: 20, width: 1, dashStyle: 'Dash',
+                color: 'rgba(248,81,73,0.6)', zIndex: 3,
+                label: { text: '20', align: 'right', x: -4, style: { color: 'rgba(248,81,73,0.8)', fontSize: '10px' } }
+            }]
+        }, {
+            // ── RSI pane  [5]  hidden by default; top = 71+11+3 = 85 when shown
+            labels: { align: 'right', x: -4, style: { color: MUTED, fontSize: '11px' } },
+            title: {
+                text: null
+            },
+            top: '85%', height: '0%', offset: 0,
+            min: 0, max: 100,
+            tickPositions: [0, 10, 50, 90, 100],
+            lineColor: BORDER, gridLineColor: 'transparent',
+            plotLines: [
+                {
+                    value: 90, width: 1, dashStyle: 'Dash',
+                    color: 'rgba(248,81,73,0.45)', zIndex: 3,
+                    label: { text: '90', align: 'right', x: -4, style: { color: 'rgba(248,81,73,0.7)', fontSize: '10px' } }
+                },
+                {
+                    value: 50, width: 1, dashStyle: 'Solid',
+                    color: 'rgba(139,148,158,0.5)', zIndex: 3,
+                    label: { text: '50', align: 'right', x: -4, style: { color: MUTED, fontSize: '10px' } }
+                },
+                {
+                    value: 10, width: 1, dashStyle: 'Dash',
+                    color: 'rgba(63,185,80,0.45)', zIndex: 3,
+                    label: { text: '10', align: 'right', x: -4, style: { color: 'rgba(63,185,80,0.7)', fontSize: '10px' } }
+                }
+            ],
+            plotBands: [
+                { from: 90, to: 100, color: 'rgba(248,81,73,0.04)', zIndex: 1 },
+                { from: 0,  to: 10,  color: 'rgba(63,185,80,0.04)',  zIndex: 1 }
+            ]
+        }],
+
+        tooltip: {
+            split: false,
+            shared: true,
+            enabled: true,
+            formatter: function() {
+                var pts  = this.points || [];
+                var d    = Highcharts.dateFormat('%b %d, %Y', this.x);
+                var MA_COLORS = { 'EMA 10': '#3fb950', 'EMA 20': '#bc8cff', 'SMA 50': '#58a6ff', 'SMA 150': '#d29922', 'SMA 200': '#f85149', '52 Week High': '#56d0c8', '52 Week Low': '#56d0c8' };
+
+                var closeColor = MUTED, closeVal = '', closeRaw = null, chgHtml = '';
+                var ohlcHtml = '', volHtml = '', maRows = '', wkRows = '', rsiHtml = '', rsHtml = '';
+                var wk52High = null, wk52Low = null;
+                var maVals = {};
+
+                function row(lbl, val, valColor) {
+                    return '<div class="pi-row"><span class="pi-lbl">' + lbl + '</span>' +
+                        '<span class="pi-val"' + (valColor ? ' style="color:' + valColor + ';font-weight:700;"' : '') + '>' + val + '</span></div>';
+                }
+
+                for (var i = 0; i < pts.length; i++) {
+                    var p  = pts[i];
+                    var sn = p.series.name;
+                    var st = p.series.type;
+
+                    if (st === 'candlestick') {
+                        closeRaw          = p.point.close;
+                        _lastHoveredClose = p.point.close;
+                        closeColor = p.point.close >= p.point.open ? GREEN : RED;
+                        closeVal   = fmtPrice(p.point.close);
+                        var chg    = p.point.close - p.point.open;
+                        var chgPct = p.point.open > 0 ? chg / p.point.open * 100 : 0;
+                        chgHtml    = '<div class="pi-chg" style="color:' + closeColor + ';">' +
+                            (chg >= 0 ? '+' : '') + fmtPrice(chg) + ' (' + (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%)</div>';
+                        ohlcHtml   = row('Open',  fmtPrice(p.point.open)) +
+                                     row('High',  fmtPrice(p.point.high)) +
+                                     row('Low',   fmtPrice(p.point.low)) +
+                                     row('Close', fmtPrice(p.point.close), closeColor);
+                        // Update AS 1M panel for the hovered bar's date
+                        var _as1mArr = window._as1mSeries;
+                        var _hovAs1m = null;
+                        if (_as1mArr && _as1mArr.length) {
+                            for (var _ak = _as1mArr.length - 1; _ak >= 0; _ak--) {
+                                if (_as1mArr[_ak][0] <= p.x) { _hovAs1m = _as1mArr[_ak][1]; break; }
+                            }
+                        }
+                        renderAs1mPanel(_hovAs1m);
+                    } else if (sn === 'Volume') {
+                        var vc     = p.point && p.point.color ? p.point.color : MUTED;
+                        var vlabel = vc === '#ff0000' ? 'XHigh' : vc === '#ff7800' ? 'High' : vc === '#ffcf03' ? 'Med' : vc === '#a0d6dc' ? 'Norm' : 'Low';
+                        volHtml    = row('Volume', fmtVol(p.y) + ' <span style="font-size:10px;">' + vlabel + '</span>', vc);
+                    } else if (sn === 'Vol MA') {
+                        volHtml   += row('Vol MA', fmtVol(p.y));
+                    } else if (sn === '52 Week High') {
+                        wk52High   = p.y;
+                        maRows    += row(sn, fmtPrice(p.y), '#56d0c8');
+                    } else if (sn === '52 Week Low') {
+                        wk52Low    = p.y;
+                        maRows    += row(sn, fmtPrice(p.y), '#56d0c8');
+                    } else if (MA_COLORS[sn]) {
+                        maVals[sn] = p.y;
+                        maRows    += row(sn, fmtPrice(p.y), MA_COLORS[sn]);
+                    } else if (sn === 'RSI (14)') {
+                        var rv     = p.y;
+                        var rc     = rv >= 90 ? RED : rv <= 10 ? GREEN : PURPLE;
+                        var rl     = rv >= 90 ? ' overbought' : rv <= 10 ? ' oversold' : '';
+                        rsiHtml    = row('RSI', rv.toFixed(1) + '<span style="font-size:10px;">' + rl + '</span>', rc);
+                    } else if (sn === 'RS Line') {
+                        rsHtml += row('RS Line', p.y.toFixed(4), '#c9d1d9');
+                    } else if (sn === 'RS SMA 50') {
+                        rsHtml += row('RS SMA 50', p.y.toFixed(4), '#d29922');
+                    } else if (sn === 'RMV 15') {
+                        rsiHtml += row('RMV 15', p.y.toFixed(1), '#f0883e');
+                    } else if (sn === 'ATR (10)') {
+                        rsiHtml += row('ATR', fmtPrice(p.y), '#38bdf8');
+                        // Update sidebar volatility panel at the hovered point
+                        var hovDeclining = 0;
+                        var _atrDecl = window._atrDeclining;
+                        if (_atrDecl && _atrDecl.length) {
+                            // Fast lookup from pre-computed DB values
+                            for (var _k = _atrDecl.length - 1; _k >= 0; _k--) {
+                                if (_atrDecl[_k][0] <= p.x) { hovDeclining = _atrDecl[_k][1]; break; }
+                            }
+                        } else {
+                            // Fallback: calculate from raw ATR series
+                            var atrArr = window._atr10 || [];
+                            for (var _k = atrArr.length - 1; _k >= 0; _k--) {
+                                if (atrArr[_k][0] <= p.x) {
+                                    for (var _m = _k; _m > 0; _m--) {
+                                        if (atrArr[_m][1] < atrArr[_m - 1][1]) hovDeclining++;
+                                        else break;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        var _tc = hovDeclining >= 5 ? '#3fb950' : hovDeclining >= 2 ? '#d29922' : '#8b949e';
+                        var _vEl = document.getElementById('panel-vcp');
+                        if (_vEl) {
+                            _vEl.innerHTML =
+                                '<div class="pi-sep"></div>' +
+                                '<div style="font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.45rem;">Volatility</div>' +
+                                '<div class="pi-row"><span class="pi-lbl">ATR</span><span class="pi-val" style="color:#38bdf8;">' + fmtPrice(p.y) + '</span></div>' +
+                                '<div class="pi-row"><span class="pi-lbl">Declining</span><span class="pi-val" style="color:' + _tc + ';">' + hovDeclining + ' bars</span></div>';
+                        }
+                    }
+                }
+
+                // MA alignment arrows
+                var arrowHtml = '';
+                if (closeRaw !== null) {
+                    var MAS = [
+                        { name: 'EMA 10',  color: '#3fb950' },
+                        { name: 'EMA 20',  color: '#bc8cff' },
+                        { name: 'SMA 50',  color: '#58a6ff' },
+                        { name: 'SMA 150', color: '#d29922' },
+                        { name: 'SMA 200', color: '#f85149' },
+                    ];
+                    var arrows = '';
+                    MAS.forEach(function(m) {
+                        var val = maVals[m.name];
+                        if (val == null) return;
+                        var above  = closeRaw >= val;
+                        var arrow  = above ? '▲' : '▼';
+                        var aColor = above ? '#3fb950' : '#f85149';
+                        arrows +=
+                            '<div style="display:flex;flex-direction:column;align-items:center;gap:2px;min-width:32px;">' +
+                                '<span style="font-size:16px;line-height:1;color:' + aColor + ';">' + arrow + '</span>' +
+                                '<span style="font-size:9px;color:' + m.color + ';font-weight:700;letter-spacing:.2px;">' + m.name + '</span>' +
+                            '</div>';
+                    });
+                    if (arrows) {
+                        arrowHtml =
+                            '<div class="pi-sep"></div>' +
+                            '<div style="font-size:10px;color:' + MUTED + ';text-transform:uppercase;letter-spacing:.4px;margin-bottom:.45rem;">MA Alignment</div>' +
+                            '<div style="display:flex;justify-content:space-between;padding:0 .1rem;">' + arrows + '</div>';
+                    }
+                }
+
+                // 52-week range position
+                var rangeHtml = '';
+                if (closeRaw !== null && wk52High !== null && wk52Low !== null && wk52High > wk52Low) {
+                    var pctFromLow  = ((closeRaw - wk52Low)  / (wk52High - wk52Low) * 100).toFixed(1);
+                    var pctToHigh   = ((wk52High - closeRaw) / closeRaw * 100).toFixed(1);
+                    var pctToLow    = ((closeRaw - wk52Low)  / closeRaw * 100).toFixed(1);
+                    var barWidth    = parseFloat(pctFromLow);
+                    var barColor    = barWidth >= 80 ? GREEN : barWidth <= 20 ? RED : '#56d0c8';
+                    rangeHtml =
+                        '<div class="pi-sep"></div>' +
+                        '<div style="font-size:10px;color:' + MUTED + ';margin-bottom:.3rem;text-transform:uppercase;letter-spacing:.4px;">52-Week Range</div>' +
+                        '<div style="background:var(--border);border-radius:3px;height:5px;margin-bottom:.4rem;overflow:hidden;">' +
+                            '<div style="width:' + barWidth + '%;height:100%;background:' + barColor + ';border-radius:3px;"></div>' +
+                        '</div>' +
+                        row('Position', pctFromLow + '%', barColor) +
+                        row('↑ to High', '+' + pctToHigh + '%', '#56d0c8') +
+                        row('↓ to Low',  '-' + pctToLow  + '%', MUTED);
+                }
+
+                var panel = document.getElementById('panel-hover');
+                if (panel) {
+                    panel.innerHTML =
+                        '<div class="pi-date">' + d + '</div>' +
+                        (closeVal ? '<div class="pi-close" style="color:' + closeColor + ';">' + closeVal + '</div>' + chgHtml : '') +
+                        (ohlcHtml   ? '<div class="pi-sep"></div>' + ohlcHtml   : '') +
+                        (volHtml    ? '<div class="pi-sep"></div>' + volHtml    : '') +
+                        (maRows     ? '<div class="pi-sep"></div>' + maRows     : '') +
+                        (arrowHtml  ? arrowHtml                                 : '') +
+                        (rangeHtml  ? rangeHtml                                 : '') +
+                        (rsiHtml    ? '<div class="pi-sep"></div>' + rsiHtml    : '') +
+                        (rsHtml     ? '<div class="pi-sep"></div>' + rsHtml     : '');
+                }
+                return false;
+            }
+        },
+
+        navigator: {
+            maskFill: 'rgba(88,166,255,0.08)',
+            outlineColor: BORDER,
+            handles: { backgroundColor: SURF2, borderColor: BLUE },
+            xAxis: { labels: { style: { color: MUTED, fontSize: '10px' } } },
+            series: { color: BLUE, fillOpacity: 0.04, lineWidth: 1 }
+        },
+
+        scrollbar: { enabled: false },
+
+        plotOptions: {
+            candlestick: {
+                color: RED, upColor: GREEN,
+                lineColor: RED, upLineColor: GREEN,
+                lineWidth: 1
+            },
+            column: { borderWidth: 0 },
+            series: {
+                dataGrouping: { enabled: false },
+                states: { inactive: { enabled: false } }
+            }
+        },
+
+        series: [{
+            type: 'candlestick',
+            id: 'main',
+            name: ticker,
+            data: chartOhlcv,
+            zIndex: 2,
+            point: {
+                events: {
+                    click: function() {
+                        tradeEntry   = this.close;
+                        tradeEntryTs = this.x;
+                        // Seed stop % from ATR so the 1:2.9 RR is ATR-based
+                        var _atrVal = _getAtrAtTs(tradeEntryTs);
+                        if (_atrVal && tradeEntry > 0) {
+                            tradeStopPct = Math.round((_atrVal / tradeEntry * 100) * 10) / 10;
+                            if (tradeStopPct < 0.1) tradeStopPct = 0.1;
+                        } else {
+                            tradeStopPct = 5.0;
+                        }
+                        _drawTradePlan(tradeEntry);
+                    }
+                }
+            }
+        }, {
+            type: 'column',
+            name: 'Volume',
+            data: volBars,
+            yAxis: 1,
+            zIndex: 1,
+            pointPadding: 0,
+            groupPadding: 0
+        }, {
+            type: 'line',
+            name: 'Vol MA',
+            data: volMa,
+            yAxis: 1,
+            color: 'rgba(255,255,255,0.55)',
+            lineWidth: 1,
+            zIndex: 2,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } }
+        }, {
+            type: 'line',
+            name: 'RSI (14)',
+            data: rsiData,
+            yAxis: 5,
+            color: PURPLE,
+            lineWidth: 1.5,
+            zIndex: 2,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } }
+        }, {
+            type: 'scatter',
+            name: 'RSI Cross Up',
+            data: rsiCrossUpTs.map(function(ts) { return [ts, 50]; }),
+            yAxis: 5,
+            zIndex: 3,
+            enableMouseTracking: false,
+            showInLegend: false,
+            marker: {
+                enabled: true,
+                symbol: 'triangle',
+                radius: 5,
+                fillColor: GREEN,
+                lineWidth: 0
+            }
+        }, {
+            type: 'scatter',
+            name: 'RSI Cross Down',
+            data: rsiCrossDownTs.map(function(ts) { return [ts, 50]; }),
+            yAxis: 5,
+            zIndex: 3,
+            enableMouseTracking: false,
+            showInLegend: false,
+            marker: {
+                enabled: true,
+                symbol: 'triangle-down',
+                radius: 5,
+                fillColor: RED,
+                lineWidth: 0
+            }
+        }, {
+            type: 'line',
+            name: 'SMA 50',
+            data: sma50,
+            yAxis: 0,
+            color: '#58a6ff',
+            lineWidth: 1,
+            zIndex: 1,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 2, valuePrefix: '$' }
+        }, {
+            type: 'line',
+            name: 'SMA 150',
+            data: sma150,
+            yAxis: 0,
+            color: '#d29922',
+            lineWidth: 1,
+            zIndex: 1,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 2, valuePrefix: '$' }
+        }, {
+            type: 'line',
+            name: 'SMA 200',
+            data: sma200,
+            yAxis: 0,
+            color: '#f85149',
+            lineWidth: 1,
+            zIndex: 1,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 2, valuePrefix: '$' }
+        }, {
+            type: 'line',
+            name: 'EMA 10',
+            data: ema10,
+            yAxis: 0,
+            color: '#3fb950',
+            lineWidth: 1,
+            zIndex: 1,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 2, valuePrefix: '$' }
+        }, {
+            type: 'line',
+            name: 'EMA 20',
+            data: ema20,
+            yAxis: 0,
+            color: '#bc8cff',
+            lineWidth: 1,
+            zIndex: 1,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 2, valuePrefix: '$' }
+        }, {
+            type: 'line',
+            name: '52 Week High',
+            data: donchianUpper,
+            yAxis: 0,
+            color: 'rgba(86,208,200,0.7)',
+            lineWidth: 1,
+            dashStyle: 'Dash',
+            zIndex: 1,
+            visible: false,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 2, valuePrefix: '$' }
+        }, {
+            type: 'line',
+            name: '52 Week Low',
+            data: donchianLower,
+            yAxis: 0,
+            color: 'rgba(86,208,200,0.7)',
+            lineWidth: 1,
+            dashStyle: 'Dash',
+            visible: false,
+            zIndex: 1,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 2, valuePrefix: '$' }
+        }, {
+            type: 'line',
+            name: 'ATR (10)',
+            data: atr10,
+            yAxis: 2,
+            color: '#38bdf8',
+            lineWidth: 1.5,
+            zIndex: 2,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } }
+        }, {
+            type: 'scatter',
+            name: 'ATR Squeeze',
+            data: atrSqueeze,
+            yAxis: 2,
+            zIndex: 3,
+            enableMouseTracking: false,
+            showInLegend: false,
+            marker: { enabled: true, symbol: 'circle', radius: 3, fillColor: '#3fb950', lineWidth: 0 }
+        }, {
+            type: 'line',
+            name: 'Pivots',
+            data: pivotLineData,
+            yAxis: 0,
+            zIndex: 3,
+            lineWidth: 1,
+            dashStyle: 'ShortDash',
+            color: 'rgba(139,148,158,0.65)',
+            connectNulls: false,
+            visible: false,
+            enableMouseTracking: false,
+            showInLegend: false,
+            marker: { enabled: false }
+        }, {
+            // ── RS Fill — above SMA 50 (blue)
+            type: 'arearange',
+            name: 'RS Fill Above',
+            data: rsFill.above,
+            yAxis: 3,
+            color: 'rgba(88,166,255,0.0)',
+            fillColor: 'rgba(88,166,255,0.18)',
+            lineWidth: 0,
+            connectNulls: false,
+            zIndex: 1,
+            enableMouseTracking: false,
+            showInLegend: false,
+            marker: { enabled: false }
+        }, {
+            // ── RS Fill — below SMA 50 (gray)
+            type: 'arearange',
+            name: 'RS Fill Below',
+            data: rsFill.below,
+            yAxis: 3,
+            color: 'rgba(139,148,158,0.0)',
+            fillColor: 'rgba(139,148,158,0.12)',
+            lineWidth: 0,
+            connectNulls: false,
+            zIndex: 1,
+            enableMouseTracking: false,
+            showInLegend: false,
+            marker: { enabled: false }
+        }, {
+            // ── RS SMA 50
+            type: 'line',
+            name: 'RS SMA 50',
+            data: rsSma50Data,
+            yAxis: 3,
+            color: '#d29922',
+            lineWidth: 1,
+            zIndex: 3,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 4 }
+        }, {
+            // ── RS Line
+            type: 'line',
+            name: 'RS Line',
+            data: rsLineData,
+            yAxis: 3,
+            color: '#c9d1d9',
+            lineWidth: 1.5,
+            zIndex: 4,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 4 }
+        }, {
+            // ── RS New High markers
+            type: 'scatter',
+            name: 'RS New High',
+            data: rsNewHighData,
+            yAxis: 3,
+            zIndex: 5,
+            enableMouseTracking: false,
+            showInLegend: false,
+            marker: {
+                enabled: true,
+                symbol: 'triangle',
+                radius: 4,
+                fillColor: '#3fb950',
+                lineWidth: 0
+            }
+        }, {
+            // ── RMV 15
+            type: 'line',
+            name: 'RMV 15',
+            data: rmv15Data,
+            yAxis: 4,
+            color: '#f0883e',
+            lineWidth: 1.5,
+            zIndex: 3,
+            marker: { enabled: false },
+            states: { hover: { lineWidthPlus: 0 } },
+            tooltip: { valueDecimals: 1 }
+        }],
+
+        credits: { enabled: false },
+        legend:  { enabled: false }
+    });
+
+    window._atr10 = atr10;
+    window._atrDeclining = st ? (st.atrDeclining || null) : null;
+    window._as1mSeries   = st ? (st.as1m          || null) : null;
+    var _initDecl = window._atrDeclining;
+    var _initLastDecl = _initDecl && _initDecl.length ? _initDecl[_initDecl.length - 1][1] : undefined;
+    renderVCPPanel(atr10, _initLastDecl);
+
+    // Size the chart to fit the initial pane state (removes gap above navigator)
+    updatePaneLayout();
+
+    // Wire up box drawing tool for this chart instance
+    if (window._initBoxTool) window._initBoxTool();
+}
+
+// ── Toast notification ───────────────────────────────────────────
+function _toast(msg, type) {
+    var t = document.createElement('div');
+    var border = type === 'green' ? '#3fb950' : type === 'red' ? '#f85149' : '#58a6ff';
+    t.style.cssText = [
+        'position:fixed;bottom:24px;right:24px;z-index:9999;pointer-events:none;',
+        'background:#1c2128;border:1px solid ' + border + ';color:#e6edf3;',
+        'padding:.45rem 1rem;border-radius:6px;font-size:12px;font-weight:600;',
+        'box-shadow:0 4px 12px rgba(0,0,0,.4);',
+        'animation:fadeInUp .2s ease;'
+    ].join('');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function() {
+        t.style.transition = 'opacity .3s';
+        t.style.opacity = '0';
+        setTimeout(function() { t.remove(); }, 300);
+    }, 2500);
+}
+
+// ── Box Drawing Tool ────────────────────────────────────────────
+var _boxDrawMode = false;
+var _boxes       = [];
+var _boxStart    = null;
+var _boxPreview  = null;
+
+function _boxSvg()     { return document.getElementById('box-overlay'); }
+function _boxCapture() { return document.getElementById('box-capture'); }
+
+// Size the SVG overlay to exactly match the chart container
+function _sizeOverlay() {
+    var c = document.getElementById('chart-container');
+    var s = _boxSvg();
+    if (!c || !s) return;
+    s.setAttribute('width',  c.offsetWidth);
+    s.setAttribute('height', c.offsetHeight);
+}
+
+// Convert a mouse event to chart pixel + data coordinates
+function _getChartPos(e) {
+    if (!currentChart) return null;
+    var el   = document.getElementById('chart-container');
+    var rect = el.getBoundingClientRect();
+    var px   = e.clientX - rect.left;
+    var py   = e.clientY - rect.top;
+    return {
+        px:   px,
+        py:   py,
+        xVal: currentChart.xAxis[0].toValue(px),
+        yVal: currentChart.yAxis[0].toValue(py)
+    };
+}
+
+// Redraw all stored boxes on the SVG overlay
+function _renderBoxes() {
+    var svg     = _boxSvg();
+    var wrapper = document.getElementById('chart-wrapper');
+    if (!svg || !currentChart) return;
+
+    // Clear SVG visuals and HTML interactive buttons
+    svg.querySelectorAll('.box-grp').forEach(function(el) { el.remove(); });
+    if (wrapper) wrapper.querySelectorAll('.box-html-btn').forEach(function(el) { el.remove(); });
+
+    _boxes.forEach(function(box) {
+        var x1 = currentChart.xAxis[0].toPixels(box.x1);
+        var x2 = currentChart.xAxis[0].toPixels(box.x2);
+        var y1 = currentChart.yAxis[0].toPixels(box.y1);
+        var y2 = currentChart.yAxis[0].toPixels(box.y2);
+        if ([x1,x2,y1,y2].some(function(v) { return isNaN(v); })) return;
+        var x = Math.min(x1, x2), y = Math.min(y1, y2);
+        var w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
+        if (w < 2 || h < 2) return;
+
+        // ── SVG: purely visual border + fill (no pointer events) ──
+        var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'box-grp');
+        var r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        r.setAttribute('x', x); r.setAttribute('y', y);
+        r.setAttribute('width', w); r.setAttribute('height', h);
+        r.setAttribute('fill',           'rgba(255,215,0,0.07)');
+        r.setAttribute('stroke',         box.color || '#ffd700');
+        r.setAttribute('stroke-width',   '1.5');
+        r.setAttribute('rx',             '2');
+        r.setAttribute('pointer-events', 'none');
+        g.appendChild(r);
+        svg.appendChild(g);
+
+        // ── HTML buttons (bypass SVG pointer-events:none limitation) ──
+        if (!_boxDrawMode && wrapper) {
+            function mkBtn(label, top, left, fg, bg, border) {
+                var btn = document.createElement('button');
+                btn.className  = 'box-html-btn';
+                btn.textContent = label;
+                btn.style.top    = top   + 'px';
+                btn.style.left   = left  + 'px';
+                btn.style.color  = fg;
+                btn.style.background   = bg;
+                btn.style.borderColor  = border;
+                return btn;
+            }
+
+            // + WL button — top-left
+            var wlBtn = mkBtn('+ WL', y + 4, x + 4, '#3fb950', 'rgba(63,185,80,0.18)', '#3fb950');
+            wlBtn.addEventListener('click', (function(b) {
+                return function(ev) { ev.stopPropagation(); _addToWatchlist(b); };
+            })(box));
+            wrapper.appendChild(wlBtn);
+
+            // ✕ delete button — top-right
+            var delBtn = mkBtn('✕', y + 4, x + w - 22, '#f85149', 'rgba(248,81,73,0.15)', '#f85149');
+            delBtn.addEventListener('click', (function(b) {
+                return function(ev) {
+                    ev.stopPropagation();
+                    _boxes = _boxes.filter(function(x) { return x.id !== b.id; });
+                    _saveBoxes();
+                    _renderBoxes();
+                    _updateClearBtn();
+                    // Remove from watchlist DB if it was added
+                    if (b.watchlist_id) {
+                        fetch('/api/watchlist/' + b.watchlist_id, { method: 'DELETE' })
+                            .then(function(r) { return r.json(); })
+                            .then(function(data) {
+                                if (!data.error) _toast('Removed from watchlist', 'red');
+                            })
+                            .catch(function() {});
+                    }
+                };
+            })(box));
+            wrapper.appendChild(delBtn);
+        }
+    });
+}
+
+function _addToWatchlist(box) {
+    // Use the right edge (x2) as the date
+    var d    = new Date(box.x2);
+    var date = d.getFullYear() + '-' +
+               String(d.getMonth() + 1).padStart(2, '0') + '-' +
+               String(d.getDate()).padStart(2, '0');
+    var top  = parseFloat(box.y1.toFixed(4));
+
+    fetch('/api/watchlist', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ticker: currentTicker, price_target: top, box_date: date })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.error) { _toast('Error: ' + data.error, 'red'); return; }
+        // Store the watchlist DB id on the box so delete can remove it
+        box.watchlist_id = data.id;
+        _saveBoxes();
+        _renderBoxes();
+        _toast(currentTicker + '  $' + top.toFixed(2) + '  added to watchlist', 'green');
+    })
+    .catch(function(e) { _toast('Failed: ' + e, 'red'); });
+}
+
+function _saveBoxes() {
+    if (!currentTicker) return;
+    // Mirror to localStorage as instant cache
+    try {
+        var all = JSON.parse(localStorage.getItem('leo_boxes') || '{}');
+        all[currentTicker] = _boxes;
+        localStorage.setItem('leo_boxes', JSON.stringify(all));
+    } catch(e) {}
+    // Persist to database (fire-and-forget)
+    fetch('/api/boxes/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ticker: currentTicker, boxes: _boxes })
+    }).catch(function() {});
+}
+
+function _loadBoxes() {
+    // Returns a Promise; callers that need to render after load should chain .then()
+    if (!currentTicker) { _boxes = []; return Promise.resolve(); }
+    return fetch('/api/boxes?ticker=' + encodeURIComponent(currentTicker))
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            _boxes = rows || [];
+            // Keep localStorage in sync as cache
+            try {
+                var all = JSON.parse(localStorage.getItem('leo_boxes') || '{}');
+                all[currentTicker] = _boxes;
+                localStorage.setItem('leo_boxes', JSON.stringify(all));
+            } catch(e) {}
+        })
+        .catch(function() {
+            // Fall back to localStorage if DB unreachable
+            try {
+                var all = JSON.parse(localStorage.getItem('leo_boxes') || '{}');
+                _boxes = all[currentTicker] || [];
+            } catch(e) { _boxes = []; }
+        });
+}
+
+function _updateClearBtn() {
+    var btn = document.getElementById('btn-box-clear');
+    if (btn) btn.style.display = _boxes.length ? '' : 'none';
+}
+
+// Called at end of renderChart() to wire up events + initial render
+window._initBoxTool = function() {
+    _sizeOverlay();
+    if (currentChart) {
+        Highcharts.addEvent(currentChart.xAxis[0], 'afterSetExtremes', _renderBoxes);
+    }
+    _loadBoxes().then(function() {
+        _renderBoxes();
+        _updateClearBtn();
+    });
+    if (_boxDrawMode) {
+        // stay in draw mode across ticker changes
+        var cap = _boxCapture();
+        if (cap) cap.style.display = 'block';
+    }
+};
+
+window.toggleBoxDraw = function() {
+    _boxDrawMode = !_boxDrawMode;
+    var btn = document.getElementById('btn-box-draw');
+    var cap = _boxCapture();
+    if (btn) btn.classList.toggle('active', _boxDrawMode);
+    if (cap) cap.style.display = _boxDrawMode ? 'block' : 'none';
+    _renderBoxes();
+};
+
+window.clearAllBoxes = function() {
+    _boxes = [];
+    _saveBoxes();
+    _renderBoxes();
+    _updateClearBtn();
+};
+
+// Mouse handlers on the transparent capture div
+(function() {
+    var cap = document.getElementById('box-capture');
+    if (!cap) return;
+
+    cap.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        var pos = _getChartPos(e);
+        if (!pos) return;
+        _boxStart = pos;
+        _boxPreview = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        _boxPreview.setAttribute('fill',             'rgba(255,215,0,0.1)');
+        _boxPreview.setAttribute('stroke',           '#ffd700');
+        _boxPreview.setAttribute('stroke-width',     '1.5');
+        _boxPreview.setAttribute('stroke-dasharray', '4 3');
+        _boxPreview.setAttribute('rx',               '2');
+        _boxPreview.setAttribute('pointer-events',   'none');
+        _boxSvg().appendChild(_boxPreview);
+    });
+
+    // mousemove on document so dragging outside the div still updates preview
+    document.addEventListener('mousemove', function(e) {
+        if (!_boxStart || !_boxPreview) return;
+        var pos = _getChartPos(e);
+        if (!pos) return;
+        _boxPreview.setAttribute('x',      Math.min(_boxStart.px, pos.px));
+        _boxPreview.setAttribute('y',      Math.min(_boxStart.py, pos.py));
+        _boxPreview.setAttribute('width',  Math.abs(pos.px - _boxStart.px));
+        _boxPreview.setAttribute('height', Math.abs(pos.py - _boxStart.py));
+    });
+
+    // mouseup on document so releasing outside the div still finalises the box
+    document.addEventListener('mouseup', function(e) {
+        if (!_boxStart) return;
+        if (_boxPreview) { _boxPreview.remove(); _boxPreview = null; }
+        var pos   = _getChartPos(e);
+        var start = _boxStart;
+        _boxStart = null;
+        if (pos && Math.abs(pos.px - start.px) > 5 && Math.abs(pos.py - start.py) > 5) {
+            _boxes.push({
+                id:    Date.now(),
+                x1:    Math.min(start.xVal, pos.xVal),
+                x2:    Math.max(start.xVal, pos.xVal),
+                y1:    Math.max(start.yVal, pos.yVal),
+                y2:    Math.min(start.yVal, pos.yVal),
+                color: '#ffd700'
+            });
+            _saveBoxes();
+            _updateClearBtn();
+            // Auto-exit draw mode after box is placed
+            window.toggleBoxDraw();
+        }
+        _renderBoxes();
+    });
+})();
+
+// Reload boxes when ticker changes
+var _origLoadedHook = window._onTickerLoaded;
+window._onTickerLoaded = function(ticker) {
+    if (_origLoadedHook) _origLoadedHook(ticker);
+    _loadBoxes().then(function() {
+        _renderBoxes();
+        _updateClearBtn();
+    });
+    // Silently stamp manual_check for this ticker
+    fetch('/api/active_symbols/check/' + encodeURIComponent(ticker), { method: 'POST' }).catch(function() {});
+};
+
+// ── Restore ticker from URL on load ────────────────────────────
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    var t = params.get('ticker');
+    if (t) {
+        fetch('/api/tickers?q=' + encodeURIComponent(t))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.length) {
+                    ts.addOption(data);
+                    ts.setValue(data[0].ticker, true);
+                    loadTicker(data[0].ticker);
+                }
+            });
+    }
+})();
+
+})();
+</script>
+</body>
+</html>

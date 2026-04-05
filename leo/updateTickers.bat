@@ -1,0 +1,3 @@
+python polygon_tickers_to_mysql.py
+
+pause
