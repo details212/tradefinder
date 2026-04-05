@@ -5,7 +5,9 @@ name: Build Clients
 on:
   push:
     branches: [main]
-    paths: ['electron-client/**']
+    paths:
+      - 'electron-client/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 env:
