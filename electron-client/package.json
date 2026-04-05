@@ -9,7 +9,7 @@
     "electron": "electron .",
     "dist": "vite build && electron-builder",
     "dist:win": "node scripts/bump-version.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false vite build && electron-builder --win --publish never && node scripts/post-build.js",
-    "dist:mac": "node scripts/bump-version.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false vite build && electron-builder --mac --arch universal --publish never && node scripts/post-build.js",
+    "dist:mac": "node scripts/bump-version.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false vite build && electron-builder --mac --publish never && node scripts/post-build.js",
     "dist:linux": "node scripts/bump-version.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false vite build && electron-builder --linux --publish never && node scripts/post-build.js"
   },
   "keywords": [],
@@ -71,7 +71,7 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": ["arm64"]
         }
       ]
     },
