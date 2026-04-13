@@ -490,7 +490,8 @@ export default function AdminPanel({ user }) {
   const [ordersFilter,  setOrdersFilter]  = useState("open"); // "open" | "closed"
   const [reviewOrder,   setReviewOrder]   = useState(null);
   const [snapshotPrices, setSnapshotPrices] = useState({}); // ticker → { price, change_pct } from /api/snapshots/prices
-  const ORDERS_PER_PAGE = 10;
+  const OPEN_ORDERS_PER_PAGE   = 40;
+  const CLOSED_ORDERS_PER_PAGE = 20;
   const OPEN_TRADES_SNAPSHOT_POLL_MS = 60_000;
 
   const openOrderTickers = useMemo(() => {
@@ -571,6 +572,14 @@ export default function AdminPanel({ user }) {
     };
   }, [orders]);
 
+  // Hide all permanently dead orders (canceled, expired, rejected, done_for_day).
+  // These either never filled or are no longer relevant to the user's trade history.
+  const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
+  const visibleOrders = useMemo(
+    () => orders.filter(o => !DEAD_STATUSES.has(o.status)),
+    [orders]
+  );
+
   return (
     <div className="h-full overflow-y-auto bg-slate-900">
       <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6">
@@ -589,49 +598,6 @@ export default function AdminPanel({ user }) {
 
         {/* ── Row 1: server heartbeat ── */}
         <ServerHeartbeatCard />
-
-        {/* ── Row 2: stat cards (4 equal) ── */}
-        <div className="grid grid-cols-4 gap-4">
-          <StatCard
-            icon={TrendingUp}
-            label="Total trades"
-            value={ordersLoading ? "…" : orders.length.toLocaleString()}
-            change={ordersLoading ? "" : `${orders.filter(o => o.is_open).length} open · ${orders.filter(o => !o.is_open).length} closed`}
-            changeDir="up"
-            sparkData={sparkWeek}
-            accent="blue"
-          />
-          <StatCard
-            icon={Activity}
-            label="Wins / Losses"
-            value={ordersLoading ? "…" : `${wins} / ${losses}`}
-            change={ordersLoading ? "" : winRate != null ? `${winRate}% win rate` : "No closed trades"}
-            changeDir={winRate != null && winRate >= 50 ? "up" : "down"}
-            sparkData={sparkCalls}
-            accent="purple"
-          />
-          <StatCard
-            icon={Zap}
-            label="$ Win / $ Loss"
-            value={ordersLoading ? "…" : `$${dollarWin.toFixed(2)} / $${Math.abs(dollarLoss).toFixed(2)}`}
-            change={ordersLoading ? "" : `Net $${(dollarWin + dollarLoss).toFixed(2)}`}
-            changeDir={dollarWin + dollarLoss >= 0 ? "up" : "down"}
-            sparkData={sparkUptime}
-            accent="green"
-          />
-          <StatCard
-            icon={Clock}
-            label="Avg Hold Time"
-            value={ordersLoading ? "…" : avgHoldTime ?? "—"}
-            change={ordersLoading ? "" : `across ${orders.filter(o => o.synced_at).length} trades`}
-            changeDir="up"
-            sparkData={sparkData}
-            accent="orange"
-          />
-        </div>
-
-        {/* ── Analytics Dashboard ── */}
-        <AnalyticsPanel orders={orders} loading={ordersLoading} />
 
         {/* ── My Orders ── */}
         <Card>
@@ -660,11 +626,11 @@ export default function AdminPanel({ user }) {
                     <Loader2 className="w-3 h-3 animate-spin" /> Syncing…
                   </span>
                 )}
-                {!ordersLoading && orders.length > 0 && (
+                {!ordersLoading && visibleOrders.length > 0 && (
                   <span className="whitespace-nowrap">
-                    {orders.filter(o => o.is_open).length} open
-                    {orders.filter(o => !o.is_open).length > 0 && (
-                      <> · {orders.filter(o => !o.is_open).length} closed</>
+                    {visibleOrders.filter(o => o.is_open).length} open
+                    {visibleOrders.filter(o => !o.is_open).length > 0 && (
+                      <> · {visibleOrders.filter(o => !o.is_open).length} closed</>
                     )}
                   </span>
                 )}
@@ -684,11 +650,11 @@ export default function AdminPanel({ user }) {
             </div>
           ) : ordersError ? (
             <div className="px-5 py-6 text-sm text-red-400">{ordersError}</div>
-          ) : orders.length === 0 ? (
+          ) : visibleOrders.length === 0 ? (
             <div className="px-5 py-10 text-center text-slate-500 text-sm">
               No orders placed yet. Open the chart and place a bracket order to get started.
             </div>
-          ) : orders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length === 0 ? (
+          ) : visibleOrders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length === 0 ? (
             <div className="px-5 py-10 text-center text-slate-500 text-sm">
               No {ordersFilter} trades.
             </div>
@@ -705,9 +671,9 @@ export default function AdminPanel({ user }) {
 
                   {/* ── Open trades rows ── */}
                   <div className="divide-y divide-slate-800/40">
-                    {orders
+                    {visibleOrders
                       .filter(o => o.is_open)
-                      .slice(ordersPage * ORDERS_PER_PAGE, (ordersPage + 1) * ORDERS_PER_PAGE)
+                      .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE)
                       .map(o => {
                         const isLong    = o.direction === "long";
                         const isPaper   = o.paper_mode;
@@ -772,9 +738,9 @@ export default function AdminPanel({ user }) {
 
                   {/* ── Closed trades rows ── */}
                   <div className="divide-y divide-slate-800/40">
-                    {orders
+                    {visibleOrders
                       .filter(o => !o.is_open)
-                      .slice(ordersPage * ORDERS_PER_PAGE, (ordersPage + 1) * ORDERS_PER_PAGE)
+                      .slice(ordersPage * CLOSED_ORDERS_PER_PAGE, (ordersPage + 1) * CLOSED_ORDERS_PER_PAGE)
                       .map(o => {
                         const isLong    = o.direction === "long";
                         const isPaper   = o.paper_mode;
@@ -866,13 +832,14 @@ export default function AdminPanel({ user }) {
               )}
 
               {/* Pagination controls */}
-              {orders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length > ORDERS_PER_PAGE && (() => {
-                const filteredCount = orders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length;
-                const totalPages = Math.ceil(filteredCount / ORDERS_PER_PAGE);
+              {visibleOrders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length > (ordersFilter === "open" ? OPEN_ORDERS_PER_PAGE : CLOSED_ORDERS_PER_PAGE) && (() => {
+                const filteredCount = visibleOrders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length;
+                const perPage = ordersFilter === "open" ? OPEN_ORDERS_PER_PAGE : CLOSED_ORDERS_PER_PAGE;
+                const totalPages = Math.ceil(filteredCount / perPage);
                 return (
                   <div className="flex items-center justify-between px-5 py-3 border-t border-slate-800/40">
                     <span className="text-[11px] text-slate-400">
-                      {ordersPage * ORDERS_PER_PAGE + 1}–{Math.min((ordersPage + 1) * ORDERS_PER_PAGE, filteredCount)} of {filteredCount}
+                      {ordersPage * perPage + 1}–{Math.min((ordersPage + 1) * perPage, filteredCount)} of {filteredCount}
                     </span>
                     <div className="flex items-center gap-1">
                       <button
@@ -913,6 +880,49 @@ export default function AdminPanel({ user }) {
             </>
           )}
         </Card>
+
+        {/* ── Row 2: stat cards (4 equal) ── */}
+        <div className="grid grid-cols-4 gap-4">
+          <StatCard
+            icon={TrendingUp}
+            label="Total trades"
+            value={ordersLoading ? "…" : orders.length.toLocaleString()}
+            change={ordersLoading ? "" : `${orders.filter(o => o.is_open).length} open · ${orders.filter(o => !o.is_open).length} closed`}
+            changeDir="up"
+            sparkData={sparkWeek}
+            accent="blue"
+          />
+          <StatCard
+            icon={Activity}
+            label="Wins / Losses"
+            value={ordersLoading ? "…" : `${wins} / ${losses}`}
+            change={ordersLoading ? "" : winRate != null ? `${winRate}% win rate` : "No closed trades"}
+            changeDir={winRate != null && winRate >= 50 ? "up" : "down"}
+            sparkData={sparkCalls}
+            accent="purple"
+          />
+          <StatCard
+            icon={Zap}
+            label="$ Win / $ Loss"
+            value={ordersLoading ? "…" : `$${dollarWin.toFixed(2)} / $${Math.abs(dollarLoss).toFixed(2)}`}
+            change={ordersLoading ? "" : `Net $${(dollarWin + dollarLoss).toFixed(2)}`}
+            changeDir={dollarWin + dollarLoss >= 0 ? "up" : "down"}
+            sparkData={sparkUptime}
+            accent="green"
+          />
+          <StatCard
+            icon={Clock}
+            label="Avg Hold Time"
+            value={ordersLoading ? "…" : avgHoldTime ?? "—"}
+            change={ordersLoading ? "" : `across ${orders.filter(o => o.synced_at).length} trades`}
+            changeDir="up"
+            sparkData={sparkData}
+            accent="orange"
+          />
+        </div>
+
+        {/* ── Analytics Dashboard ── */}
+        <AnalyticsPanel orders={orders} loading={ordersLoading} />
 
         {/* ── Login History + Security (50/50) ── */}
         <div className="grid grid-cols-2 gap-4">
