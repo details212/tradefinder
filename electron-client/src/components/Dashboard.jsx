@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { stockApi, snapshotsApi, alpacaApi } from "../api/client";
+import { stockApi, snapshotsApi, alpacaApi, tradeIdeasApi } from "../api/client";
+import LiveStreamBar from "./LiveStreamBar";
 import StockDetail from "./StockDetail";
 import TradeIdeas from "./TradeIdeas";
 import PatternAnalysis from "./PatternAnalysis";
@@ -219,7 +220,9 @@ function SymbolsPanel({ watchlist, selectedTicker, onSelect, onClose }) {
   );
 }
 
-const WATCHLIST_POLL_MS = 60_000;
+const WATCHLIST_POLL_MS   = 60_000;
+const LIVE_STREAM_POLL_MS = 60_000;
+const LIVE_STREAM_MINUTES = 15;
 
 export default function Dashboard({ user, onLogout }) {
   const [selectedTicker,   setSelectedTicker]   = useState(null);
@@ -236,8 +239,49 @@ export default function Dashboard({ user, onLogout }) {
   const [tradeIdeasOpenChart, setTradeIdeasOpenChart] = useState(null);
   /** Sidebar → Pattern Analysis chart modal */
   const [patternOpenChart, setPatternOpenChart] = useState(null);
-  const pollRef = useRef(null);
+  const pollRef              = useRef(null);
   const wlRefreshDebounceRef = useRef(null);
+
+  // ── Live Stream state ──────────────────────────────────────────────────────
+  const [streamItems,    setStreamItems]    = useState([]);
+  const [streamNewCount, setStreamNewCount] = useState(0);
+  const [streamLastPoll, setStreamLastPoll] = useState(null);
+  const streamSeenRef   = useRef(new Set());
+  const streamFirstPoll = useRef(true);
+  const streamPollRef   = useRef(null);
+
+  const pollLiveStream = useCallback(() => {
+    tradeIdeasApi.recent(LIVE_STREAM_MINUTES)
+      .then(r => {
+        const items = r.data.recent || [];
+        if (streamFirstPoll.current) {
+          // Baseline on first load — don't flash "new" for pre-existing signals
+          items.forEach(item => {
+            streamSeenRef.current.add(`${item.strategy_id}:${item.ticker}:${item.bar_time}`);
+          });
+          streamFirstPoll.current = false;
+        } else {
+          let added = 0;
+          items.forEach(item => {
+            const key = `${item.strategy_id}:${item.ticker}:${item.bar_time}`;
+            if (!streamSeenRef.current.has(key)) {
+              streamSeenRef.current.add(key);
+              added++;
+            }
+          });
+          if (added > 0) setStreamNewCount(prev => prev + added);
+        }
+        setStreamItems(items);
+        setStreamLastPoll(new Date());
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    pollLiveStream();
+    streamPollRef.current = setInterval(pollLiveStream, LIVE_STREAM_POLL_MS);
+    return () => clearInterval(streamPollRef.current);
+  }, [pollLiveStream]);
 
   useEffect(() => {
     alpacaApi.test()
@@ -254,7 +298,17 @@ export default function Dashboard({ user, onLogout }) {
   }, []);
 
   const clearTradeIdeasOpenChart = useCallback(() => setTradeIdeasOpenChart(null), []);
-  const clearPatternOpenChart = useCallback(() => setPatternOpenChart(null), []);
+  const clearPatternOpenChart    = useCallback(() => setPatternOpenChart(null),    []);
+
+  const handleStreamItemClick = useCallback((item) => {
+    setActiveView("tradeideas");
+    setTradeIdeasOpenChart({
+      key:       Date.now(),
+      ticker:    item.ticker,
+      barTime:   item.bar_time ?? null,
+      threshold: null,
+    });
+  }, []);
 
   const handleWatchlistItemClick = useCallback((item) => {
     const ticker = item.ticker;
@@ -342,7 +396,19 @@ export default function Dashboard({ user, onLogout }) {
   }, [fetchWatchlist]);
 
   return (
-    <div className="flex h-screen bg-slate-900 overflow-hidden">
+    <div className="flex flex-col h-screen bg-slate-900 overflow-hidden">
+
+      {/* ── Live Stream top bar ───────────────────────────────────────────── */}
+      <LiveStreamBar
+        items={streamItems}
+        newCount={streamNewCount}
+        lastPoll={streamLastPoll}
+        onClearNew={() => setStreamNewCount(0)}
+        onClickItem={handleStreamItemClick}
+      />
+
+      {/* ── Body (sidebar + content) ──────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden">
       {/* Sidebar */}
       <aside className="w-72 flex flex-col border-r border-slate-800 bg-slate-900 shrink-0">
         {/* App header */}
@@ -573,6 +639,7 @@ export default function Dashboard({ user, onLogout }) {
 
         </div>
       </main>
+      </div>{/* end body */}
     </div>
   );
 }

@@ -122,7 +122,9 @@ export const stockApi = {
 // ── Trade Ideas ───────────────────────────────────────────────────────────────
 export const tradeIdeasApi = {
   list: () => api.get("/api/tradeideas/"),
-  run: (id) => api.get(`/api/tradeideas/${id}`),
+  run:  (id) => api.get(`/api/tradeideas/${id}`),
+  /** Signals fired in the last `minutes` minutes across all strategies. */
+  recent: (minutes = 15) => api.get("/api/tradeideas/recent", { params: { minutes } }),
   /** @param {string[]} tickers @param {{ staleOk?: boolean, queueRefresh?: boolean }} [opts] */
   maCache: (tickers, opts = {}) =>
     api.post("/api/tradeideas/ma-cache", {

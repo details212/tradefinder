@@ -47,6 +47,19 @@
   animation: hb-beacon 0.8s ease-out forwards;
 }
 
+/* Live Stream bar — horizontal marquee */
+@keyframes live-stream-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.live-stream-scroll {
+  animation: live-stream-scroll linear infinite;
+  white-space: nowrap;
+}
+.live-stream-scroll:hover {
+  animation-play-state: paused;
+}
+
 /* Open trade row — snapshot price past take profit */
 @keyframes tp-row-flash {
   0%, 100% { background-color: rgba(16, 185, 129, 0.06); }
