@@ -594,7 +594,6 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
   const [orderType,       setOrderType]       = useState(null);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,     setOrderResult]     = useState(null);
-  const [entryTif,        setEntryTif]        = useState("gtc");
   const [riskPrefs,       setRiskPrefs]       = useState(null);
   const [portfolioValue,  setPortfolioValue]  = useState(null);
   const [qtyDerived,      setQtyDerived]      = useState(false);
@@ -1534,10 +1533,12 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
               </div>
               <div className="mx-4 mb-3">
                 <p className="text-slate-500 text-[10px] mb-1.5 uppercase tracking-wide">Entry valid for</p>
-                <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-semibold">
-                  <button onClick={() => setEntryTif("day")} className={`flex-1 py-1.5 transition ${entryTif==="day"?"bg-slate-600 text-white":"bg-slate-800 text-slate-500 hover:text-slate-300"}`}>Today only</button>
-                  <button onClick={() => setEntryTif("gtc")} className={`flex-1 py-1.5 border-l border-slate-700 transition ${entryTif==="gtc"?"bg-slate-600 text-white":"bg-slate-800 text-slate-500 hover:text-slate-300"}`}>Until cancelled</button>
+                <div className="rounded-lg border border-slate-700 bg-slate-600 px-3 py-1.5 text-center text-xs font-semibold text-white">
+                  Good till cancelled
                 </div>
+                <p className="text-slate-600 text-[10px] mt-1">
+                  Entry stays open across sessions. Cancel manually if the trade is no longer valid.
+                </p>
               </div>
               {hasErr && !orderResult && <div className="mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium bg-red-900/40 border border-red-500/40 text-red-300">Stop must be below entry price.</div>}
               {orderResult && <div className={`mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium ${orderResult.ok?"bg-emerald-900/40 border border-emerald-500/40 text-emerald-300":"bg-red-900/40 border border-red-500/40 text-red-300"}`}>
@@ -1556,7 +1557,7 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                       const reward2 = Math.abs(adjustedTarget - smartEntry);
                       try {
                         const res = await alpacaApi.placeOrder({
-                          ticker, direction: "long", order_type: "limit", entry_tif: entryTif,
+                          ticker, direction: "long", order_type: "limit", entry_tif: "gtc",
                           qty: rr.qty, entry_price: smartEntry, stop_price: rr.stop,
                           target_price: adjustedTarget, rr_ratio: rr.rrRatio ?? null,
                           rr_ratio_effective: risk2>0?parseFloat((reward2/risk2).toFixed(4)):null,

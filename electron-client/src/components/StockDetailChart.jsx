@@ -456,7 +456,6 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   const [orderType,     setOrderType]     = useState(null);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,   setOrderResult]   = useState(null);
-  const [entryTif,      setEntryTif]      = useState("gtc");
   const [liveQuote,     setLiveQuote]     = useState(null);
   const [activeZoom,    setActiveZoom]    = useState("2W");
   const [riskPrefs,     setRiskPrefs]     = useState(null);
@@ -1194,24 +1193,11 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                   {!isMarket && (
                     <div className="mx-4 mb-3">
                       <p className="text-slate-500 text-[10px] mb-1.5 uppercase tracking-wide">Entry valid for</p>
-                      <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-semibold">
-                        <button
-                          onClick={() => setEntryTif("day")}
-                          className={`flex-1 py-1.5 transition ${entryTif === "day" ? "bg-slate-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-300"}`}
-                        >
-                          Today only
-                        </button>
-                        <button
-                          onClick={() => setEntryTif("gtc")}
-                          className={`flex-1 py-1.5 border-l border-slate-700 transition ${entryTif === "gtc" ? "bg-slate-600 text-white" : "bg-slate-800 text-slate-500 hover:text-slate-300"}`}
-                        >
-                          Until cancelled
-                        </button>
+                      <div className="rounded-lg border border-slate-700 bg-slate-600 px-3 py-1.5 text-center text-xs font-semibold text-white">
+                        Good till cancelled
                       </div>
                       <p className="text-slate-600 text-[10px] mt-1">
-                        {entryTif === "day"
-                          ? "Entry expires unfilled at today's market close. Legs are GTC once filled."
-                          : "Entry stays open across sessions. Cancel manually if the trade is no longer valid."}
+                        Entry stays open across sessions. Cancel manually if the trade is no longer valid.
                       </p>
                     </div>
                   )}
@@ -1274,7 +1260,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                               ticker,
                               direction,
                               order_type:         orderType,
-                              entry_tif:          isMarket ? "day" : entryTif,
+                              entry_tif:          isMarket ? "day" : "gtc",
                               qty:                rr.qty,
                               entry_price:        entryPrice,
                               stop_price:         rr.stop,

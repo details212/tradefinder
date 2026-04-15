@@ -26,9 +26,9 @@ const RED_VOL      = "rgba(239,68,68,0.55)";
 
 // ── Build Highcharts options ──────────────────────────────────────────────────
 function buildOptions(ticker, ohlcv, barTimeMs, threshold) {
-  // Append 30 empty 5-min slots after the last bar so ordinal axis shows
+  // Append 30 empty 15-min slots after the last bar so ordinal axis shows
   // whitespace to the right (needed for R/R drawing extensions to be visible).
-  const BAR_MS    = 5 * 60 * 1000;
+  const BAR_MS    = 15 * 60 * 1000;
   const PAD_BARS  = 30;
   const lastT     = ohlcv.length ? ohlcv[ohlcv.length - 1].t : 0;
   const padPoints = Array.from({ length: PAD_BARS }, (_, i) => lastT + BAR_MS * (i + 1));
@@ -101,8 +101,8 @@ function buildOptions(ticker, ohlcv, barTimeMs, threshold) {
       }] : [],
       // Faint highlight band around signal
       plotBands: barTimeMs ? [{
-        from:  barTimeMs - 5 * 60 * 1000,
-        to:    barTimeMs + 5 * 60 * 1000,
+        from:  barTimeMs - 15 * 60 * 1000,
+        to:    barTimeMs + 15 * 60 * 1000,
         color: "rgba(232,121,249,0.08)",
         zIndex: 4,
       }] : [],
@@ -514,7 +514,6 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [orderType,      setOrderType]      = useState(null);   // null | "market" | "limit"
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,     setOrderResult]     = useState(null);  // { ok, message, orderId } | null
-  const [entryTif,        setEntryTif]        = useState("gtc"); // "day" | "gtc"
   const [liveQuote,       setLiveQuote]       = useState(null);  // null | { bid, ask, last, spread, updatedAt, fetching }
   const [activeZoom, setActiveZoom] = useState("3D");
   const [riskPrefs,      setRiskPrefs]      = useState(null);   // { risk_mode, risk_value }
@@ -534,7 +533,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   // Last timestamp including the 30 null padding bars appended in buildOptions
   const paddedLastT = useCallback(() => {
     if (!bars.length) return 0;
-    return bars[bars.length - 1].t + 30 * 5 * 60 * 1000;
+    return bars[bars.length - 1].t + 30 * 15 * 60 * 1000;
   }, [bars]);
 
   const applyZoom = useCallback((preset) => {
@@ -565,7 +564,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
     const fmt = d => d.toISOString().slice(0, 10);
 
     stockApi.history(ticker, {
-      multiplier: 5, timespan: "minute",
+      multiplier: 15, timespan: "minute",
       from: fmt(from), to: fmt(today), limit: 3000,
     })
       .then(r => {
@@ -1295,38 +1294,17 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                     <span className="text-emerald-400 font-mono">+${rewardAmt}</span>
                   </div>
 
-                  {/* Entry TIF toggle — only relevant for limit orders */}
+                  {/* Limit entries are always good-till-cancelled */}
                   {!isMarket && (
                     <div className="mx-4 mb-3">
                       <p className="text-slate-500 text-[10px] mb-1.5 uppercase tracking-wide">
                         Entry valid for
                       </p>
-                      <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-semibold">
-                        <button
-                          onClick={() => setEntryTif("day")}
-                          className={`flex-1 py-1.5 transition ${
-                            entryTif === "day"
-                              ? "bg-slate-600 text-white"
-                              : "bg-slate-800 text-slate-500 hover:text-slate-300"
-                          }`}
-                        >
-                          Today only
-                        </button>
-                        <button
-                          onClick={() => setEntryTif("gtc")}
-                          className={`flex-1 py-1.5 border-l border-slate-700 transition ${
-                            entryTif === "gtc"
-                              ? "bg-slate-600 text-white"
-                              : "bg-slate-800 text-slate-500 hover:text-slate-300"
-                          }`}
-                        >
-                          Until cancelled
-                        </button>
+                      <div className="rounded-lg border border-slate-700 bg-slate-600 px-3 py-1.5 text-center text-xs font-semibold text-white">
+                        Good till cancelled
                       </div>
                       <p className="text-slate-600 text-[10px] mt-1">
-                        {entryTif === "day"
-                          ? "Entry expires unfilled at today's market close. Legs are GTC once filled."
-                          : "Entry stays open across sessions. Cancel manually if the trade is no longer valid."}
+                        Entry stays open across sessions. Cancel manually if the trade is no longer valid.
                       </p>
                     </div>
                   )}
@@ -1404,7 +1382,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                               ticker,
                               direction,
                               order_type:   orderType,
-                              entry_tif:    isMarket ? "day" : entryTif,
+                              entry_tif:    isMarket ? "day" : "gtc",
                               qty:                rr.qty,
                               entry_price:        entryPrice,
                               stop_price:         rr.stop,
