@@ -223,6 +223,17 @@ function SymbolsPanel({ watchlist, selectedTicker, onSelect, onClose }) {
 const WATCHLIST_POLL_MS   = 60_000;
 const LIVE_STREAM_POLL_MS = 60_000;
 const LIVE_STREAM_MINUTES = 15;
+const LIVE_STREAM_MIN_INFO = 3;
+
+const _STREAM_MA_KEYS = ["ema10", "ema20", "sma50", "sma150", "sma200"];
+function _streamMaScore(maData, price, isLong) {
+  if (!maData || price == null) return null;
+  return _STREAM_MA_KEYS.reduce((n, k) => {
+    const v = maData[k];
+    if (v == null) return n;
+    return n + (isLong ? (price > v ? 1 : 0) : (price < v ? 1 : 0));
+  }, 0);
+}
 
 export default function Dashboard({ user, onLogout }) {
   const [selectedTicker,   setSelectedTicker]   = useState(null);
@@ -250,31 +261,59 @@ export default function Dashboard({ user, onLogout }) {
   const streamFirstPoll = useRef(true);
   const streamPollRef   = useRef(null);
 
-  const pollLiveStream = useCallback(() => {
-    tradeIdeasApi.recent(LIVE_STREAM_MINUTES)
-      .then(r => {
-        const items = r.data.recent || [];
-        if (streamFirstPoll.current) {
-          // Baseline on first load — don't flash "new" for pre-existing signals
-          items.forEach(item => {
-            streamSeenRef.current.add(`${item.strategy_id}:${item.ticker}:${item.bar_time}`);
-          });
-          streamFirstPoll.current = false;
-        } else {
-          let added = 0;
-          items.forEach(item => {
-            const key = `${item.strategy_id}:${item.ticker}:${item.bar_time}`;
-            if (!streamSeenRef.current.has(key)) {
-              streamSeenRef.current.add(key);
-              added++;
-            }
-          });
-          if (added > 0) setStreamNewCount(prev => prev + added);
-        }
-        setStreamItems(items);
-        setStreamLastPoll(new Date());
-      })
-      .catch(() => {});
+  const pollLiveStream = useCallback(async () => {
+    try {
+      const r = await tradeIdeasApi.recent(LIVE_STREAM_MINUTES);
+      const items = r.data.recent || [];
+
+      // Fetch MA cache + snapshot prices for all unique tickers in parallel
+      const tickers = [...new Set(items.map(i => i.ticker))];
+      let maByTicker   = {};
+      let priceByTicker = {};
+      if (tickers.length > 0) {
+        try {
+          const [maRes, priceRes] = await Promise.all([
+            tradeIdeasApi.maCache(tickers, { staleOk: true }),
+            snapshotsApi.prices(tickers.join(",")),
+          ]);
+          maByTicker    = maRes.data.ma      || {};
+          priceByTicker = priceRes.data.prices || {};
+        } catch { /* keep empty lookups — show items unfiltered if secondary calls fail */ }
+      }
+
+      // Mirror the Trade Ideas "Info ≥ 3" filter
+      const filtered = items.filter(item => {
+        const maData = maByTicker[item.ticker];
+        if (!maData) return true; // no cache entry yet → don't drop it (consistent with Trade Ideas)
+        const price  = priceByTicker[item.ticker]?.price ?? item.close;
+        const isLong = item.direction?.toLowerCase() === "long";
+        const score  = _streamMaScore(maData, price, isLong);
+        return score == null || score >= LIVE_STREAM_MIN_INFO;
+      });
+
+      if (streamFirstPoll.current) {
+        // Baseline on first load — mark everything seen so nothing flashes "new"
+        items.forEach(item =>
+          streamSeenRef.current.add(`${item.strategy_id}:${item.ticker}:${item.bar_time}`)
+        );
+        streamFirstPoll.current = false;
+      } else {
+        // Count new signals from the filtered set before updating seen
+        let added = 0;
+        filtered.forEach(item => {
+          const key = `${item.strategy_id}:${item.ticker}:${item.bar_time}`;
+          if (!streamSeenRef.current.has(key)) added++;
+        });
+        // Mark ALL items (including filtered-out) as seen to prevent future re-flashing
+        items.forEach(item =>
+          streamSeenRef.current.add(`${item.strategy_id}:${item.ticker}:${item.bar_time}`)
+        );
+        if (added > 0) setStreamNewCount(prev => prev + added);
+      }
+
+      setStreamItems(filtered);
+      setStreamLastPoll(new Date());
+    } catch { /* ignore network errors */ }
   }, []);
 
   useEffect(() => {

@@ -3,7 +3,7 @@ import { authApi, alpacaApi, preferencesApi } from "../api/client";
 import {
   User, Lock, TrendingUp, ShieldAlert, Zap,
   CheckCircle, AlertCircle, Loader2, Save, RefreshCw, DollarSign, Wallet,
-  AtSign, XCircle, Mail, Send, MapPin, Phone,
+  AtSign, XCircle, Mail, Send, MapPin, Phone, Trash2,
 } from "lucide-react";
 
 // ── Small reusable status banner ──────────────────────────────────────────────
@@ -958,6 +958,96 @@ function RiskManagementSection({ portfolioValue }) {
   );
 }
 
+// ── Danger zone section ───────────────────────────────────────────────────────
+function DangerZoneSection() {
+  const [phase,   setPhase]   = useState("idle"); // idle | confirm | loading | done
+  const [status,  setStatus]  = useState(null);
+
+  async function handleReset() {
+    setPhase("loading");
+    setStatus(null);
+    try {
+      await authApi.resetHistory();
+      setPhase("done");
+      setStatus({ type: "success", message: "Account history has been cleared. All trades, watchlist items, and chart boxes have been removed." });
+    } catch (err) {
+      setPhase("idle");
+      setStatus({ type: "error", message: err.response?.data?.error ?? "Failed to reset history. Please try again." });
+    }
+  }
+
+  return (
+    <div className="bg-red-950/20 border border-red-800/40 rounded-xl p-6">
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-red-400 mb-5">
+        <Trash2 className="w-4 h-4" />
+        Danger Zone
+      </h2>
+
+      <div className="flex flex-col gap-4">
+        <div>
+          <p className="text-sm font-medium text-slate-200 mb-1">Reset Account History</p>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Permanently deletes all trade orders, watchlist items, chart boxes, login history,
+            and cached market data associated with your account. Your username, email, password,
+            broker credentials, and preferences are kept intact.
+          </p>
+        </div>
+
+        {phase === "idle" && (
+          <div>
+            <button
+              type="button"
+              onClick={() => { setPhase("confirm"); setStatus(null); }}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-900/40 hover:bg-red-800/60 border border-red-700/50 text-red-400 hover:text-red-300 text-sm font-medium transition"
+            >
+              <Trash2 className="w-4 h-4" />
+              Reset Account History
+            </button>
+          </div>
+        )}
+
+        {phase === "confirm" && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-900/30 border border-red-700/50">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-300 leading-relaxed">
+                <span className="font-semibold">This cannot be undone.</span> All trade history,
+                watchlist entries, and chart boxes will be permanently deleted. Are you sure?
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleReset}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-medium transition"
+              >
+                <Trash2 className="w-4 h-4" />
+                Yes, delete everything
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPhase("idle"); setStatus(null); }}
+                className="text-xs text-slate-400 hover:text-slate-200 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === "loading" && (
+          <div className="flex items-center gap-2 text-slate-400 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Clearing history…
+          </div>
+        )}
+
+        <StatusBanner status={status} />
+      </div>
+    </div>
+  );
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 export default function AccountSettings({ user, onUserUpdated }) {
   const [currentUsername, setCurrentUsername] = useState(user?.username ?? "");
@@ -1010,6 +1100,7 @@ export default function AccountSettings({ user, onUserUpdated }) {
         />
         <AutoCloseBeyondTpSection />
         <RiskManagementSection portfolioValue={account?.portfolio_value ?? null} />
+        <DangerZoneSection />
       </div>
     </div>
   );

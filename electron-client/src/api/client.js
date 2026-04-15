@@ -75,6 +75,8 @@ export const authApi = {
     api.post("/api/auth/verify-email-change", { code }),
   loginEvents: (limit = 10) =>
     api.get("/api/auth/login-events", { params: { limit } }),
+  resetHistory: () =>
+    api.post("/api/auth/reset-history"),
 };
 
 // ── Stocks ───────────────────────────────────────────────────────────────────
