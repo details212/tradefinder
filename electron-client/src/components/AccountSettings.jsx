@@ -743,7 +743,7 @@ function AutoCloseBeyondTpSection() {
   }
 
   return (
-    <Section icon={Zap} title="Take-profit automation">
+    <Section icon={Zap} title="Trade automation">
       {loading ? (
         <div className="flex items-center gap-2 text-slate-500 text-sm">
           <Loader2 className="w-4 h-4 animate-spin" /> Loading…
@@ -751,14 +751,15 @@ function AutoCloseBeyondTpSection() {
       ) : (
         <div className="flex flex-col gap-4">
           <p className="text-xs text-slate-500 leading-relaxed">
-            When the last traded price (from the app&apos;s snapshot feed) moves past your take-profit
-            level while the position is still open, automatically cancel the bracket legs and send a
+            When the last traded price moves past your take-profit <em>or</em> stop-loss level while
+            the position is still open, automatically cancel the bracket legs and send a
             <span className="text-slate-400"> market </span>
-            order to flatten—same behavior as closing a trade manually from My Trades. The check runs
-            about once per minute while the app server is running.
+            order to flatten all shares—same behavior as closing a trade manually from My Trades.
+            Prices are fetched directly from Alpaca every minute. The check runs about once per
+            minute while the app server is running.
           </p>
           <div className="flex items-center justify-between gap-4 py-1">
-            <span className="text-sm text-slate-300">Auto-close with market order past take profit</span>
+            <span className="text-sm text-slate-300">Auto-close with market order past take profit or stop loss</span>
             <button
               type="button"
               role="switch"

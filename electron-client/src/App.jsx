@@ -3,6 +3,8 @@ import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
 import UpdateModal from "./components/UpdateModal";
+import TradeAutomationDisclosureModal from "./components/TradeAutomationDisclosureModal";
+import { preferencesApi } from "./api/client";
 
 /** Compare two semver strings. Returns true if `a` is strictly older than `b`. */
 function isOutdated(a, b) {
@@ -32,6 +34,9 @@ function App() {
   const [reqVersion,    setReqVersion]    = useState("");
   const [downloadUrl,   setDownloadUrl]   = useState("");
 
+  // Trade-automation disclosure modal (shown every login when feature is on)
+  const [showAutomationDisclosure, setShowAutomationDisclosure] = useState(false);
+
   const navigate = useNavigate();
 
   // Clear any saved session on every app launch — always require login
@@ -46,7 +51,7 @@ function App() {
    * The backend now includes `required_version` and `download_url` in the
    * login/register response so we can gate access before storing the token.
    */
-  const handleLogin = (newToken, newUser, requiredVersion, dlUrl) => {
+  const handleLogin = async (newToken, newUser, requiredVersion, dlUrl) => {
     const client = window.APP_VERSION || "0.0.0";
 
     if (requiredVersion && isOutdated(client, requiredVersion)) {
@@ -62,6 +67,21 @@ function App() {
     localStorage.setItem("tf_user", JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
+
+    // Check whether Trade Automation is enabled; if so, show the disclosure
+    // modal before letting the user into the dashboard.
+    try {
+      const r = await preferencesApi.get();
+      const v = r.data.preferences?.auto_market_close_beyond_tp;
+      const isEnabled = v === true || String(v).toLowerCase() === "true" || v === "1";
+      if (isEnabled) {
+        setShowAutomationDisclosure(true);
+        return;
+      }
+    } catch {
+      // If the preference fetch fails, proceed normally — don't block login.
+    }
+
     navigate("/dashboard");
   };
 
@@ -99,6 +119,11 @@ function App() {
     );
   }
 
+  function handleAutomationAcknowledge() {
+    setShowAutomationDisclosure(false);
+    navigate("/dashboard");
+  }
+
   return (
     <>
       {updateNeeded && (
@@ -107,6 +132,10 @@ function App() {
           requiredVersion={reqVersion}
           downloadUrl={downloadUrl}
         />
+      )}
+
+      {showAutomationDisclosure && (
+        <TradeAutomationDisclosureModal onAcknowledge={handleAutomationAcknowledge} />
       )}
 
       <Routes>
