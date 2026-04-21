@@ -1564,6 +1564,7 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                           risk_amt: parseFloat((risk2*rr.qty).toFixed(4)), reward_amt: parseFloat((reward2*rr.qty).toFixed(4)),
                           bias: null, bar_time: null, threshold: null, entry_time: rr.entryTime ?? null,
                         });
+                        window.dispatchEvent(new CustomEvent("tf:trade-opened"));
                         setOrderResult({ ok: true, message: res.data.message, orderId: res.data.order?.alpaca_order_id });
                       } catch (err) {
                         setOrderResult({ ok: false, message: err.response?.data?.error || err.message || "Failed to place order." });

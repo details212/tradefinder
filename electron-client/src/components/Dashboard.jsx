@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { stockApi, snapshotsApi, alpacaApi, tradeIdeasApi } from "../api/client";
+import { stockApi, snapshotsApi, alpacaApi, tradeIdeasApi, preferencesApi } from "../api/client";
 import LiveStreamBar from "./LiveStreamBar";
 import StockDetail from "./StockDetail";
 import TradeIdeas from "./TradeIdeas";
@@ -220,10 +220,32 @@ function SymbolsPanel({ watchlist, selectedTicker, onSelect, onClose }) {
   );
 }
 
-const WATCHLIST_POLL_MS   = 60_000;
-const LIVE_STREAM_POLL_MS = 60_000;
-const LIVE_STREAM_MINUTES = 15;
+const WATCHLIST_POLL_MS    = 60_000;
+const LIVE_STREAM_POLL_MS  = 60_000;
+const LIVE_STREAM_MINUTES  = 15;
 const LIVE_STREAM_MIN_INFO = 3;
+const STREAM_NEW_FLASH_MS  = 60_000;
+
+/** Play a soft two-tone ascending chime via the Web Audio API. No audio file required. */
+function playStreamChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // C5 (523 Hz) → E5 (659 Hz), each note fades out naturally
+    [[523.25, 0, 0.28], [659.25, 0.20, 0.36]].forEach(([freq, delay, dur]) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+      gain.gain.linearRampToValueAtTime(0.22, ctx.currentTime + delay + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + dur);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + dur + 0.02);
+    });
+  } catch { /* Web Audio not available — skip silently */ }
+}
 
 const _STREAM_MA_KEYS = ["ema10", "ema20", "sma50", "sma150", "sma200"];
 function _streamMaScore(maData, price, isLong) {
@@ -257,37 +279,56 @@ export default function Dashboard({ user, onLogout }) {
   const [streamItems,    setStreamItems]    = useState([]);
   const [streamNewCount, setStreamNewCount] = useState(0);
   const [streamLastPoll, setStreamLastPoll] = useState(null);
+  const [streamNewKeys,  setStreamNewKeys]  = useState(new Set()); // keys flashed as "new"
   const streamSeenRef   = useRef(new Set());
   const streamFirstPoll = useRef(true);
   const streamPollRef   = useRef(null);
+
+  // Live stream user preferences — kept in a ref so pollLiveStream can always
+  // read the latest value without being recreated on every preference change.
+  const streamPrefsRef = useRef({
+    showLong:         true,
+    showShort:        true,
+    hiddenStrategies: new Set(),
+    soundEnabled:     false,
+  });
 
   const pollLiveStream = useCallback(async () => {
     try {
       const r = await tradeIdeasApi.recent(LIVE_STREAM_MINUTES);
       const items = r.data.recent || [];
 
-      // Fetch MA cache + snapshot prices for all unique tickers in parallel
+      // Fetch MA cache, snapshot prices, and open tickers in parallel
       const tickers = [...new Set(items.map(i => i.ticker))];
-      let maByTicker   = {};
+      let maByTicker    = {};
       let priceByTicker = {};
+      let openTickerSet = new Set();
       if (tickers.length > 0) {
         try {
-          const [maRes, priceRes] = await Promise.all([
+          const [maRes, priceRes, openRes] = await Promise.all([
             tradeIdeasApi.maCache(tickers, { staleOk: true }),
             snapshotsApi.prices(tickers.join(",")),
+            alpacaApi.openTickers(),
           ]);
-          maByTicker    = maRes.data.ma      || {};
+          maByTicker    = maRes.data.ma       || {};
           priceByTicker = priceRes.data.prices || {};
+          openTickerSet = new Set(openRes.data.tickers ?? []);
         } catch { /* keep empty lookups — show items unfiltered if secondary calls fail */ }
       }
 
-      // Mirror the Trade Ideas "Info ≥ 3" filter
+      const prefs = streamPrefsRef.current;
+
+      // Apply all filters: open positions → direction → strategy → MA alignment
       const filtered = items.filter(item => {
+        if (openTickerSet.has(item.ticker)) return false;
+        const dir = item.direction?.toLowerCase();
+        if (dir === "long"  && !prefs.showLong)  return false;
+        if (dir === "short" && !prefs.showShort) return false;
+        if (prefs.hiddenStrategies.has(Number(item.strategy_id))) return false;
         const maData = maByTicker[item.ticker];
-        if (!maData) return true; // no cache entry yet → don't drop it (consistent with Trade Ideas)
-        const price  = priceByTicker[item.ticker]?.price ?? item.close;
-        const isLong = item.direction?.toLowerCase() === "long";
-        const score  = _streamMaScore(maData, price, isLong);
+        if (!maData) return true; // no cache entry yet — don't drop it
+        const price = priceByTicker[item.ticker]?.price ?? item.close;
+        const score = _streamMaScore(maData, price, dir === "long");
         return score == null || score >= LIVE_STREAM_MIN_INFO;
       });
 
@@ -298,17 +339,27 @@ export default function Dashboard({ user, onLogout }) {
         );
         streamFirstPoll.current = false;
       } else {
-        // Count new signals from the filtered set before updating seen
-        let added = 0;
-        filtered.forEach(item => {
+        // Collect genuinely new items (never seen before)
+        const newItems = filtered.filter(item => {
           const key = `${item.strategy_id}:${item.ticker}:${item.bar_time}`;
-          if (!streamSeenRef.current.has(key)) added++;
+          return !streamSeenRef.current.has(key);
         });
-        // Mark ALL items (including filtered-out) as seen to prevent future re-flashing
+        // Mark ALL raw items as seen (prevents re-highlighting on next poll)
         items.forEach(item =>
           streamSeenRef.current.add(`${item.strategy_id}:${item.ticker}:${item.bar_time}`)
         );
-        if (added > 0) setStreamNewCount(prev => prev + added);
+        if (newItems.length > 0) {
+          // Highlight only the single most recent new item (latest bar_time)
+          const newest = newItems.reduce((best, item) =>
+            new Date(item.bar_time) > new Date(best.bar_time) ? item : best
+          );
+          const newestKey = `${newest.strategy_id}:${newest.ticker}:${newest.bar_time}`;
+          setStreamNewCount(prev => prev + newItems.length);
+          setStreamNewKeys(new Set([newestKey]));
+          if (prefs.soundEnabled) playStreamChime();
+          // Clear the flash highlight after STREAM_NEW_FLASH_MS
+          setTimeout(() => setStreamNewKeys(new Set()), STREAM_NEW_FLASH_MS);
+        }
       }
 
       setStreamItems(filtered);
@@ -316,10 +367,46 @@ export default function Dashboard({ user, onLogout }) {
     } catch { /* ignore network errors */ }
   }, []);
 
+  /** Fetch stream preferences and update the ref; re-poll so changes take effect immediately. */
+  const loadStreamPrefs = useCallback(async (andRepoll = false) => {
+    try {
+      const r = await preferencesApi.get();
+      const p = r.data.preferences ?? {};
+      const hidden = (() => {
+        try { return new Set(JSON.parse(p.stream_hidden_strategies || "[]").map(Number)); }
+        catch { return new Set(); }
+      })();
+      streamPrefsRef.current = {
+        showLong:         p.stream_show_long  !== "false",
+        showShort:        p.stream_show_short !== "false",
+        hiddenStrategies: hidden,
+        soundEnabled:     p.stream_sound_enabled === "true",
+      };
+      if (andRepoll) pollLiveStream();
+    } catch { /* non-fatal — keep existing prefs */ }
+  }, [pollLiveStream]);
+
+  // Load preferences once on mount, then kick off the poll cycle
   useEffect(() => {
+    loadStreamPrefs();
     pollLiveStream();
     streamPollRef.current = setInterval(pollLiveStream, LIVE_STREAM_POLL_MS);
     return () => clearInterval(streamPollRef.current);
+  }, [pollLiveStream, loadStreamPrefs]);
+
+  // Re-read preferences immediately when the user saves them in Account Settings
+  useEffect(() => {
+    const onPrefsChanged = () => loadStreamPrefs(true);
+    window.addEventListener("tf:stream-prefs-changed", onPrefsChanged);
+    return () => window.removeEventListener("tf:stream-prefs-changed", onPrefsChanged);
+  }, [loadStreamPrefs]);
+
+  // Re-poll the live stream immediately after a trade is opened so the newly
+  // open symbol is removed from the marquee without waiting 60 seconds.
+  useEffect(() => {
+    const onTradeOpened = () => pollLiveStream();
+    window.addEventListener("tf:trade-opened", onTradeOpened);
+    return () => window.removeEventListener("tf:trade-opened", onTradeOpened);
   }, [pollLiveStream]);
 
   useEffect(() => {
@@ -442,6 +529,7 @@ export default function Dashboard({ user, onLogout }) {
         items={streamItems}
         newCount={streamNewCount}
         lastPoll={streamLastPoll}
+        newKeys={streamNewKeys}
         onClearNew={() => setStreamNewCount(0)}
         onClickItem={handleStreamItemClick}
       />

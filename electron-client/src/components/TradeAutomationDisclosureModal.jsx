@@ -45,9 +45,13 @@ export default function TradeAutomationDisclosureModal({ onAcknowledge }) {
             </div>
           </div>
           <p className="text-sm text-slate-300 leading-relaxed">
-            Your account is configured to automatically close open positions when the last
-            traded price moves past your designated take-profit or stop-loss level. Review
-            the information below before you begin your session.
+            Your account is configured to automatically close open positions when the live
+            price breaches your take-profit or stop-loss level. To avoid triggering on a
+            single fleeting tick, the system requires{" "}
+            <span className="text-white font-semibold">3 consecutive 60-second observations</span>{" "}
+            outside the brackets before a market order is sent — giving the exchange roughly
+            2 minutes to fill your native bracket order first. Review the details below
+            before you begin your session.
           </p>
         </div>
 
@@ -64,9 +68,10 @@ export default function TradeAutomationDisclosureModal({ onAcknowledge }) {
             accent="border-sky-500/50"
             title="How the automation works"
             items={[
-              "The TradeFinder server polls Alpaca for the last traded price of every open position approximately once per minute during market hours.",
-              "When a price breach is detected, the system cancels all open bracket legs (take-profit and stop-loss orders) for that position.",
-              "A market order is then submitted immediately to close the full remaining share quantity — identical to clicking \"Close Trade\" manually from the My Trades panel.",
+              "The TradeFinder server polls Alpaca for the last traded price of every open position once per minute during market hours.",
+              "Each observation is saved. If the price is inside your brackets, the breach counter is reset to zero. The system will not fire a market order from a single out-of-range reading.",
+              "Only after 3 consecutive 60-second observations all outside the brackets (~2 minutes of sustained breach) does the system proceed to send a market close order. This window is intentional — it gives your native bracket order time to fill at the exchange before any automation intervenes.",
+              "When the threshold is met, the system cancels all remaining bracket legs (take-profit and stop-loss) and submits a market order to close the full remaining share quantity — identical to clicking \"Close Trade\" manually from the My Trades panel.",
             ]}
           />
 
@@ -87,11 +92,12 @@ export default function TradeAutomationDisclosureModal({ onAcknowledge }) {
             icon={Activity}
             iconColor="text-purple-400"
             accent="border-purple-500/50"
-            title="Polling latency & snapshot accuracy"
+            title="Polling latency & confirmation window"
             items={[
-              "Price checks are not tick-perfect. Alpaca snapshots are queried roughly every 60 seconds, so a breach that occurs between polls may not trigger a close until the next cycle.",
-              "Price can continue to move against your position during that window. This latency is inherent to server-side polling and cannot be eliminated.",
-              "Snapshot data reflects the last trade price, which can lag real-time quotes by several seconds in fast-moving markets.",
+              "Price checks are not tick-perfect. Because the system requires 3 consecutive out-of-range readings, there is an intentional minimum delay of approximately 2 minutes between the first breach observation and any market order.",
+              "If the price recovers inside the brackets at any point during those 2 minutes, the breach counter resets and the cycle starts over. No market order is sent.",
+              "Price can continue to move against your position during the confirmation window. This is the deliberate trade-off for reducing false triggers.",
+              "Snapshot data reflects the last trade price from Alpaca, which can lag real-time quotes by several seconds in fast-moving markets.",
             ]}
           />
 
@@ -112,11 +118,11 @@ export default function TradeAutomationDisclosureModal({ onAcknowledge }) {
           <div className="flex items-start gap-3 px-4 py-4 rounded-xl bg-slate-900/60 border border-slate-700/50">
             <TrendingDown className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
             <p className="text-sm text-slate-400 leading-relaxed">
-              <span className="text-slate-200 font-semibold">Bracket cancellation is best-effort.</span>{" "}
-              If Alpaca has already triggered a native take-profit or stop-loss fill before the
-              automation cycle runs, the system detects the position as closed and takes no additional
-              action. Occasional duplicate close attempts may appear in your Alpaca order history —
-              these are harmless.
+              <span className="text-slate-200 font-semibold">Bracket fills take priority.</span>{" "}
+              If Alpaca fills your native take-profit or stop-loss bracket order during the 2-minute
+              confirmation window, the system detects the position as closed on its next cycle and
+              discards any pending breach observations — no market order is sent. The 3-poll window
+              exists precisely to let the exchange do its job first.
             </p>
           </div>
         </div>

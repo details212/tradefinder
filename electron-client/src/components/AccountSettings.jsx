@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { authApi, alpacaApi, preferencesApi } from "../api/client";
+import { authApi, alpacaApi, preferencesApi, tradeIdeasApi } from "../api/client";
 import {
-  User, Lock, TrendingUp, ShieldAlert, Zap,
+  User, Lock, TrendingUp, ShieldAlert, Zap, Radio,
   CheckCircle, AlertCircle, Loader2, Save, RefreshCw, DollarSign, Wallet,
-  AtSign, XCircle, Mail, Send, MapPin, Phone, Trash2,
+  AtSign, XCircle, Mail, Send, MapPin, Phone, Trash2, Volume2, VolumeX,
 } from "lucide-react";
 
 // ── Small reusable status banner ──────────────────────────────────────────────
@@ -32,6 +32,44 @@ function Section({ icon: Icon, title, children }) {
         {title}
       </h2>
       {children}
+    </div>
+  );
+}
+
+// ── Reusable toggle switch ────────────────────────────────────────────────────
+function Toggle({ checked, onChange, disabled }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/50 disabled:opacity-50 ${
+        checked ? "bg-brand-600" : "bg-slate-600"
+      }`}
+    >
+      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+        checked ? "translate-x-6" : "translate-x-1"
+      }`} />
+    </button>
+  );
+}
+
+// ── Label + description + toggle row ─────────────────────────────────────────
+function ToggleRow({ label, description, checked, onChange, disabled, icon: Icon }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-0.5">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          {Icon && <Icon className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+          <span className="text-sm text-slate-200">{label}</span>
+        </div>
+        {description && (
+          <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{description}</p>
+        )}
+      </div>
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
@@ -959,6 +997,191 @@ function RiskManagementSection({ portfolioValue }) {
   );
 }
 
+// ── Live stream settings section ──────────────────────────────────────────────
+function LiveStreamSettingsSection() {
+  const [loading,          setLoading]          = useState(true);
+  const [saving,           setSaving]           = useState(false);
+  const [status,           setStatus]           = useState(null);
+  const [strategies,       setStrategies]       = useState([]);
+  const [showLong,         setShowLong]         = useState(true);
+  const [showShort,        setShowShort]        = useState(true);
+  const [hiddenStrategies, setHiddenStrategies] = useState(new Set()); // numeric IDs
+  const [soundEnabled,     setSoundEnabled]     = useState(false);
+
+  useEffect(() => {
+    Promise.all([preferencesApi.get(), tradeIdeasApi.list()])
+      .then(([prefsRes, stratRes]) => {
+        const p = prefsRes.data.preferences ?? {};
+        if (p.stream_show_long  !== undefined) setShowLong(p.stream_show_long  !== "false");
+        if (p.stream_show_short !== undefined) setShowShort(p.stream_show_short !== "false");
+        try {
+          const hidden = JSON.parse(p.stream_hidden_strategies || "[]");
+          setHiddenStrategies(new Set(hidden.map(Number)));
+        } catch { /* malformed JSON — keep default */ }
+        setSoundEnabled(p.stream_sound_enabled === "true");
+        setStrategies(stratRes.data.strategies || []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  function toggleStrategy(id) {
+    setHiddenStrategies(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setStatus(null);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      await preferencesApi.update({
+        stream_show_long:          showLong     ? "true" : "false",
+        stream_show_short:         showShort    ? "true" : "false",
+        stream_hidden_strategies:  JSON.stringify([...hiddenStrategies]),
+        stream_sound_enabled:      soundEnabled ? "true" : "false",
+      });
+      setStatus({ type: "success", message: "Live stream settings saved." });
+      // Let Dashboard pick up the new preferences immediately
+      window.dispatchEvent(new CustomEvent("tf:stream-prefs-changed"));
+    } catch {
+      setStatus({ type: "error", message: "Failed to save. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const longs  = strategies.filter(s => s.direction?.toLowerCase() === "long");
+  const shorts = strategies.filter(s => s.direction?.toLowerCase() === "short");
+  const groups = [
+    { label: "Long strategies",  items: longs  },
+    { label: "Short strategies", items: shorts },
+  ].filter(g => g.items.length > 0);
+
+  return (
+    <Section icon={Radio} title="Live Stream">
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="flex flex-col gap-6">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Control which signals appear in the Live Stream ticker at the top of the screen.
+            Changes take effect on the next 60-second poll cycle, or immediately after saving.
+          </p>
+
+          {/* ── Direction toggles ── */}
+          <div className="flex flex-col gap-1">
+            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              Direction
+            </p>
+            <ToggleRow
+              label="Show Long trade ideas"
+              description="Display bullish / long signals in the stream"
+              checked={showLong}
+              onChange={v => { setShowLong(v); setStatus(null); }}
+              disabled={saving}
+            />
+            <div className="my-1 border-t border-slate-700/40" />
+            <ToggleRow
+              label="Show Short trade ideas"
+              description="Display bearish / short signals in the stream"
+              checked={showShort}
+              onChange={v => { setShowShort(v); setStatus(null); }}
+              disabled={saving}
+            />
+          </div>
+
+          {/* ── Per-strategy toggles ── */}
+          {strategies.length > 0 && (
+            <div className="flex flex-col gap-3">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Strategies
+              </p>
+              <div className="flex flex-col gap-3">
+                {groups.map(group => (
+                  <div key={group.label}>
+                    <p className="text-xs text-slate-600 mb-1.5 pl-0.5">{group.label}</p>
+                    <div className="rounded-xl border border-slate-700/60 overflow-hidden divide-y divide-slate-700/40">
+                      {group.items.map(s => {
+                        const visible = !hiddenStrategies.has(s.id);
+                        const isLong  = s.direction?.toLowerCase() === "long";
+                        return (
+                          <div
+                            key={s.id}
+                            className={`flex items-center gap-3 px-4 py-3 transition-colors ${
+                              visible ? "bg-slate-900/40" : "bg-slate-900/20 opacity-60"
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm text-slate-200 font-medium">{s.name}</span>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 ${
+                                  isLong
+                                    ? "bg-green-900/50 text-green-400"
+                                    : "bg-red-900/50   text-red-400"
+                                }`}>
+                                  {s.direction}
+                                </span>
+                              </div>
+                              {s.description && (
+                                <p className="text-xs text-slate-500 mt-0.5 truncate">{s.description}</p>
+                              )}
+                            </div>
+                            <Toggle
+                              checked={visible}
+                              onChange={() => toggleStrategy(s.id)}
+                              disabled={saving}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Sound notification ── */}
+          <div className="flex flex-col gap-1">
+            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              Notifications
+            </p>
+            <ToggleRow
+              icon={soundEnabled ? Volume2 : VolumeX}
+              label="Play sound on new signal"
+              description="Plays a short chime once when a new trade idea is first detected. The new signal also flashes in the live stream for 8 seconds."
+              checked={soundEnabled}
+              onChange={v => { setSoundEnabled(v); setStatus(null); }}
+              disabled={saving}
+            />
+          </div>
+
+          <StatusBanner status={status} />
+
+          <div>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? "Saving…" : "Save Live Stream Settings"}
+            </button>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ── Danger zone section ───────────────────────────────────────────────────────
 function DangerZoneSection() {
   const [phase,   setPhase]   = useState("idle"); // idle | confirm | loading | done
@@ -1100,6 +1323,7 @@ export default function AccountSettings({ user, onUserUpdated }) {
           onRefresh={loadAccount}
         />
         <AutoCloseBeyondTpSection />
+        <LiveStreamSettingsSection />
         <RiskManagementSection portfolioValue={account?.portfolio_value ?? null} />
         <DangerZoneSection />
       </div>

@@ -1397,6 +1397,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                               threshold:  threshold != null ? parseFloat(threshold) : null,
                               entry_time: rr.entryTime ?? null,
                             });
+                            window.dispatchEvent(new CustomEvent("tf:trade-opened"));
                             setOrderResult({
                               ok:      true,
                               message: res.data.message,

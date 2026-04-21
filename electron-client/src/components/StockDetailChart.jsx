@@ -1274,6 +1274,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                               threshold:          threshold != null ? parseFloat(threshold) : null,
                               entry_time:         rr.entryTime ?? null,
                             });
+                            window.dispatchEvent(new CustomEvent("tf:trade-opened"));
                             setOrderResult({
                               ok:      true,
                               message: res.data.message,
