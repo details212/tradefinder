@@ -1123,10 +1123,8 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
               return "chart level";
             })();
             const entryPrice      = smartEntry ?? rr.entry;
-            const adjustedTarget  = parseFloat((entryPrice + (entryPrice - rr.stop) * rr.rrRatio).toFixed(2));
-            const targetWasShifted = adjustedTarget !== rr.target;
             const risk      = Math.abs(entryPrice - rr.stop);
-            const reward    = Math.abs(adjustedTarget - entryPrice);
+            const reward    = Math.abs(rr.target  - entryPrice);
             const rrRatio   = risk > 0 ? (reward / risk).toFixed(2) : "∞";
             const riskAmt   = (risk   * rr.qty).toFixed(2);
             const rewardAmt = (reward * rr.qty).toFixed(2);
@@ -1175,10 +1173,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                     <div className="flex justify-between items-center py-1.5 border-b border-slate-700/50">
                       <span className="text-slate-500 text-xs">Take profit</span>
                       <span className="flex flex-col items-end gap-0.5">
-                        <span className="font-mono text-xs font-semibold text-emerald-400">${adjustedTarget.toFixed(2)}</span>
-                        {targetWasShifted && (
-                          <span className="text-[10px] text-slate-500">adjusted to preserve {rr.rrRatio}R</span>
-                        )}
+                        <span className="font-mono text-xs font-semibold text-emerald-400">${rr.target.toFixed(2)}</span>
                       </span>
                     </div>
                   </div>
@@ -1264,7 +1259,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                               qty:                rr.qty,
                               entry_price:        entryPrice,
                               stop_price:         rr.stop,
-                              target_price:       adjustedTarget,
+                              target_price:       rr.target,
                               rr_ratio:           rr.rrRatio ?? null,
                               rr_ratio_effective: risk > 0 ? parseFloat((reward / risk).toFixed(4)) : null,
                               risk_amt:           parseFloat((risk   * rr.qty).toFixed(4)),

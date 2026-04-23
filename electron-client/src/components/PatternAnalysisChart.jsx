@@ -1496,9 +1496,8 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
         const liveLast = liveQuote?.last > 0 ? liveQuote.last : null;
         const smartEntry = parseFloat(((liveAsk ?? liveLast ?? rr.entry) + 0.01).toFixed(2));
         const entrySource = liveAsk != null ? "ask + $0.01" : liveLast != null ? "last trade" : "chart level";
-        const adjustedTarget = parseFloat((smartEntry + (smartEntry - rr.stop) * rr.rrRatio).toFixed(2));
         const risk   = Math.abs(smartEntry - rr.stop);
-        const reward = Math.abs(adjustedTarget - smartEntry);
+        const reward = Math.abs(rr.target  - smartEntry);
         const rrRatio = risk > 0 ? (reward / risk).toFixed(2) : "∞";
         const hasErr  = rr.stop >= smartEntry;
         const Row = ({ label, value, valueClass = "text-slate-200" }) => (
@@ -1524,7 +1523,7 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                   <div className="flex flex-col items-end"><span className="font-mono text-xs font-semibold">${smartEntry.toFixed(2)}</span><span className="text-[10px] text-slate-600">{entrySource}</span></div>
                 </div>
                 <Row label="Stop loss"   value={`$${rr.stop.toFixed(2)}`}         valueClass="text-red-400" />
-                <Row label="Take profit" value={`$${adjustedTarget.toFixed(2)}`}   valueClass="text-emerald-400" />
+                <Row label="Take profit" value={`$${rr.target.toFixed(2)}`}         valueClass="text-emerald-400" />
               </div>
               <div className="mx-4 mb-3 rounded-lg bg-slate-900/60 border border-slate-700/50 px-3 py-2 flex items-center justify-between text-xs">
                 <span className="text-slate-500">R/R</span><span className="text-white font-bold font-mono">{rrRatio}</span>
@@ -1554,12 +1553,12 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                     onClick={async () => {
                       setOrderResult(null); setOrderSubmitting(true);
                       const risk2   = Math.abs(smartEntry - rr.stop);
-                      const reward2 = Math.abs(adjustedTarget - smartEntry);
+                      const reward2 = Math.abs(rr.target  - smartEntry);
                       try {
                         const res = await alpacaApi.placeOrder({
                           ticker, direction: "long", order_type: "limit", entry_tif: "gtc",
                           qty: rr.qty, entry_price: smartEntry, stop_price: rr.stop,
-                          target_price: adjustedTarget, rr_ratio: rr.rrRatio ?? null,
+                          target_price: rr.target, rr_ratio: rr.rrRatio ?? null,
                           rr_ratio_effective: risk2>0?parseFloat((reward2/risk2).toFixed(4)):null,
                           risk_amt: parseFloat((risk2*rr.qty).toFixed(4)), reward_amt: parseFloat((reward2*rr.qty).toFixed(4)),
                           bias: null, bar_time: null, threshold: null, entry_time: rr.entryTime ?? null,

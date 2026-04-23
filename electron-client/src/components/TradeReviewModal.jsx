@@ -8,7 +8,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
 import { stockApi, alpacaApi } from "../api/client";
-import { Loader2, AlertCircle, AlertTriangle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Loader2, AlertCircle, AlertTriangle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
@@ -352,6 +352,213 @@ function applyRR(chart, rr) {
   }
 }
 
+// ── Plain-English trade narrative ────────────────────────────────────────────
+function fmtDate(isoStr) {
+  if (!isoStr) return null;
+  const d = new Date(isoStr.endsWith("Z") ? isoStr : isoStr + "Z");
+  return d.toLocaleString("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZone: "America/New_York",
+    hour12: true,
+  }) + " ET";
+}
+
+function fmtDuration(isoA, isoB) {
+  if (!isoA || !isoB) return null;
+  const ms  = Math.abs(new Date(isoB.endsWith("Z") ? isoB : isoB + "Z") -
+                        new Date(isoA.endsWith("Z") ? isoA : isoA + "Z"));
+  const min = Math.round(ms / 60000);
+  if (min < 60) return `${min} minute${min !== 1 ? "s" : ""}`;
+  const hrs = Math.floor(min / 60);
+  const rem = min % 60;
+  if (hrs < 24) return rem ? `${hrs}h ${rem}m` : `${hrs} hour${hrs !== 1 ? "s" : ""}`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days !== 1 ? "s" : ""}`;
+}
+
+function buildTradeNarrative(order, rr, slippage, effectiveRR) {
+  if (!rr) return null;
+
+  const dir      = order.direction === "long" ? "long" : "short";
+  const isLong   = dir === "long";
+  const ticker   = (order.ticker || "").toUpperCase();
+  const qty      = order.qty ?? 1;
+  const paper    = order.paper_mode ? " (paper account)" : "";
+  const fill     = rr.fillPrice ?? Number(order.filled_avg_price ?? 0);
+  const entry    = rr.entry;
+  const stop     = rr.stop;
+  const target   = rr.target;
+  const exitPx   = rr.exitPrice;
+  const pl       = order.unrealized_pl != null ? Number(order.unrealized_pl) : null;
+  const method   = order.exit_method ?? null;
+  const openedAt = fmtDate(order.created_at);
+  const closedAt = fmtDate(order.closed_at ?? order.synced_at);
+  const duration = fmtDuration(order.created_at, order.closed_at ?? order.synced_at);
+  const risk     = order.risk_amt   != null ? Number(order.risk_amt)   : null;
+  const reward   = order.reward_amt != null ? Number(order.reward_amt) : null;
+  const rrPlan   = order.rr_ratio   != null ? Number(order.rr_ratio)   : null;
+
+  // ── Para 1: Entry ────────────────────────────────────────────────────────────
+  let entry_para = openedAt
+    ? `On ${openedAt}, you opened a ${dir} position${paper} in ${ticker}, ${isLong ? "buying" : "selling short"} ${qty} share${qty !== 1 ? "s" : ""}.`
+    : `You opened a ${dir} position${paper} in ${ticker}, ${isLong ? "buying" : "selling short"} ${qty} share${qty !== 1 ? "s" : ""}.`;
+  if (fill && Math.abs(fill - entry) > 0.005) {
+    entry_para += ` Your limit entry was set at $${entry.toFixed(2)} but the order filled at $${fill.toFixed(2)} — a ${fill > entry ? "slightly higher" : "slightly lower"} price due to market movement at the moment of execution.`;
+  } else if (fill) {
+    entry_para += ` The order filled at $${fill.toFixed(2)}.`;
+  }
+
+  // ── Para 2: The plan ─────────────────────────────────────────────────────────
+  let plan_para = `Your take-profit target was set at $${target.toFixed(2)} and your stop-loss at $${stop.toFixed(2)}.`;
+  if (risk != null && reward != null && rrPlan != null) {
+    plan_para += ` This meant risking $${risk.toFixed(2)} to potentially gain $${reward.toFixed(2)} — a planned ${rrPlan.toFixed(1)}R trade.`;
+  } else if (rrPlan != null) {
+    plan_para += ` The intended reward-to-risk ratio was ${rrPlan.toFixed(1)}R.`;
+  }
+  if (isLong) {
+    plan_para += ` As a long trade you profit when the price rises above your entry, and lose if it falls below your stop.`;
+  } else {
+    plan_para += ` As a short trade you profit when the price falls below your entry, and lose if it rises above your stop.`;
+  }
+
+  // ── Para 3: What happened ────────────────────────────────────────────────────
+  let exit_para;
+  switch (method) {
+    case "bracket_tp":
+      exit_para = `The stock reached your $${target.toFixed(2)} take-profit level and the exchange filled your limit order, closing the position at your planned target.${
+        exitPx && Math.abs(exitPx - target) > 0.02
+          ? ` The actual exit price was $${exitPx.toFixed(2)}.`
+          : ""
+      }`;
+      break;
+    case "bracket_sl":
+      exit_para = `The price moved against you and hit your $${stop.toFixed(2)} stop-loss level. The exchange triggered your stop order and closed the position to prevent further losses.${
+        exitPx && Math.abs(exitPx - stop) > 0.02
+          ? ` In fast-moving markets stop orders sometimes fill slightly beyond the stop level — the actual exit was $${exitPx.toFixed(2)}.`
+          : ""
+      }`;
+      break;
+    case "auto_close_tp":
+      exit_para = `The price stayed beyond your $${target.toFixed(2)} take-profit target for three consecutive 60-second checks. ` +
+        `Because the broker's native bracket order had not yet been filled, the auto-close system stepped in and sent a market order to close the position.` +
+        (exitPx ? ` The position closed at approximately $${exitPx.toFixed(2)}.` : "");
+      break;
+    case "auto_close_sl":
+      exit_para = `The price stayed beyond your $${stop.toFixed(2)} stop-loss for three consecutive 60-second checks. ` +
+        `The auto-close system sent a market order to limit further loss.` +
+        (exitPx ? ` The position closed at approximately $${exitPx.toFixed(2)}.` : "");
+      break;
+    case "manual":
+      exit_para = `You chose to close the position manually` +
+        (exitPx ? ` at approximately $${exitPx.toFixed(2)}` : "") +
+        `, before it reached either your target or stop.`;
+      break;
+    default:
+      exit_para = `The position was closed` +
+        (exitPx ? ` at approximately $${exitPx.toFixed(2)}` : "") +
+        `. The exact exit method is not recorded for this trade.`;
+  }
+  if (duration) exit_para += ` The trade was held for ${duration}.`;
+
+  // ── Para 4: Outcome ──────────────────────────────────────────────────────────
+  let outcome_para = null;
+  if (pl != null) {
+    const plSign  = pl >= 0 ? "+" : "";
+    const plAmt   = `${plSign}$${Math.abs(pl).toFixed(2)}`;
+    const fillBase = fill && qty ? fill * qty : null;
+    const pctStr  = fillBase ? ` (${plSign}${((pl / fillBase) * 100).toFixed(2)}%)` : "";
+    outcome_para  = `The trade closed with a ${pl >= 0 ? "gain" : "loss"} of ${plAmt}${pctStr}.`;
+
+    if (effectiveRR != null && rrPlan != null) {
+      const eRR = Number(effectiveRR);
+      if (pl >= 0) {
+        outcome_para += ` You achieved ${eRR.toFixed(2)}R of your planned ${rrPlan.toFixed(1)}R reward.`;
+      } else {
+        const lossVsRisk = risk != null ? (Math.abs(pl) / risk) * 100 : null;
+        outcome_para += lossVsRisk != null
+          ? ` The loss was ${lossVsRisk.toFixed(0)}% of your planned risk amount.`
+          : ` The actual reward-to-risk achieved was ${eRR.toFixed(2)}R.`;
+      }
+    }
+
+    // Beginner tip based on outcome
+    if (method === "bracket_sl" || method === "auto_close_sl") {
+      outcome_para += ` Stop-losses are a core part of risk management — they ensure one bad trade can never wipe out many good ones.`;
+    } else if (method === "bracket_tp" || method === "auto_close_tp") {
+      outcome_para += ` Taking profit at a pre-planned level removes emotion from the exit decision.`;
+    } else if (method === "manual" && pl < 0) {
+      outcome_para += ` Exiting early can be valid when market conditions change, but consider whether your original stop would have been a better plan.`;
+    }
+  }
+
+  return { entry: entry_para, plan: plan_para, exit: exit_para, outcome: outcome_para };
+}
+
+function TradeNarrative({ order, rr, slippage, effectiveRR }) {
+  const [open, setOpen] = useState(true);
+  const narrative = buildTradeNarrative(order, rr, slippage, effectiveRR);
+  if (!narrative) return null;
+
+  const paras = [
+    { label: "Entry",   text: narrative.entry,   color: "text-sky-400" },
+    { label: "The plan",text: narrative.plan,     color: "text-purple-400" },
+    { label: "Exit",    text: narrative.exit,     color: "text-amber-400" },
+    narrative.outcome
+      ? { label: "Outcome", text: narrative.outcome,
+          color: Number(order.unrealized_pl) >= 0 ? "text-emerald-400" : "text-red-400" }
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="border-b border-slate-700/60 bg-slate-950/30 shrink-0">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-5 py-2 text-left hover:bg-slate-800/30 transition"
+      >
+        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">
+          Trade Summary
+        </span>
+        <span className="text-[10px] text-slate-600 ml-1">— plain-English recap</span>
+        <span className={`ml-auto text-slate-500 text-xs transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+      </button>
+      {open && (
+        <div className="px-5 pb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {paras.map(({ label, text, color }) => (
+            <div key={label} className="flex flex-col gap-1">
+              <span className={`text-[10px] font-bold uppercase tracking-wider ${color}`}>{label}</span>
+              <p className="text-xs text-slate-300 leading-relaxed">{text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Exit method badge ─────────────────────────────────────────────────────────
+const EXIT_METHOD_META = {
+  bracket_tp:    { label: "Bracket TP",    cls: "text-emerald-400 bg-emerald-900/30 border-emerald-700/50", desc: "Exchange filled your take-profit limit order" },
+  bracket_sl:    { label: "Bracket SL",    cls: "text-red-400    bg-red-900/30    border-red-700/50",    desc: "Exchange filled your stop-loss order" },
+  auto_close_tp: { label: "Auto-Close TP", cls: "text-amber-400  bg-amber-900/30  border-amber-700/50",  desc: "System sent a market order after 3 consecutive TP breaches" },
+  auto_close_sl: { label: "Auto-Close SL", cls: "text-orange-400 bg-orange-900/30 border-orange-700/50", desc: "System sent a market order after 3 consecutive SL breaches" },
+  manual:        { label: "Manual",        cls: "text-slate-300  bg-slate-800/60  border-slate-600/50",  desc: "Closed manually via Close Trade button" },
+};
+
+function ExitMethodBadge({ method }) {
+  const meta = method ? EXIT_METHOD_META[method] : null;
+  if (!meta) {
+    return <span className="text-slate-600 text-xs italic">Unknown</span>;
+  }
+  return (
+    <span
+      title={meta.desc}
+      className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-semibold ${meta.cls}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [bars,      setBars]      = useState([]);
@@ -370,6 +577,14 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [closeLoading, setCloseLoading] = useState(false);
   const [closeError,   setCloseError]   = useState(null);
   const [dayTradeWarn, setDayTradeWarn] = useState(false); // day-trade warning interstitial
+
+  // Edit-levels flow
+  const [editLevels,      setEditLevels]      = useState(false);
+  const [editTarget,      setEditTarget]      = useState("");
+  const [editStop,        setEditStop]        = useState("");
+  const [editLevelsLoading, setEditLevelsLoading] = useState(false);
+  const [editLevelsError,   setEditLevelsError]   = useState(null);
+  const [editLevelsSaved,   setEditLevelsSaved]   = useState(false);
 
   // True when the order was opened (created_at) on today's Eastern-Time date.
   const isDayTrade = useMemo(() => {
@@ -508,9 +723,15 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     const entry = chartEntry ?? Number(order.entry_price ?? order.filled_avg_price);
     if (!entry) return;
 
-    // Reconstruct target with the same formula ModalChart uses on bar click:
-    //   target = entry + (entry - stop) × rrRatio
-    const target = parseFloat((entry + (entry - stop) * rrRatio).toFixed(2));
+    // Use the actual stored target_price when available — this is the level that was
+    // submitted to Alpaca as the take-profit limit price and is what the auto-close
+    // service reads from the DB.  Reconstructing from chartEntry introduces a drift
+    // (chartEntry ≠ the smartEntry used when placing the order) that makes the
+    // displayed target lower than the real TP, causing confusing "it should have
+    // closed" situations.  Only fall back to reconstruction for legacy rows.
+    const target = order.target_price
+      ? Number(order.target_price)
+      : parseFloat((entry + (entry - stop) * rrRatio).toFixed(2));
 
     // Derive close time and exit price for closed trades
     let closeTime = null;
@@ -620,6 +841,42 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       setCloseLoading(false);
     }
   }, [order.id, onClose, onTradeClosed]);
+
+  const openEditLevels = useCallback(() => {
+    setEditTarget(order.target_price != null ? Number(order.target_price).toFixed(2) : "");
+    setEditStop(order.stop_price != null ? Number(order.stop_price).toFixed(2) : "");
+    setEditLevelsError(null);
+    setEditLevelsSaved(false);
+    setEditLevels(true);
+  }, [order.target_price, order.stop_price]);
+
+  const saveEditLevels = useCallback(async () => {
+    const newTarget = parseFloat(editTarget);
+    const newStop   = parseFloat(editStop);
+    if (isNaN(newTarget) && isNaN(editTarget === "" ? NaN : 0)) {
+      setEditLevelsError("Enter a valid target price."); return;
+    }
+    if (isNaN(newStop) && isNaN(editStop === "" ? NaN : 0)) {
+      setEditLevelsError("Enter a valid stop price."); return;
+    }
+    setEditLevelsLoading(true);
+    setEditLevelsError(null);
+    try {
+      const payload = {};
+      if (!isNaN(newTarget)) payload.target_price = newTarget;
+      if (!isNaN(newStop))   payload.stop_price   = newStop;
+      await alpacaApi.patchLevels(order.id, payload);
+      setEditLevelsSaved(true);
+      // Persist locally so the modal reflects the new values immediately
+      if (!isNaN(newTarget)) order.target_price = newTarget;
+      if (!isNaN(newStop))   order.stop_price   = newStop;
+      setTimeout(() => setEditLevels(false), 1200);
+    } catch (err) {
+      setEditLevelsError(err?.response?.data?.error || "Failed to save levels.");
+    } finally {
+      setEditLevelsLoading(false);
+    }
+  }, [order, editTarget, editStop]);
 
   const applyZoom = useCallback((preset) => {
     const chart = chartRef.current?.chart;
@@ -976,19 +1233,78 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
             {liveQuote?.fetching && <RefreshCw className="w-3 h-3 text-slate-600 animate-spin" />}
           </div>
 
-          {/* ── Close Trade button (floated right) ── */}
-          {order.is_open && !dayTradeWarn && !closeConfirm && (
-            <button
-              onClick={() => {
-                setCloseError(null);
-                if (isDayTrade) { setDayTradeWarn(true); }
-                else            { setCloseConfirm(true); }
-              }}
-              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/40 transition"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Close Trade
-            </button>
+          {/* ── Edit Levels + Close Trade buttons ── */}
+          {order.is_open && !dayTradeWarn && !closeConfirm && !editLevels && (
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={openEditLevels}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-slate-700/50 hover:bg-slate-700 text-slate-300 border border-slate-600/60 transition"
+                title="Correct the stored TP / SL levels for auto-close"
+              >
+                <Pencil className="w-3 h-3" />
+                Edit Levels
+              </button>
+              <button
+                onClick={() => {
+                  setCloseError(null);
+                  if (isDayTrade) { setDayTradeWarn(true); }
+                  else            { setCloseConfirm(true); }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/40 transition"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Close Trade
+              </button>
+            </div>
+          )}
+
+          {/* ── Edit Levels panel ── */}
+          {order.is_open && editLevels && (
+            <div className="ml-auto flex items-center gap-3 px-3 py-1.5 rounded border border-slate-600/60 bg-slate-800/80">
+              <span className="text-[11px] text-slate-400 font-semibold whitespace-nowrap">Edit Levels</span>
+              <label className="flex items-center gap-1.5 text-[11px] text-emerald-400">
+                TP
+                <input
+                  type="number" step="0.01"
+                  value={editTarget}
+                  onChange={e => { setEditTarget(e.target.value); setEditLevelsSaved(false); }}
+                  className="w-22 bg-slate-900 border border-slate-600 rounded px-2 py-0.5 text-xs font-mono text-emerald-300 focus:outline-none focus:border-emerald-500"
+                  placeholder={order.target_price != null ? Number(order.target_price).toFixed(2) : "—"}
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-red-400">
+                SL
+                <input
+                  type="number" step="0.01"
+                  value={editStop}
+                  onChange={e => { setEditStop(e.target.value); setEditLevelsSaved(false); }}
+                  className="w-22 bg-slate-900 border border-slate-600 rounded px-2 py-0.5 text-xs font-mono text-red-300 focus:outline-none focus:border-red-500"
+                  placeholder={order.stop_price != null ? Number(order.stop_price).toFixed(2) : "—"}
+                />
+              </label>
+              {editLevelsError && (
+                <span className="text-[11px] text-red-400 max-w-[180px] truncate">{editLevelsError}</span>
+              )}
+              {editLevelsSaved && (
+                <span className="flex items-center gap-1 text-[11px] text-emerald-400">
+                  <Check className="w-3 h-3" /> Saved
+                </span>
+              )}
+              <button
+                onClick={saveEditLevels}
+                disabled={editLevelsLoading}
+                className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white transition"
+              >
+                {editLevelsLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                Save
+              </button>
+              <button
+                onClick={() => setEditLevels(false)}
+                className="text-slate-500 hover:text-slate-300 transition"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
 
           {/* ── Day-trade warning interstitial ── */}
@@ -1296,7 +1612,27 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
               </div>
             )}
 
+            {/* Exit Method */}
+            {!order.is_open && (
+              <div className="flex flex-col justify-center px-5 py-3 shrink-0 border-l border-slate-700/50">
+                <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500 mb-2">
+                  Exit Method
+                </span>
+                <ExitMethodBadge method={order.exit_method} />
+              </div>
+            )}
+
           </div>
+        )}
+
+        {/* ── CLOSED TRADE: Plain-English narrative ── */}
+        {!order.is_open && rr && (
+          <TradeNarrative
+            order={order}
+            rr={rr}
+            slippage={slippage}
+            effectiveRR={effectiveRR}
+          />
         )}
 
         {/* ── OPEN TRADE: Level strip ── */}

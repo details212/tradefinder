@@ -293,7 +293,7 @@ function ResourceGauge({ icon: Icon, label, used, total, unit }) {
 // ── Network connectivity card ─────────────────────────────────────────────────
 const PING_HOSTS = [
   { label: "Local API",        host: "localhost",               icon: Server },
-  { label: "Polygon.io",       host: "api.polygon.io",          icon: BarChart2 },
+  { label: "Tick Data Farm",   host: "api.polygon.io",          icon: BarChart2 },
   { label: "Alpaca (paper)",   host: "paper-api.alpaca.markets",icon: Zap },
   { label: "Alpaca (live)",    host: "api.alpaca.markets",      icon: Zap },
   { label: "Yahoo Finance",    host: "query1.finance.yahoo.com",icon: Globe },
@@ -1027,8 +1027,8 @@ export default function AdminPanel({ user }) {
               ) : (
                 [
                   { key: "flask",   label: "Tradefinder Data Center", icon: Server  },
-                  { key: "polygon", label: "Polygon.io",           icon: BarChart2 },
-                  { key: "alpaca",  label: "Alpaca Markets",        icon: TrendingUp },
+                  { key: "polygon", label: "Tick Data Farm",       icon: BarChart2 },
+                  { key: "alpaca",  label: "Exchange Connection",    icon: TrendingUp },
                   { key: "yahoo",   label: "Yahoo Finance",         icon: Globe   },
                 ].map(({ key, label, icon: Icon }) => {
                   const r      = resources?.[key];

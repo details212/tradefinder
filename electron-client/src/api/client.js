@@ -166,6 +166,7 @@ export const alpacaApi = {
   quote:      (ticker)      => api.get(`/api/broker/alpaca/quote/${ticker}`),
   placeOrder:      (data)        => api.post("/api/broker/alpaca/order", data),
   closeTrade:      (dbOrderId)   => api.post(`/api/broker/alpaca/order/${dbOrderId}/close`),
+  patchLevels:     (dbOrderId, data) => api.patch(`/api/broker/alpaca/order/${dbOrderId}/levels`, data),
   getOrderDetail:  (alpacaId)    => api.get(`/api/broker/alpaca/order/${alpacaId}`),
   getOrders:       (ticker = "") => api.get("/api/broker/alpaca/orders", { params: ticker ? { ticker } : {} }),
   syncOrders:      ()            => api.post("/api/broker/alpaca/orders/sync"),

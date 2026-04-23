@@ -1201,17 +1201,10 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
             // Effective entry price for this submission
             const entryPrice = smartEntry ?? rr.entry;
 
-            // Re-derive target from entryPrice so the user's intended R/R ratio is
-            // preserved exactly, even when smartEntry differs from the drawn entry.
-            // Formula works for both long and short:
-            //   long:  entryPrice - stop > 0  → target is above entry ✓
-            //   short: entryPrice - stop < 0  → target is below entry ✓
-            const adjustedTarget  = parseFloat((entryPrice + (entryPrice - rr.stop) * rr.rrRatio).toFixed(2));
-            const targetWasShifted = adjustedTarget !== rr.target;
-
-            // All metrics computed from effective entry + adjusted target
-            const risk      = Math.abs(entryPrice   - rr.stop);
-            const reward    = Math.abs(adjustedTarget - entryPrice);
+            // TP and SL are exactly as drawn — the smartEntry only shifts the
+            // limit entry price, never the exit levels the user set.
+            const risk      = Math.abs(entryPrice - rr.stop);
+            const reward    = Math.abs(rr.target  - entryPrice);
             const rrRatio   = risk > 0 ? (reward / risk).toFixed(2) : "∞";
             const riskAmt   = (risk   * rr.qty).toFixed(2);
             const rewardAmt = (reward * rr.qty).toFixed(2);
@@ -1275,13 +1268,8 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                       <span className="text-slate-500 text-xs">Take profit</span>
                       <span className="flex flex-col items-end gap-0.5">
                         <span className="font-mono text-xs font-semibold text-emerald-400">
-                          ${adjustedTarget.toFixed(2)}
+                          ${rr.target.toFixed(2)}
                         </span>
-                        {targetWasShifted && (
-                          <span className="text-[10px] text-slate-500">
-                            adjusted to preserve {rr.rrRatio}R
-                          </span>
-                        )}
                       </span>
                     </div>
                   </div>
@@ -1386,7 +1374,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                               qty:                rr.qty,
                               entry_price:        entryPrice,
                               stop_price:         rr.stop,
-                              target_price:       adjustedTarget,
+                              target_price:       rr.target,
                               rr_ratio:           rr.rrRatio ?? null,
                               rr_ratio_effective: risk > 0 ? parseFloat((reward / risk).toFixed(4)) : null,
                               risk_amt:           parseFloat((risk   * rr.qty).toFixed(4)),
