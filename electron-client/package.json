@@ -1,6 +1,6 @@
 {
   "name": "tradefinder",
-  "version": "0.45.0",
+  "version": "0.46.0",
   "description": "TradeFinder – Stock market data viewer",
   "main": "electron/main.js",
   "scripts": {

@@ -91,6 +91,8 @@ export const stockApi = {
   // Company
   details: (ticker) => api.get(`/api/stocks/${ticker}/details`),
   related: (ticker) => api.get(`/api/stocks/${ticker}/related`),
+  // Batch name lookup from local DB (no external API call)
+  names:   (tickers) => api.get("/api/stocks/names", { params: { tickers: tickers.join(",") } }),
 
   // History — long timeout: backend waits up to 30 s per Polygon page + retry
   history: (ticker, params = {}) =>

@@ -141,14 +141,20 @@ function barTimeForWatchlistApi(row) {
   return String(t);
 }
 
-function Cell({ col, value, livePrice, dimmed }) {
+function Cell({ col, value, livePrice, dimmed, companyName }) {
   const meta = COL_META[col] || { fmt: "raw" };
   switch (meta.fmt) {
     case "ticker":
       return (
-        <span className={`inline-flex items-center gap-0.5 font-bold ${dimmed ? "text-slate-500" : "text-yellow-400"}`}>
+        <span className={`relative group inline-flex items-center gap-0.5 font-bold ${dimmed ? "text-slate-500" : "text-yellow-400"}`}>
           {value}
           <ArrowUpRight className="w-3 h-3 opacity-50" />
+          {companyName && (
+            <span className="pointer-events-none absolute top-1/2 left-full -translate-y-1/2 ml-2 z-50 px-2.5 py-1.5 rounded-md bg-slate-800 border border-slate-600/80 text-[11px] font-normal text-slate-200 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-xl">
+              {companyName}
+              <span className="absolute top-1/2 right-full -translate-y-1/2 border-[5px] border-transparent border-r-slate-600/80" />
+            </span>
+          )}
         </span>
       );
     case "live":
@@ -244,84 +250,267 @@ function scoreColor(score) {
   return "text-slate-600";
 }
 
+// ── RSI gauge bar ─────────────────────────────────────────────────────────────
+function RsiGauge({ value }) {
+  if (value == null) return null;
+  const pct = Math.min(100, Math.max(0, value));
+  return (
+    <div className="relative h-1.5 rounded-full overflow-hidden bg-slate-700/60 mt-1 mb-0.5">
+      {/* zone backgrounds */}
+      <div className="absolute inset-0 flex">
+        <div className="h-full bg-red-900/60"  style={{ width: "30%" }} />
+        <div className="h-full bg-slate-600/40" style={{ width: "40%" }} />
+        <div className="h-full bg-green-900/60" style={{ width: "30%" }} />
+      </div>
+      {/* marker */}
+      <div
+        className="absolute top-0 bottom-0 w-0.5 rounded-full bg-white shadow"
+        style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
+      />
+    </div>
+  );
+}
+
+// ── Score dot bar ──────────────────────────────────────────────────────────────
+function ScoreDots({ score, total = 5 }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {Array.from({ length: total }).map((_, i) => (
+        <div
+          key={i}
+          className={`w-2 h-2 rounded-full ${
+            i < score
+              ? score >= 4 ? "bg-green-400" : score >= 3 ? "bg-yellow-400" : "bg-orange-400"
+              : "bg-slate-700"
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ── MA info popover ───────────────────────────────────────────────────────────
 function InfoPopover({ popover, snapPrices, isLong, onMouseEnter, onMouseLeave }) {
   if (!popover) return null;
   const { ticker, x, y, data, loading } = popover;
   const price = snapPrices[ticker] ?? null;
 
-  const INDICATORS = data ? [
-    { group: "EMA", label: "10 Day", key: "ema10", value: data.ema10 },
-    { group: "EMA", label: "20 Day", key: "ema20", value: data.ema20 },
-    { group: "SMA", label: "50 Day",  key: "sma50",  value: data.sma50  },
-    { group: "SMA", label: "150 Day", key: "sma150", value: data.sma150 },
-    { group: "SMA", label: "200 Day", key: "sma200", value: data.sma200 },
+  const MAS = data ? [
+    { label: "EMA 10",  sublabel: "short-term trend",  value: data.ema10  },
+    { label: "EMA 20",  sublabel: "short-term trend",  value: data.ema20  },
+    { label: "SMA 50",  sublabel: "mid-term trend",    value: data.sma50  },
+    { label: "SMA 150", sublabel: "long-term trend",   value: data.sma150 },
+    { label: "SMA 200", sublabel: "long-term trend",   value: data.sma200 },
   ] : [];
 
-  const score = maScore(data, price, isLong);
-  const popW = 224;
+  const score    = maScore(data, price, isLong);
+  const aligned  = MAS.filter(m => price != null && m.value != null && (isLong ? price > m.value : price < m.value)).length;
+
+  // Daily stats from vcz
+  const rsi     = data?.rsi_14    ?? null;
+  const as1m    = data?.as_1m     ?? null;
+  const rsLine  = data?.rs_line   ?? null;
+  const rsSma50 = data?.rs_sma_50 ?? null;
+  const rsAbove = rsLine != null && rsSma50 != null ? rsLine > rsSma50 : null;
+
+  const rsiLabel = rsi == null ? null
+    : rsi >= 70 ? { text: "Overbought — strong upward momentum", color: "text-green-400" }
+    : rsi <= 30 ? { text: "Oversold — potential reversal zone",   color: "text-red-400"   }
+    : rsi >= 55 ? { text: "Bullish momentum, not yet extended",   color: "text-green-300" }
+    : rsi <= 45 ? { text: "Mildly bearish, watch for support",    color: "text-orange-400"}
+    :             { text: "Neutral — no strong momentum signal",  color: "text-slate-400" };
+
+  const as1mLabel = as1m == null ? null
+    : as1m >= 80 ? { text: "Top-tier 1-month performance vs peers", color: "text-green-400" }
+    : as1m >= 60 ? { text: "Above-average momentum vs peers",       color: "text-yellow-400" }
+    : as1m >= 40 ? { text: "Average — inline with the market",      color: "text-slate-400" }
+    :              { text: "Lagging — weak vs the broader market",  color: "text-red-400"   };
+
+  const hasDailyStats = rsi != null || as1m != null || rsAbove != null;
 
   return (
     <div
-      className="fixed z-[9999] bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden select-none"
-      style={{ left: x, top: y, width: popW, transform: "translate(-50%, -50%)" }}
+      className="fixed z-[9999] bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden select-none"
+      style={{ left: x, top: y, width: 480, transform: "translate(-50%, -50%)" }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-900/70 border-b border-slate-700/60">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-yellow-400">{ticker}</span>
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between px-5 py-3.5 bg-slate-800/80 border-b border-slate-700/60">
+        <div className="flex items-center gap-3">
+          <span className="text-lg font-bold text-yellow-400 tracking-wide">{ticker}</span>
           {score != null && (
-            <span className={`text-xs font-bold font-mono ${scoreColor(score)}`}>{score}/5</span>
+            <>
+              <span className={`text-base font-bold font-mono ${scoreColor(score)}`}>{score}/5</span>
+              <ScoreDots score={score} />
+            </>
           )}
         </div>
-        {price != null
-          ? <span className="text-xs font-mono text-cyan-400">${price.toFixed(2)}</span>
-          : <span className="text-xs text-slate-600">no live price</span>}
+        <div className="text-right">
+          {price != null
+            ? <span className="text-base font-mono font-semibold text-cyan-400">${price.toFixed(2)}</span>
+            : <span className="text-sm text-slate-600">no live price</span>}
+          <div className="text-[10px] text-slate-600 mt-0.5 uppercase tracking-wider">live price</div>
+        </div>
       </div>
 
-      {/* Body */}
-      <div className="px-3 py-2.5">
-        {loading && !data && (
-          <div className="flex items-center justify-center py-5">
-            <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
-          </div>
-        )}
+      {/* ── Loading ── */}
+      {loading && !data && (
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+        </div>
+      )}
 
-        {data && ["EMA", "SMA"].map(group => {
-          const rows = INDICATORS.filter(r => r.group === group);
-          return (
-            <div key={group} className="mb-2 last:mb-0">
-              <div className="text-[9px] font-semibold text-slate-600 uppercase tracking-widest mb-1.5">
-                {group}
+      {data && (
+        <div className="divide-y divide-slate-700/50">
+
+          {/* ── Daily Momentum ── */}
+          {hasDailyStats && (
+            <div className="px-5 py-4">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.15em] mb-4">
+                Daily Momentum Signals
               </div>
-              {rows.map(({ label, value }) => {
-                const aboveMA = price != null && value != null ? price > value : null;
-                const aligned = aboveMA !== null ? (isLong ? aboveMA : !aboveMA) : null;
-                return (
-                  <div key={label} className="flex items-center justify-between py-0.5">
-                    <div className="flex items-center gap-2">
-                      {aboveMA === null
-                        ? <span className="w-3.5 h-3.5 flex items-center justify-center text-slate-600 text-[10px]">—</span>
-                        : aboveMA
-                        ? <TrendingUp   className="w-3.5 h-3.5 text-green-400 shrink-0" />
-                        : <TrendingDown className="w-3.5 h-3.5 text-red-400   shrink-0" />}
-                      <span className="text-xs text-slate-400">{label}</span>
+
+              {/* RSI */}
+              {rsi != null && (
+                <div className="mb-4">
+                  <div className="flex items-baseline justify-between mb-1">
+                    <div>
+                      <span className="text-sm font-semibold text-slate-300">RSI 14</span>
+                      <span className="ml-2 text-xs text-slate-600">Relative Strength Index</span>
                     </div>
-                    <span className={`text-xs font-mono ${
-                      aboveMA === null ? "text-slate-600"
-                      : aboveMA ? "text-green-400" : "text-red-400"
+                    <span className={`text-base font-bold font-mono tabular-nums ${
+                      rsi >= 70 ? "text-green-400" : rsi <= 30 ? "text-red-400" : "text-slate-200"
+                    }`}>{rsi.toFixed(1)}</span>
+                  </div>
+                  <RsiGauge value={rsi} />
+                  <div className="mt-1.5">
+                    <span className="text-[10px] text-slate-600">Oversold ← 30 · 70 → Overbought</span>
+                  </div>
+                  {rsiLabel && (
+                    <p className={`text-xs mt-1 leading-relaxed ${rsiLabel.color}`}>{rsiLabel.text}</p>
+                  )}
+                </div>
+              )}
+
+              {/* AS 1M */}
+              {as1m != null && (
+                <div className="mb-4">
+                  <div className="flex items-baseline justify-between mb-1">
+                    <div>
+                      <span className="text-sm font-semibold text-slate-300">Alpha Score 1M</span>
+                      <span className="ml-2 text-xs text-slate-600">AS 1M</span>
+                    </div>
+                    <span className={`text-base font-bold font-mono tabular-nums ${
+                      as1m >= 80 ? "text-green-400" : as1m >= 50 ? "text-yellow-400" : "text-red-400"
+                    }`}>{as1m.toFixed(0)}</span>
+                  </div>
+                  <div className="relative h-2 rounded-full bg-slate-700/60 mt-1 mb-1.5 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        as1m >= 80 ? "bg-green-500" : as1m >= 50 ? "bg-yellow-500" : "bg-red-600"
+                      }`}
+                      style={{ width: `${Math.min(100, as1m)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Ranks the stock&apos;s 1-month price performance relative to all other stocks (0–100 percentile).
+                  </p>
+                  {as1mLabel && (
+                    <p className={`text-xs mt-1 leading-relaxed ${as1mLabel.color}`}>{as1mLabel.text}</p>
+                  )}
+                </div>
+              )}
+
+              {/* RS vs SPY */}
+              {rsAbove !== null && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div>
+                      <span className="text-sm font-semibold text-slate-300">RS vs SPY</span>
+                      <span className="ml-2 text-xs text-slate-600">Relative Strength Line</span>
+                    </div>
+                    <span className={`inline-block rounded-md px-2.5 py-0.5 text-xs font-bold ${
+                      rsAbove
+                        ? "bg-green-900/40 text-green-400 border border-green-700/40"
+                        : "bg-amber-900/30 text-amber-400 border border-amber-700/30"
                     }`}>
-                      {value != null ? `$${Number(value).toFixed(2)}` : "—"}
+                      {rsAbove ? "▲ Above" : "▼ Below"}
                     </span>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Compares this stock&apos;s price ratio vs SPY to its own 50-day average.{" "}
+                    <span className={rsAbove ? "text-green-400" : "text-amber-400"}>
+                      {rsAbove
+                        ? "Stock is outperforming the S&P 500 — gaining ground vs the market."
+                        : "Stock is underperforming the S&P 500 — losing ground vs the market."}
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── MA Alignment ── */}
+          <div className="px-5 py-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.15em]">
+                Moving Average Alignment
+              </div>
+              {score != null && (
+                <span className="text-xs text-slate-500 font-mono">
+                  {aligned}/{MAS.filter(m => m.value != null).length} aligned
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed mb-3">
+              When price trades {isLong ? "above" : "below"} a moving average the trend at that timeframe is
+              considered {isLong ? "intact (bullish)" : "broken (bearish)"}. More aligned MAs = stronger trend structure.
+            </p>
+
+            <div className="space-y-1.5">
+              {MAS.map(({ label, sublabel, value }) => {
+                const aboveMA = price != null && value != null ? price > value : null;
+                const rowAligned = aboveMA !== null ? (isLong ? aboveMA : !aboveMA) : null;
+                return (
+                  <div key={label} className={`flex items-center justify-between rounded-md px-3 py-2 ${
+                    rowAligned === true  ? "bg-green-900/15 border border-green-900/30"
+                    : rowAligned === false ? "bg-red-900/15   border border-red-900/30"
+                    : "bg-slate-800/40 border border-slate-700/30"
+                  }`}>
+                    <div className="flex items-center gap-2.5">
+                      {aboveMA === null
+                        ? <span className="w-4 h-4 text-slate-600 text-xs text-center">—</span>
+                        : aboveMA
+                        ? <TrendingUp   className="w-4 h-4 text-green-400 shrink-0" />
+                        : <TrendingDown className="w-4 h-4 text-red-400   shrink-0" />}
+                      <div>
+                        <span className="text-sm font-semibold text-slate-300">{label}</span>
+                        <span className="ml-2 text-xs text-slate-600">{sublabel}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-sm font-mono tabular-nums ${
+                        aboveMA === null ? "text-slate-600"
+                        : aboveMA ? "text-green-400" : "text-red-400"
+                      }`}>
+                        {value != null ? `$${Number(value).toFixed(2)}` : "—"}
+                      </span>
+                      {aboveMA !== null && price != null && value != null && (
+                        <div className={`text-xs tabular-nums ${aboveMA ? "text-green-600" : "text-red-600"}`}>
+                          {aboveMA ? "+" : ""}{((price / value - 1) * 100).toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
-          );
-        })}
-      </div>
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }
@@ -342,6 +531,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   const [minInfoScore,    setMinInfoScore]   = useState(3);
   const [infoPopover,    setInfoPopover]    = useState(null);
   const [maCache,        setMaCache]        = useState({});   // triggers re-render when MA data arrives
+  const [tickerNames,    setTickerNames]    = useState({});   // ticker → company name for hover tooltip
   const infoCacheRef       = useRef({});
   const scheduledMaRef     = useRef(new Set()); // in-flight MA fetches (avoid duplicate requests)
   const hideTimerRef       = useRef(null);
@@ -499,6 +689,10 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
               });
               setSnapPrices(priceMap);
             })
+            .catch(() => {});
+          // Company names from local DB for hover tooltips — fire-and-forget
+          stockApi.names(tickers)
+            .then((r) => setTickerNames(prev => ({ ...prev, ...(r.data.names ?? {}) })))
             .catch(() => {});
           // MA scores: lazy-loaded per visible rows (see IntersectionObserver + requestMaForTickers)
         }
@@ -771,6 +965,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                                 col={col}
                                 value={row[col]}
                                 livePrice={snapPrices[row.ticker] ?? null}
+                                companyName={col === "ticker" ? (tickerNames[row.ticker] ?? null) : null}
                                 dimmed
                               />
                             </span>
@@ -779,6 +974,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                               col={col}
                               value={row[col]}
                               livePrice={snapPrices[row.ticker] ?? null}
+                              companyName={col === "ticker" ? (tickerNames[row.ticker] ?? null) : null}
                             />
                           )}
                         </td>
