@@ -462,6 +462,215 @@ function drawColoredZones(chart, rr) {
   });
 }
 
+// ── Volume Profile drawing ─────────────────────────────────────────────────
+// Rendered via chart.renderer (same pattern as R/R helpers above) so we have
+// full control over bar dimensions, colours, and clipping.
+const VP_RANGES    = 120;
+const VP_MAX_WIDTH = 0.18;   // fraction of plot width for the widest bar
+const VP_UP_COLOR  = "rgba(0,200,190,0.50)";     // teal  — bullish volume
+const VP_DN_COLOR  = "rgba(220,50,100,0.50)";    // pink  — bearish volume
+const VP_POC_COLOR = "#94a3b8";                  // slate-400 — point of control
+const VP_VA_COLOR  = "#7dd3fc";                  // sky-300  — value area high/low
+const VP_VA_PCT    = 0.70;                       // standard 70 % value area
+
+let vpElems = [];
+function clearVPElems() {
+  vpElems.forEach(el => { try { el.destroy(); } catch (_) {} });
+  vpElems = [];
+}
+
+function drawVolumeProfile(chart, bars) {
+  clearVPElems();
+  if (!chart || !bars.length) return;
+
+  const xAxis = chart.xAxis[0];
+  const yAxis = chart.yAxis[0];
+  const extr  = xAxis.getExtremes();
+
+  // Only include bars in the current view with real OHLCV data
+  const visible = bars.filter(b => b.t >= extr.min && b.t <= extr.max && b.h != null);
+  if (visible.length < 2) return;
+
+  // Full high-low range across all visible bars
+  let priceMin = Infinity, priceMax = -Infinity;
+  for (const b of visible) {
+    if (b.l < priceMin) priceMin = b.l;
+    if (b.h > priceMax) priceMax = b.h;
+  }
+  if (priceMax <= priceMin) return;
+
+  const bucketSize = (priceMax - priceMin) / VP_RANGES;
+  const upVol      = new Float64Array(VP_RANGES);
+  const downVol    = new Float64Array(VP_RANGES);
+
+  for (const b of visible) {
+    const isUp   = b.c >= b.o;
+    const bRange = b.h - b.l;
+    const iStart = Math.max(0, Math.floor((b.l - priceMin) / bucketSize));
+    const iEnd   = Math.min(VP_RANGES - 1, Math.floor((b.h - priceMin) / bucketSize));
+
+    for (let i = iStart; i <= iEnd; i++) {
+      const bktLow  = priceMin + i * bucketSize;
+      const bktHigh = bktLow + bucketSize;
+      const overlap = bRange > 0
+        ? (Math.min(b.h, bktHigh) - Math.max(b.l, bktLow)) / bRange
+        : 1 / (iEnd - iStart + 1);
+      const vol = b.v * Math.max(0, overlap);
+      if (isUp) upVol[i]   += vol;
+      else      downVol[i] += vol;
+    }
+  }
+
+  // Find max-volume bucket (POC), overall max for scaling, and total volume
+  let maxBucketVol = 0;
+  let totalVol     = 0;
+  let pocIdx       = 0;
+  for (let i = 0; i < VP_RANGES; i++) {
+    const tv = upVol[i] + downVol[i];
+    totalVol += tv;
+    if (tv > maxBucketVol) { maxBucketVol = tv; pocIdx = i; }
+  }
+  if (maxBucketVol === 0) return;
+
+  // ── Value Area (70 % of total volume centred on POC) ──────────────────────
+  // Expand outward from POC one bucket at a time, always adding the side with
+  // more volume, until the accumulated volume reaches the target threshold.
+  let vaVol  = upVol[pocIdx] + downVol[pocIdx];
+  let vaLow  = pocIdx;
+  let vaHigh = pocIdx;
+  const vaTarget = totalVol * VP_VA_PCT;
+
+  while (vaVol < vaTarget) {
+    const aboveVol = vaHigh + 1 < VP_RANGES ? upVol[vaHigh + 1] + downVol[vaHigh + 1] : 0;
+    const belowVol = vaLow  - 1 >= 0        ? upVol[vaLow  - 1] + downVol[vaLow  - 1] : 0;
+    if (aboveVol === 0 && belowVol === 0) break;
+    if (aboveVol >= belowVol) { vaHigh++; vaVol += aboveVol; }
+    else                      { vaLow--;  vaVol += belowVol; }
+  }
+
+  // Price levels for VAH and VAL
+  const vahPrice = priceMin + (vaHigh + 1) * bucketSize;  // top of highest VA bucket
+  const valPrice = priceMin + vaLow * bucketSize;          // bottom of lowest VA bucket
+
+  const plotLeft        = chart.plotLeft;
+  const plotRight       = chart.plotLeft + chart.plotWidth;
+  const plotTop         = chart.plotTop;
+  const pricePaneBottom = plotTop + chart.plotHeight * 0.80;
+  const maxBarWidth     = chart.plotWidth * VP_MAX_WIDTH;
+
+  // ── Draw bars ──────────────────────────────────────────────────────────────
+  for (let i = 0; i < VP_RANGES; i++) {
+    const tv = upVol[i] + downVol[i];
+    if (tv === 0) continue;
+
+    const bktLow  = priceMin + i * bucketSize;
+    const bktHigh = bktLow + bucketSize;
+
+    const yTop    = yAxis.toPixels(bktHigh, false);
+    const yBottom = yAxis.toPixels(bktLow,  false);
+
+    const top    = Math.max(yTop,    plotTop);
+    const bottom = Math.min(yBottom, pricePaneBottom);
+    if (bottom <= top) continue;
+
+    const barH  = bottom - top;
+    const upW   = (upVol[i]   / maxBucketVol) * maxBarWidth;
+    const downW = (downVol[i] / maxBucketVol) * maxBarWidth;
+
+    if (upW >= 0.5) {
+      vpElems.push(
+        chart.renderer.rect(plotLeft, top, upW, barH)
+          .attr({ fill: VP_UP_COLOR, zIndex: 1 })
+          .add()
+      );
+    }
+    if (downW >= 0.5) {
+      vpElems.push(
+        chart.renderer.rect(plotLeft + upW, top, downW, barH)
+          .attr({ fill: VP_DN_COLOR, zIndex: 1 })
+          .add()
+      );
+    }
+  }
+
+  // ── Draw POC line ──────────────────────────────────────────────────────────
+  const pocPrice  = priceMin + (pocIdx + 0.5) * bucketSize;
+  const pocYPx    = yAxis.toPixels(pocPrice, false);
+  if (pocYPx >= plotTop && pocYPx <= pricePaneBottom) {
+    // Dashed horizontal line across full plot width
+    vpElems.push(
+      chart.renderer.path([
+        "M", plotLeft, pocYPx,
+        "L", plotRight, pocYPx,
+      ])
+        .attr({
+          stroke:               VP_POC_COLOR,
+          "stroke-width":       1.5,
+          "stroke-dasharray":   "4,3",
+          zIndex:               4,
+        })
+        .add()
+    );
+    // POC label on the right edge
+    vpElems.push(
+      chart.renderer.text(`POC $${pocPrice.toFixed(2)}`, plotRight - 4, pocYPx - 3)
+        .attr({ align: "right", zIndex: 5 })
+        .css({
+          color:           VP_POC_COLOR,
+          fontSize:        "9px",
+          fontWeight:      "700",
+          backgroundColor: "rgba(15,23,42,0.80)",
+          padding:         "1px 4px",
+        })
+        .add()
+    );
+  }
+
+  // ── Draw VAH line ──────────────────────────────────────────────────────────
+  const vahYPx = yAxis.toPixels(vahPrice, false);
+  if (vahYPx >= plotTop && vahYPx <= pricePaneBottom) {
+    vpElems.push(
+      chart.renderer.path(["M", plotLeft, vahYPx, "L", plotRight, vahYPx])
+        .attr({ stroke: VP_VA_COLOR, "stroke-width": 1, "stroke-dasharray": "6,3", zIndex: 4 })
+        .add()
+    );
+    vpElems.push(
+      chart.renderer.text(`VAH $${vahPrice.toFixed(2)}`, plotRight - 4, vahYPx - 3)
+        .attr({ align: "right", zIndex: 5 })
+        .css({
+          color:           VP_VA_COLOR,
+          fontSize:        "9px",
+          fontWeight:      "600",
+          backgroundColor: "rgba(15,23,42,0.80)",
+          padding:         "1px 4px",
+        })
+        .add()
+    );
+  }
+
+  // ── Draw VAL line ──────────────────────────────────────────────────────────
+  const valYPx = yAxis.toPixels(valPrice, false);
+  if (valYPx >= plotTop && valYPx <= pricePaneBottom) {
+    vpElems.push(
+      chart.renderer.path(["M", plotLeft, valYPx, "L", plotRight, valYPx])
+        .attr({ stroke: VP_VA_COLOR, "stroke-width": 1, "stroke-dasharray": "6,3", zIndex: 4 })
+        .add()
+    );
+    vpElems.push(
+      chart.renderer.text(`VAL $${valPrice.toFixed(2)}`, plotRight - 4, valYPx + 10)
+        .attr({ align: "right", zIndex: 5 })
+        .css({
+          color:           VP_VA_COLOR,
+          fontSize:        "9px",
+          fontWeight:      "600",
+          backgroundColor: "rgba(15,23,42,0.80)",
+          padding:         "1px 4px",
+        })
+        .add()
+    );
+  }
+}
+
 function applyRR(chart, rr) {
   const yAxis = chart?.yAxis?.[0];
   if (!yAxis) return;
@@ -516,11 +725,13 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [orderResult,     setOrderResult]     = useState(null);  // { ok, message, orderId } | null
   const [liveQuote,       setLiveQuote]       = useState(null);  // null | { bid, ask, last, spread, updatedAt, fetching }
   const [activeZoom, setActiveZoom] = useState("3D");
+  const [showVBP,    setShowVBP]    = useState(true);
   const [riskPrefs,      setRiskPrefs]      = useState(null);   // { risk_mode, risk_value }
   const [portfolioValue, setPortfolioValue] = useState(null);   // numeric string from Alpaca
   const [qtyDerived,     setQtyDerived]     = useState(false);  // true when qty was auto-set
   const chartRef = useRef(null);
   const rrRef    = useRef(null);                          // live mirror of rr (used in drag handlers)
+  const showVBPRef = useRef(showVBP);                     // live mirror of showVBP (used in render events)
 
   const ZOOM_PRESETS = [
     { label: "1D", days: 1   },
@@ -710,8 +921,27 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const barTimeMs = etStringToUtcMs(barTime);
   const ready     = !loading && !error && bars.length > 0 && height != null;
 
-  // ── Keep rrRef in sync with React state ─────────────────────────────────────
+  // ── Keep rrRef / showVBPRef in sync with React state ────────────────────────
   useEffect(() => { rrRef.current = rr; }, [rr]);
+  useEffect(() => { showVBPRef.current = showVBP; }, [showVBP]);
+
+  // ── Volume Profile — drawn via SVG renderer, updates on every chart render ──
+  useEffect(() => {
+    const chart = chartRef.current?.chart;
+    if (!chart || !bars.length) return;
+
+    const onRender = () => {
+      if (showVBPRef.current) drawVolumeProfile(chart, bars);
+      else                    clearVPElems();
+    };
+    onRender(); // draw immediately after bars load or showVBP toggles
+
+    Highcharts.addEvent(chart, "render", onRender);
+    return () => {
+      Highcharts.removeEvent(chart, "render", onRender);
+      clearVPElems();
+    };
+  }, [bars, showVBP]); // re-attach whenever data or toggle changes
 
   // ── Imperative R/R drawing (re-runs when rr or bars change) ─────────────────
   useEffect(() => {
@@ -962,6 +1192,19 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                 <X className="w-3 h-3" /> Clear
               </button>
             )}
+
+            {/* Vol Profile toggle */}
+            <button
+              onClick={() => setShowVBP(v => !v)}
+              title="Toggle volume profile (visible-range volume-at-price)"
+              className={`px-2.5 py-1 rounded text-xs font-medium border transition ${
+                showVBP
+                  ? "bg-indigo-900/40 border-indigo-600/60 text-indigo-300"
+                  : "bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-200 hover:border-slate-500"
+              }`}
+            >
+              Vol Profile
+            </button>
 
             {/* Zoom presets */}
             <div className="flex items-center rounded overflow-hidden border border-slate-700 shrink-0 ml-2">
