@@ -316,7 +316,7 @@ function applyClipsAtEntry(chart, entryTime) {
 }
 
 // Draw muted grey lines to the LEFT of the entry bar for stop, target and entry.
-function drawGreyLeftLines(chart, rr) {
+function drawGreyLeftLines(chart, rr, showRLevels = true) {
   clearGreyElems();
   if (!rr?.entryTime) return;
 
@@ -327,13 +327,15 @@ function drawGreyLeftLines(chart, rr) {
 
   const isLong  = rr.target > rr.entry;
   const risk    = Math.abs(rr.entry - rr.stop);
-  const rrNum   = Number(rr.rrRatio); // use the stored value, not a price-derived one
-  const rLevelLines = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].reduce((acc, r) => {
-    if (r >= rrNum) return acc; // skip levels at or beyond the target R
-    const rPrice = isLong ? rr.entry + r * risk : rr.entry - r * risk;
-    acc.push({ price: rPrice, strokeWidth: 1, dash: "2,3" });
-    return acc;
-  }, []);
+  const rrNum   = Number(rr.rrRatio);
+  const rLevelLines = showRLevels
+    ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].reduce((acc, r) => {
+        if (r >= rrNum) return acc;
+        const rPrice = isLong ? rr.entry + r * risk : rr.entry - r * risk;
+        acc.push({ price: rPrice, strokeWidth: 1, dash: "2,3" });
+        return acc;
+      }, [])
+    : [];
 
   const YELLOW = "#facc15";
   [
@@ -362,7 +364,7 @@ function removeClipPaths(chart) {
 
 // Draw the green/red zones and R-level dashed lines as SVG renderer elements
 // starting at the entry bar — no clip paths needed since we control the x origin.
-function drawColoredZones(chart, rr) {
+function drawColoredZones(chart, rr, showRLevels = true) {
   if (!rr?.entry || !rr?.stop || !rr?.target || !rr?.entryTime) return;
 
   const entryXPx  = chart.xAxis[0].toPixels(rr.entryTime, false);
@@ -441,25 +443,27 @@ function drawColoredZones(chart, rr) {
   );
 
   // R-level dashed lines and labels (right side of entry only)
-  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach(r => {
-    if (r >= rrNum) return;
-    const rPrice = isLong ? entry + r * risk : entry - r * risk;
-    const rY     = toY(rPrice);
-    rrGreyElems.push(
-      chart.renderer.path()
-        .attr({ d: `M ${zoneX} ${rY} L ${rightEdge} ${rY}`,
-                stroke: "rgba(34,197,94,0.45)", "stroke-width": 1,
-                "stroke-dasharray": "4,3", zIndex: 4 })
-        .add()
-    );
-    rrGreyElems.push(
-      chart.renderer.text(`${r}R`, zoneX + 8, rY - 2)
-        .attr({ zIndex: 5 })
-        .css({ color: "#22c55e", fontSize: "10px", fontWeight: "700",
-               backgroundColor: "rgba(15,23,42,0.75)", padding: "1px 5px", borderRadius: "2px" })
-        .add()
-    );
-  });
+  if (showRLevels) {
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach(r => {
+      if (r >= rrNum) return;
+      const rPrice = isLong ? entry + r * risk : entry - r * risk;
+      const rY     = toY(rPrice);
+      rrGreyElems.push(
+        chart.renderer.path()
+          .attr({ d: `M ${zoneX} ${rY} L ${rightEdge} ${rY}`,
+                  stroke: "rgba(34,197,94,0.45)", "stroke-width": 1,
+                  "stroke-dasharray": "4,3", zIndex: 4 })
+          .add()
+      );
+      rrGreyElems.push(
+        chart.renderer.text(`${r}R`, zoneX + 8, rY - 2)
+          .attr({ zIndex: 5 })
+          .css({ color: "#22c55e", fontSize: "10px", fontWeight: "700",
+                 backgroundColor: "rgba(15,23,42,0.75)", padding: "1px 5px", borderRadius: "2px" })
+          .add()
+      );
+    });
+  }
 }
 
 // ── Volume Profile drawing ─────────────────────────────────────────────────
@@ -671,7 +675,7 @@ function drawVolumeProfile(chart, bars) {
   }
 }
 
-function applyRR(chart, rr) {
+function applyRR(chart, rr, showRLevels = true) {
   const yAxis = chart?.yAxis?.[0];
   if (!yAxis) return;
 
@@ -707,8 +711,8 @@ function applyRR(chart, rr) {
   // Clip the entry plotLine and draw everything else as renderer elements
   if (rr.entryTime) {
     applyClipsAtEntry(chart, rr.entryTime);
-    drawGreyLeftLines(chart, rr);  // clears rrGreyElems, then draws left stubs
-    drawColoredZones(chart, rr);   // draws zones + target/stop lines + R-level lines
+    drawGreyLeftLines(chart, rr, showRLevels);  // clears rrGreyElems, then draws left stubs
+    drawColoredZones(chart, rr, showRLevels);   // draws zones + target/stop lines + R-level lines
   }
 }
 
@@ -724,14 +728,16 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,     setOrderResult]     = useState(null);  // { ok, message, orderId } | null
   const [liveQuote,       setLiveQuote]       = useState(null);  // null | { bid, ask, last, spread, updatedAt, fetching }
-  const [activeZoom, setActiveZoom] = useState("3D");
-  const [showVBP,    setShowVBP]    = useState(true);
+  const [activeZoom,       setActiveZoom]       = useState("3D");
+  const [showVBP,          setShowVBP]          = useState(true);
+  const [useRRConstraint,  setUseRRConstraint]  = useState(true);
+  const [rrFlash,          setRrFlash]          = useState(false);
   const [riskPrefs,      setRiskPrefs]      = useState(null);   // { risk_mode, risk_value }
   const [portfolioValue, setPortfolioValue] = useState(null);   // numeric string from Alpaca
   const [qtyDerived,     setQtyDerived]     = useState(false);  // true when qty was auto-set
   const chartRef = useRef(null);
   const rrRef    = useRef(null);                          // live mirror of rr (used in drag handlers)
-  const showVBPRef = useRef(showVBP);                     // live mirror of showVBP (used in render events)
+  const showVBPRef = useRef(showVBP); // live mirror of showVBP (used in render events)
 
   const ZOOM_PRESETS = [
     { label: "1D", days: 1   },
@@ -923,6 +929,14 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
   // ── Keep rrRef / showVBPRef in sync with React state ────────────────────────
   useEffect(() => { rrRef.current = rr; }, [rr]);
+
+  // ── Flash the effective R/R value when a new entry is placed ─────────────────
+  useEffect(() => {
+    if (!rr?.entryTime) return;
+    setRrFlash(true);
+    const t = setTimeout(() => setRrFlash(false), 650);
+    return () => clearTimeout(t);
+  }, [rr?.entryTime]); // only fires on new entry click, not on drags
   useEffect(() => { showVBPRef.current = showVBP; }, [showVBP]);
 
   // ── Volume Profile — drawn via SVG renderer, updates on every chart render ──
@@ -943,10 +957,10 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
     };
   }, [bars, showVBP]); // re-attach whenever data or toggle changes
 
-  // ── Imperative R/R drawing (re-runs when rr or bars change) ─────────────────
+  // ── Imperative R/R drawing (re-runs when rr, bars, or constraint toggle changes) ──
   useEffect(() => {
-    applyRR(chartRef.current?.chart, rr);
-  }, [rr, bars]);
+    applyRR(chartRef.current?.chart, rr, useRRConstraint);
+  }, [rr, bars, useRRConstraint]);
 
   // ── Re-clip + redraw on every Highcharts render (zoom / scroll) ────────────
   useEffect(() => {
@@ -985,12 +999,12 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
       const cur = rrRef.current;
       if (!cur?.entryTime) return;
       applyClipsAtEntry(chart, cur.entryTime);
-      drawGreyLeftLines(chart, cur);
-      drawColoredZones(chart, cur);
+      drawGreyLeftLines(chart, cur, useRRConstraint);
+      drawColoredZones(chart, cur, useRRConstraint);
     };
     Highcharts.addEvent(chart, "render", onRender);
     return () => Highcharts.removeEvent(chart, "render", onRender);
-  }, [bars, barTimeMs]); // re-attach if chart recreated or barTime changes
+  }, [bars, barTimeMs, useRRConstraint]); // re-attach if chart recreated, barTime, or constraint changes
 
   // ── Drag stop / target lines ─────────────────────────────────────────────────
   // Uses rrRef (not rr) so no re-renders mid-drag; commits to state on mouseup.
@@ -1020,16 +1034,18 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
           let newRr;
           if (drag.type === "stop") {
-            const stop   = price;
-            const target = parseFloat((cur.entry + (cur.entry - stop) * cur.rrRatio).toFixed(2));
-            newRr = { ...cur, stop, target };
+            const stop = price;
+            newRr = useRRConstraint
+              ? { ...cur, stop, target: parseFloat((cur.entry + (cur.entry - stop) * cur.rrRatio).toFixed(2)) }
+              : { ...cur, stop };
           } else {
             const target = price;
-            const stop   = parseFloat((cur.entry - (target - cur.entry) / cur.rrRatio).toFixed(2));
-            newRr = { ...cur, target, stop };
+            newRr = useRRConstraint
+              ? { ...cur, target, stop: parseFloat((cur.entry - (target - cur.entry) / cur.rrRatio).toFixed(2)) }
+              : { ...cur, target };
           }
           rrRef.current = newRr;
-          applyRR(chart, newRr);
+          applyRR(chart, newRr, useRRConstraint);
         });
         return;
       }
@@ -1081,7 +1097,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
       document.removeEventListener("mouseup",    onMouseUp);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [ready, rrMode]); // rrRef used intentionally — avoids re-attaching on every rr change
+  }, [ready, rrMode, useRRConstraint]); // rrRef used intentionally — avoids re-attaching on every rr change
 
   // ── Memoised chart options (does NOT depend on rr — managed imperatively) ───
   const chartOptions = useMemo(
@@ -1116,7 +1132,6 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
   return (
     <div className="relative flex flex-col h-full w-full">
-
       {/* ── Loading / error states ── */}
       {(loading || height == null) && !error && (
         <div className="flex-1 flex items-center justify-center gap-2 text-slate-400">
@@ -1314,7 +1329,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                 <span className="font-mono font-bold text-slate-200">${rr.entry.toFixed(2)}</span>
               </div>
 
-              {/* Stop — changing stop re-derives target from R/R ratio */}
+              {/* Stop — conditionally re-derives target from R/R ratio */}
               <label className="flex items-center gap-1.5">
                 <span className="text-red-400 font-medium">{direction === "long" ? "▼ Stop" : "▲ Stop"}</span>
                 <input
@@ -1322,31 +1337,36 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                   onChange={e => {
                     const val = e.target.value;
                     setRr(r => {
-                      const stop   = parseFloat(val) || r.stop;
-                      const target = parseFloat((r.entry + (r.entry - stop) * r.rrRatio).toFixed(2));
-                      return { ...r, stop, target };
+                      const stop = parseFloat(val) || r.stop;
+                      if (useRRConstraint) {
+                        const target = parseFloat((r.entry + (r.entry - stop) * r.rrRatio).toFixed(2));
+                        return { ...r, stop, target };
+                      }
+                      return { ...r, stop };
                     });
                   }}
                   className={`${inputCls} border border-red-900/60 focus:ring-red-500/40`}
                 />
               </label>
 
-              {/* R/R ratio — changing it keeps stop fixed and re-derives target */}
-              <label className="flex items-center gap-1.5">
-                <span className="text-slate-400 font-medium">R/R</span>
-                <input
-                  type="number" step="1" min="1" value={rr.rrRatio}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setRr(r => {
-                      const rrRatio = Math.max(0.1, parseFloat(val) || r.rrRatio);
-                      const target  = parseFloat((r.entry + (r.entry - r.stop) * rrRatio).toFixed(2));
-                      return { ...r, rrRatio, target };
-                    });
-                  }}
-                  className={`${inputCls} w-16 border border-slate-600 focus:ring-slate-400/40`}
-                />
-              </label>
+              {/* R/R ratio — conditionally re-derives target; hidden when constraint is off */}
+              {useRRConstraint && (
+                <label className="flex items-center gap-1.5">
+                  <span className="text-slate-400 font-medium">R/R</span>
+                  <input
+                    type="number" step="1" min="1" value={rr.rrRatio}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setRr(r => {
+                        const rrRatio = Math.max(0.1, parseFloat(val) || r.rrRatio);
+                        const target = parseFloat((r.entry + (r.entry - r.stop) * rrRatio).toFixed(2));
+                        return { ...r, rrRatio, target };
+                      });
+                    }}
+                    className={`${inputCls} w-16 border border-slate-600 focus:ring-slate-400/40`}
+                  />
+                </label>
+              )}
 
               {/* Target — manual override */}
               <label className="flex items-center gap-1.5">
@@ -1359,6 +1379,19 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                   }}
                   className={`${inputCls} border border-emerald-900/60 focus:ring-emerald-500/40`}
                 />
+              </label>
+
+              {/* Use R/R constraint toggle */}
+              <label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+                <input
+                  type="checkbox"
+                  checked={useRRConstraint}
+                  onChange={e => setUseRRConstraint(e.target.checked)}
+                  className="w-3 h-3 rounded accent-brand-500"
+                />
+                <span className={`text-xs font-medium transition ${useRRConstraint ? "text-slate-300" : "text-slate-500"}`}>
+                  Use R/R Value
+                </span>
               </label>
 
               {/* Qty */}
@@ -1389,7 +1422,16 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                 <div className="flex items-center gap-4 pl-4 border-l border-slate-700">
                   <span className="text-slate-500 text-[11px]">
                     effective&nbsp;R/R&nbsp;
-                    <span className="text-white font-bold font-mono">{rrMetrics.ratio}</span>
+                    <span
+                      className="font-bold font-mono"
+                      style={{
+                        color:      rrFlash ? "#facc15" : "#ffffff",
+                        textShadow: rrFlash ? "0 0 10px rgba(250,204,21,0.85)" : "none",
+                        transition: rrFlash ? "none" : "color 0.55s ease-out, text-shadow 0.55s ease-out",
+                      }}
+                    >
+                      {rrMetrics.ratio}
+                    </span>
                   </span>
                   <span className="text-slate-500 text-[11px]">
                     Profit&nbsp;

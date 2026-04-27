@@ -284,7 +284,7 @@ function applyClipsAtEntry(chart, entryTime) {
   });
 }
 
-function drawGreyLeftLines(chart, rr) {
+function drawGreyLeftLines(chart, rr, showRLevels = true) {
   clearGreyElems();
   if (!rr?.entryTime) return;
   const xPx  = chart.xAxis[0].toPixels(rr.entryTime, false);
@@ -294,12 +294,12 @@ function drawGreyLeftLines(chart, rr) {
   const isLong = rr.target > rr.entry;
   const risk   = Math.abs(rr.entry - rr.stop);
   const rrNum  = Number(rr.rrRatio);
-  const rLevelLines = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].reduce((acc, r) => {
+  const rLevelLines = showRLevels ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].reduce((acc, r) => {
     if (r >= rrNum) return acc;
     const rPrice = isLong ? rr.entry + r * risk : rr.entry - r * risk;
     acc.push({ price: rPrice, strokeWidth: 1, dash: "2,3" });
     return acc;
-  }, []);
+  }, []) : [];
   const YELLOW = "#facc15";
   [
     { price: rr.target, strokeWidth: 1, dash: "4,3" },
@@ -325,7 +325,7 @@ function removeClipPaths(chart) {
   RR_CLIP_IDS.forEach(clipId => defs.querySelector(`#${clipId}`)?.remove());
 }
 
-function drawColoredZones(chart, rr) {
+function drawColoredZones(chart, rr, showRLevels = true) {
   if (!rr?.entry || !rr?.stop || !rr?.target || !rr?.entryTime) return;
   const entryXPx  = chart.xAxis[0].toPixels(rr.entryTime, false);
   const rightEdge = chart.plotLeft + chart.plotWidth;
@@ -395,28 +395,30 @@ function drawColoredZones(chart, rr) {
       .add()
   );
 
-  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach(r => {
-    if (r >= rrNum) return;
-    const rPrice = isLong ? entry + r * risk : entry - r * risk;
-    const rY     = toY(rPrice);
-    rrGreyElems.push(
-      chart.renderer.path()
-        .attr({ d: `M ${zoneX} ${rY} L ${rightEdge} ${rY}`,
-                stroke: "rgba(34,197,94,0.45)", "stroke-width": 1,
-                "stroke-dasharray": "4,3", zIndex: 4 })
-        .add()
-    );
-    rrGreyElems.push(
-      chart.renderer.text(`${r}R`, zoneX + 8, rY - 2)
-        .attr({ zIndex: 5 })
-        .css({ color: "#22c55e", fontSize: "10px", fontWeight: "700",
-               backgroundColor: "rgba(15,23,42,0.75)", padding: "1px 5px", borderRadius: "2px" })
-        .add()
-    );
-  });
+  if (showRLevels) {
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach(r => {
+      if (r >= rrNum) return;
+      const rPrice = isLong ? entry + r * risk : entry - r * risk;
+      const rY     = toY(rPrice);
+      rrGreyElems.push(
+        chart.renderer.path()
+          .attr({ d: `M ${zoneX} ${rY} L ${rightEdge} ${rY}`,
+                  stroke: "rgba(34,197,94,0.45)", "stroke-width": 1,
+                  "stroke-dasharray": "4,3", zIndex: 4 })
+          .add()
+      );
+      rrGreyElems.push(
+        chart.renderer.text(`${r}R`, zoneX + 8, rY - 2)
+          .attr({ zIndex: 5 })
+          .css({ color: "#22c55e", fontSize: "10px", fontWeight: "700",
+                 backgroundColor: "rgba(15,23,42,0.75)", padding: "1px 5px", borderRadius: "2px" })
+          .add()
+      );
+    });
+  }
 }
 
-function applyRR(chart, rr) {
+function applyRR(chart, rr, showRLevels = true) {
   const yAxis = chart?.yAxis?.[0];
   if (!yAxis) return;
   RR_BANDS.forEach(id => yAxis.removePlotBand(id));
@@ -439,8 +441,157 @@ function applyRR(chart, rr) {
   });
   if (rr.entryTime) {
     applyClipsAtEntry(chart, rr.entryTime);
-    drawGreyLeftLines(chart, rr);
-    drawColoredZones(chart, rr);
+    drawGreyLeftLines(chart, rr, showRLevels);
+    drawColoredZones(chart, rr, showRLevels);
+  }
+}
+
+// ── Volume Profile drawing ─────────────────────────────────────────────────
+const VP_RANGES    = 120;
+const VP_MAX_WIDTH = 0.18;
+const VP_UP_COLOR  = "rgba(0,200,190,0.50)";
+const VP_DN_COLOR  = "rgba(220,50,100,0.50)";
+const VP_POC_COLOR = "#94a3b8";
+const VP_VA_COLOR  = "#7dd3fc";
+const VP_VA_PCT    = 0.70;
+
+let vpElems = [];
+function clearVPElems() {
+  vpElems.forEach(el => { try { el.destroy(); } catch (_) {} });
+  vpElems = [];
+}
+
+function drawVolumeProfile(chart, bars) {
+  clearVPElems();
+  if (!chart || !bars.length) return;
+
+  const xAxis = chart.xAxis[0];
+  const yAxis = chart.yAxis[0];
+  const extr  = xAxis.getExtremes();
+
+  const visible = bars.filter(b => b.t >= extr.min && b.t <= extr.max && b.h != null);
+  if (visible.length < 2) return;
+
+  let priceMin = Infinity, priceMax = -Infinity;
+  for (const b of visible) {
+    if (b.l < priceMin) priceMin = b.l;
+    if (b.h > priceMax) priceMax = b.h;
+  }
+  if (priceMax <= priceMin) return;
+
+  const bucketSize = (priceMax - priceMin) / VP_RANGES;
+  const upVol      = new Float64Array(VP_RANGES);
+  const downVol    = new Float64Array(VP_RANGES);
+
+  for (const b of visible) {
+    const isUp   = b.c >= b.o;
+    const bRange = b.h - b.l;
+    const iStart = Math.max(0, Math.floor((b.l - priceMin) / bucketSize));
+    const iEnd   = Math.min(VP_RANGES - 1, Math.floor((b.h - priceMin) / bucketSize));
+    for (let i = iStart; i <= iEnd; i++) {
+      const bktLow  = priceMin + i * bucketSize;
+      const bktHigh = bktLow + bucketSize;
+      const overlap = bRange > 0
+        ? (Math.min(b.h, bktHigh) - Math.max(b.l, bktLow)) / bRange
+        : 1 / (iEnd - iStart + 1);
+      const vol = b.v * Math.max(0, overlap);
+      if (isUp) upVol[i]   += vol;
+      else      downVol[i] += vol;
+    }
+  }
+
+  let maxBucketVol = 0, totalVol = 0, pocIdx = 0;
+  for (let i = 0; i < VP_RANGES; i++) {
+    const tv = upVol[i] + downVol[i];
+    totalVol += tv;
+    if (tv > maxBucketVol) { maxBucketVol = tv; pocIdx = i; }
+  }
+  if (maxBucketVol === 0) return;
+
+  // Value Area (70 %)
+  let vaVol = upVol[pocIdx] + downVol[pocIdx];
+  let vaLow = pocIdx, vaHigh = pocIdx;
+  const vaTarget = totalVol * VP_VA_PCT;
+  while (vaVol < vaTarget) {
+    const aboveVol = vaHigh + 1 < VP_RANGES ? upVol[vaHigh + 1] + downVol[vaHigh + 1] : 0;
+    const belowVol = vaLow  - 1 >= 0        ? upVol[vaLow  - 1] + downVol[vaLow  - 1] : 0;
+    if (aboveVol === 0 && belowVol === 0) break;
+    if (aboveVol >= belowVol) { vaHigh++; vaVol += aboveVol; }
+    else                      { vaLow--;  vaVol += belowVol; }
+  }
+  const vahPrice = priceMin + (vaHigh + 1) * bucketSize;
+  const valPrice = priceMin + vaLow * bucketSize;
+
+  const plotLeft        = chart.plotLeft;
+  const plotRight       = chart.plotLeft + chart.plotWidth;
+  const plotTop         = chart.plotTop;
+  const pricePaneBottom = plotTop + chart.plotHeight * 0.80;
+  const maxBarWidth     = chart.plotWidth * VP_MAX_WIDTH;
+
+  // Bars
+  for (let i = 0; i < VP_RANGES; i++) {
+    const tv = upVol[i] + downVol[i];
+    if (tv === 0) continue;
+    const bktLow  = priceMin + i * bucketSize;
+    const bktHigh = bktLow + bucketSize;
+    const yTop    = yAxis.toPixels(bktHigh, false);
+    const yBottom = yAxis.toPixels(bktLow,  false);
+    const top     = Math.max(yTop,    plotTop);
+    const bottom  = Math.min(yBottom, pricePaneBottom);
+    if (bottom <= top) continue;
+    const barH  = bottom - top;
+    const upW   = (upVol[i]   / maxBucketVol) * maxBarWidth;
+    const downW = (downVol[i] / maxBucketVol) * maxBarWidth;
+    if (upW >= 0.5)
+      vpElems.push(chart.renderer.rect(plotLeft, top, upW, barH).attr({ fill: VP_UP_COLOR, zIndex: 1 }).add());
+    if (downW >= 0.5)
+      vpElems.push(chart.renderer.rect(plotLeft + upW, top, downW, barH).attr({ fill: VP_DN_COLOR, zIndex: 1 }).add());
+  }
+
+  // POC
+  const pocPrice = priceMin + (pocIdx + 0.5) * bucketSize;
+  const pocYPx   = yAxis.toPixels(pocPrice, false);
+  if (pocYPx >= plotTop && pocYPx <= pricePaneBottom) {
+    vpElems.push(
+      chart.renderer.path(["M", plotLeft, pocYPx, "L", plotRight, pocYPx])
+        .attr({ stroke: VP_POC_COLOR, "stroke-width": 1.5, "stroke-dasharray": "4,3", zIndex: 4 }).add()
+    );
+    vpElems.push(
+      chart.renderer.text(`POC $${pocPrice.toFixed(2)}`, plotRight - 4, pocYPx - 3)
+        .attr({ align: "right", zIndex: 5 })
+        .css({ color: VP_POC_COLOR, fontSize: "9px", fontWeight: "700",
+               backgroundColor: "rgba(15,23,42,0.80)", padding: "1px 4px" }).add()
+    );
+  }
+
+  // VAH
+  const vahYPx = yAxis.toPixels(vahPrice, false);
+  if (vahYPx >= plotTop && vahYPx <= pricePaneBottom) {
+    vpElems.push(
+      chart.renderer.path(["M", plotLeft, vahYPx, "L", plotRight, vahYPx])
+        .attr({ stroke: VP_VA_COLOR, "stroke-width": 1, "stroke-dasharray": "6,3", zIndex: 4 }).add()
+    );
+    vpElems.push(
+      chart.renderer.text(`VAH $${vahPrice.toFixed(2)}`, plotRight - 4, vahYPx - 3)
+        .attr({ align: "right", zIndex: 5 })
+        .css({ color: VP_VA_COLOR, fontSize: "9px", fontWeight: "600",
+               backgroundColor: "rgba(15,23,42,0.80)", padding: "1px 4px" }).add()
+    );
+  }
+
+  // VAL
+  const valYPx = yAxis.toPixels(valPrice, false);
+  if (valYPx >= plotTop && valYPx <= pricePaneBottom) {
+    vpElems.push(
+      chart.renderer.path(["M", plotLeft, valYPx, "L", plotRight, valYPx])
+        .attr({ stroke: VP_VA_COLOR, "stroke-width": 1, "stroke-dasharray": "6,3", zIndex: 4 }).add()
+    );
+    vpElems.push(
+      chart.renderer.text(`VAL $${valPrice.toFixed(2)}`, plotRight - 4, valYPx + 10)
+        .attr({ align: "right", zIndex: 5 })
+        .css({ color: VP_VA_COLOR, fontSize: "9px", fontWeight: "600",
+               backgroundColor: "rgba(15,23,42,0.80)", padding: "1px 4px" }).add()
+    );
   }
 }
 
@@ -457,10 +608,13 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,   setOrderResult]   = useState(null);
   const [liveQuote,     setLiveQuote]     = useState(null);
-  const [activeZoom,    setActiveZoom]    = useState("2W");
+  const [activeZoom,    setActiveZoom]    = useState("3D");
   const [riskPrefs,     setRiskPrefs]     = useState(null);
   const [portfolioValue, setPortfolioValue] = useState(null);
   const [qtyDerived,    setQtyDerived]    = useState(false);
+  const [showVBP,         setShowVBP]         = useState(true);
+  const [useRRConstraint, setUseRRConstraint] = useState(true);
+  const [rrFlash,         setRrFlash]         = useState(false);
   // Self-measured chart height
   const [chartHeight,   setChartHeight]   = useState(null);
 
@@ -468,6 +622,8 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   const rrRef        = useRef(null);
   const wrapRef      = useRef(null);       // outer container — measured by ResizeObserver
   const directionRef = useRef(direction);  // always-current direction for click handler
+  const showVBPRef        = useRef(showVBP);
+  const useRRConstraintRef = useRef(useRRConstraint);
 
   // ── Measure container height ─────────────────────────────────────────────────
   useEffect(() => {
@@ -664,8 +820,34 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   const barTimeMs = etStringToUtcMs(barTime);
   const ready     = !loading && !error && bars.length > 0 && chartHeight != null;
 
-  useEffect(() => { rrRef.current       = rr;        }, [rr]);
+  useEffect(() => { rrRef.current        = rr;        }, [rr]);
   useEffect(() => { directionRef.current = direction; }, [direction]);
+  useEffect(() => { showVBPRef.current        = showVBP;        }, [showVBP]);
+  useEffect(() => { useRRConstraintRef.current = useRRConstraint; }, [useRRConstraint]);
+
+  // Flash effective R/R when a new drawing is placed
+  useEffect(() => {
+    if (!rr?.entryTime) return;
+    setRrFlash(true);
+    const t = setTimeout(() => setRrFlash(false), 650);
+    return () => clearTimeout(t);
+  }, [rr?.entryTime]);
+
+  // ── Volume profile ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    const chart = chartRef.current?.chart;
+    if (!chart || !bars.length) return;
+    const onRender = () => {
+      if (showVBPRef.current) drawVolumeProfile(chart, bars);
+      else                    clearVPElems();
+    };
+    onRender();
+    Highcharts.addEvent(chart, "render", onRender);
+    return () => {
+      Highcharts.removeEvent(chart, "render", onRender);
+      clearVPElems();
+    };
+  }, [bars, showVBP]);
 
   useEffect(() => {
     applyRR(chartRef.current?.chart, rr);
@@ -705,9 +887,10 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
       }
       const cur = rrRef.current;
       if (!cur?.entryTime) return;
+      const showRL = useRRConstraintRef.current;
       applyClipsAtEntry(chart, cur.entryTime);
-      drawGreyLeftLines(chart, cur);
-      drawColoredZones(chart, cur);
+      drawGreyLeftLines(chart, cur, showRL);
+      drawColoredZones(chart, cur, showRL);
     };
     Highcharts.addEvent(chart, "render", onRender);
     return () => Highcharts.removeEvent(chart, "render", onRender);
@@ -732,17 +915,22 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
           const clampedY = Math.max(chart.plotTop, Math.min(chartY, pricePaneBottom()));
           const price    = parseFloat(chart.yAxis[0].toValue(clampedY).toFixed(2));
           let newRr;
+          const constrained = useRRConstraintRef.current;
           if (drag.type === "stop") {
             const stop   = price;
-            const target = parseFloat((cur.entry + (cur.entry - stop) * cur.rrRatio).toFixed(2));
+            const target = constrained
+              ? parseFloat((cur.entry + (cur.entry - stop) * cur.rrRatio).toFixed(2))
+              : cur.target;
             newRr = { ...cur, stop, target };
           } else {
             const target = price;
-            const stop   = parseFloat((cur.entry - (target - cur.entry) / cur.rrRatio).toFixed(2));
+            const stop   = constrained
+              ? parseFloat((cur.entry - (target - cur.entry) / cur.rrRatio).toFixed(2))
+              : cur.stop;
             newRr = { ...cur, target, stop };
           }
           rrRef.current = newRr;
-          applyRR(chart, newRr);
+          applyRR(chart, newRr, constrained);
         });
         return;
       }
@@ -786,7 +974,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
       document.removeEventListener("mouseup",    onMouseUp);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [ready, rrMode]);
+  }, [ready, rrMode, useRRConstraint]);
 
   const chartOptions = useMemo(
     () => buildOptions(ticker, bars, barTimeMs, threshold, barMs),
@@ -884,6 +1072,18 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
             >
               <Target className="w-3.5 h-3.5" />
               {rrMode ? "Click a bar to set entry…" : "R/R Draw"}
+            </button>
+
+            <button
+              onClick={() => setShowVBP(v => !v)}
+              title="Toggle Volume Profile"
+              className={`px-2.5 py-1 rounded text-xs font-medium border transition ${
+                showVBP
+                  ? "bg-cyan-900/30 border-cyan-700/60 text-cyan-300"
+                  : "bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              Vol Profile
             </button>
 
             {rr && (
@@ -1014,7 +1214,9 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                     const val = e.target.value;
                     setRr(r => {
                       const stop   = parseFloat(val) || r.stop;
-                      const target = parseFloat((r.entry + (r.entry - stop) * r.rrRatio).toFixed(2));
+                      const target = useRRConstraint
+                        ? parseFloat((r.entry + (r.entry - stop) * r.rrRatio).toFixed(2))
+                        : r.target;
                       return { ...r, stop, target };
                     });
                   }}
@@ -1022,21 +1224,35 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                 />
               </label>
 
-              <label className="flex items-center gap-1.5">
-                <span className="text-slate-400 font-medium">R/R</span>
+              <label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
                 <input
-                  type="number" step="1" min="1" value={rr.rrRatio}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setRr(r => {
-                      const rrRatio = Math.max(0.1, parseFloat(val) || r.rrRatio);
-                      const target  = parseFloat((r.entry + (r.entry - r.stop) * rrRatio).toFixed(2));
-                      return { ...r, rrRatio, target };
-                    });
-                  }}
-                  className={`${inputCls} w-16 border border-slate-600 focus:ring-slate-400/40`}
+                  type="checkbox"
+                  checked={useRRConstraint}
+                  onChange={e => setUseRRConstraint(e.target.checked)}
+                  className="w-3 h-3 rounded accent-brand-500"
                 />
+                <span className={`text-xs font-medium transition ${useRRConstraint ? "text-slate-300" : "text-slate-500"}`}>
+                  Use R/R Value
+                </span>
               </label>
+
+              {useRRConstraint && (
+                <label className="flex items-center gap-1.5">
+                  <span className="text-slate-400 font-medium">R/R</span>
+                  <input
+                    type="number" step="1" min="1" value={rr.rrRatio}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setRr(r => {
+                        const rrRatio = Math.max(0.1, parseFloat(val) || r.rrRatio);
+                        const target  = parseFloat((r.entry + (r.entry - r.stop) * rrRatio).toFixed(2));
+                        return { ...r, rrRatio, target };
+                      });
+                    }}
+                    className={`${inputCls} w-16 border border-slate-600 focus:ring-slate-400/40`}
+                  />
+                </label>
+              )}
 
               <label className="flex items-center gap-1.5">
                 <span className="text-emerald-400 font-medium">{direction === "long" ? "▲ Target" : "▼ Target"}</span>
@@ -1076,7 +1292,16 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                 <div className="flex items-center gap-4 pl-4 border-l border-slate-700">
                   <span className="text-slate-500 text-[11px]">
                     effective&nbsp;R/R&nbsp;
-                    <span className="text-white font-bold font-mono">{rrMetrics.ratio}</span>
+                    <span
+                      className="font-bold font-mono"
+                      style={{
+                        color:      rrFlash ? "#facc15" : "#ffffff",
+                        textShadow: rrFlash ? "0 0 10px rgba(250,204,21,0.85)" : "none",
+                        transition: rrFlash ? "none" : "color 0.55s ease-out, text-shadow 0.55s ease-out",
+                      }}
+                    >
+                      {rrMetrics.ratio}
+                    </span>
                   </span>
                   <span className="text-slate-500 text-[11px]">
                     Profit&nbsp;
