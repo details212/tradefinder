@@ -205,6 +205,9 @@ export const stripeApi = {
   /** Poll subscription status for the authenticated user. Returns { status, period_end, active }. */
   getSubscriptionStatus: () =>
     api.get("/api/stripe/subscription-status"),
+  /** List last 24 invoices for the authenticated user. */
+  getInvoices: () =>
+    api.get("/api/stripe/invoices"),
 };
 
 // ── Pattern Analysis Scanner ──────────────────────────────────────────────────

@@ -9,6 +9,7 @@ import AccountSettings from "./AccountSettings";
 import BrokerageSettings from "./BrokerageSettings";
 import AdminPanel from "./AdminPanel";
 import LeaderBoard from "./LeaderBoard";
+import SubscriptionPanel from "./SubscriptionPanel";
 import logo from "../assets/logo.png";
 import {
   LogOut,
@@ -25,6 +26,7 @@ import {
   PlusCircle,
   TrendingUp,
   Trophy,
+  CreditCard,
 } from "lucide-react";
 
 function WatchlistTile({ ticker, bias, threshold, barTime, source, liveData, onClick, onRemove }) {
@@ -703,6 +705,17 @@ export default function Dashboard({ user, onLogout }) {
             Brokerage
           </button>
           <button
+            onClick={() => setActiveView("subscription")}
+            className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+              activeView === "subscription"
+                ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+            }`}
+          >
+            <CreditCard className="w-4 h-4" />
+            Subscription
+          </button>
+          <button
             onClick={() => setActiveView("account")}
             className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
               activeView === "account"
@@ -733,7 +746,9 @@ export default function Dashboard({ user, onLogout }) {
         {/* Content row */}
         <div className="flex flex-1 overflow-hidden">
           <div className="flex-1 overflow-hidden">
-            {activeView === "account" ? (
+            {activeView === "subscription" ? (
+              <SubscriptionPanel />
+            ) : activeView === "account" ? (
               <AccountSettings user={user} />
             ) : activeView === "brokerage" ? (
               <BrokerageSettings />
