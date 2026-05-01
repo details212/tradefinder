@@ -1,5 +1,8 @@
-import { useState } from "react";
-import { authApi } from "../api/client";
+import { useState, useEffect, useRef } from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements } from "@stripe/react-stripe-js";
+import { authApi, stripeApi } from "../api/client";
+import StripePaymentForm from "./StripePaymentForm";
 import { Eye, EyeOff, AlertCircle, CheckCircle, ArrowLeft, Mail, Phone, MapPin } from "lucide-react";
 import logo from "../assets/logo.png";
 
@@ -26,12 +29,14 @@ const SpinnerSVG = () => (
 // Step 3: username + password + contact info → create account
 
 function RegisterFlow({ onSuccess, onBack }) {
-  const [step,    setStep]    = useState(1);
-  const [email,   setEmail]   = useState("");
-  const [code,    setCode]    = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState("");
-  const [success, setSuccess] = useState("");
+  const [step,        setStep]        = useState(1);
+  const [email,       setEmail]       = useState("");
+  const [code,        setCode]        = useState("");
+  const [loading,     setLoading]     = useState(false);
+  const [error,       setError]       = useState("");
+  const [success,     setSuccess]     = useState("");
+  const [stripePromise, setStripePromise] = useState(null);
+  const [clientSecret,  setClientSecret]  = useState(null);
 
   const [form, setForm] = useState({
     username: "", password: "", confirm: "",
@@ -41,6 +46,16 @@ function RegisterFlow({ onSuccess, onBack }) {
   const [showPw, setShowPw] = useState(false);
 
   const setF = (k) => (e) => { setForm(f => ({ ...f, [k]: e.target.value })); setError(""); };
+
+  async function handlePaymentSuccess() {
+    try {
+      const meRes = await authApi.me();
+      const storedToken = localStorage.getItem("tf_token");
+      onSuccess(storedToken, meRes.data.user, null, null);
+    } catch {
+      onSuccess(localStorage.getItem("tf_token"), null, null, null);
+    }
+  }
 
   // ── Step 1: send code ─────────────────────────────────────────────────────
   async function handleSendCode(e) {
@@ -94,7 +109,19 @@ function RegisterFlow({ onSuccess, onBack }) {
         zipcode:      form.zipcode.trim(),
         mobile_phone: form.mobile_phone.trim(),
       });
-      onSuccess(res.data.token, res.data.user, res.data.required_version, res.data.download_url);
+
+      // Store token so the payment step can call authenticated endpoints
+      localStorage.setItem("tf_token", res.data.token);
+      localStorage.setItem("tf_user", JSON.stringify(res.data.user));
+
+      if (res.data.client_secret && res.data.publishable_key) {
+        setStripePromise(loadStripe(res.data.publishable_key));
+        setClientSecret(res.data.client_secret);
+        setStep(4);
+      } else {
+        // Stripe not configured; proceed directly to dashboard
+        onSuccess(res.data.token, res.data.user, res.data.required_version, res.data.download_url);
+      }
     } catch (err) {
       setError(err.response?.data?.error ?? "Failed to create account.");
     } finally {
@@ -102,7 +129,7 @@ function RegisterFlow({ onSuccess, onBack }) {
     }
   }
 
-  const stepLabels = ["Verify Email", "Enter Code", "Account Details"];
+  const stepLabels = ["Verify Email", "Enter Code", "Account Details", "Activate Plan"];
 
   return (
     <>
@@ -293,6 +320,39 @@ function RegisterFlow({ onSuccess, onBack }) {
             {loading ? <><SpinnerSVG /> Creating account…</> : "Create Account"}
           </button>
         </form>
+      )}
+
+      {/* ── Step 4: embedded Stripe payment form ── */}
+      {step === 4 && stripePromise && clientSecret && (
+        <div className="space-y-4">
+          <p className="text-slate-400 text-sm">
+            Enter your card details to activate your subscription.
+          </p>
+          <Elements
+            stripe={stripePromise}
+            options={{
+              clientSecret,
+              appearance: {
+                theme: "night",
+                variables: {
+                  colorPrimary: "#6366f1",
+                  colorBackground: "#0f172a",
+                  colorText: "#f1f5f9",
+                  colorDanger: "#ef4444",
+                  fontFamily: "Segoe UI, Arial, sans-serif",
+                  borderRadius: "12px",
+                  spacingUnit: "4px",
+                },
+              },
+            }}
+          >
+            <StripePaymentForm
+              onSuccess={handlePaymentSuccess}
+              onCancel={() => { setStep(3); setClientSecret(null); setStripePromise(null); }}
+              priceLabel="Subscribe — $5.00/mo"
+            />
+          </Elements>
+        </div>
       )}
     </>
   );
@@ -519,26 +579,46 @@ function ForgotPasswordFlow({ onBack }) {
 
 // ── Main Login component ──────────────────────────────────────────────────────
 export default function Login({ onLogin }) {
-  const [mode,         setMode]         = useState("login"); // "login" | "register" | "forgot"
-  const [username,     setUsername]     = useState("");
-  const [password,     setPassword]     = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading,      setLoading]      = useState(false);
-  const [error,        setError]        = useState("");
+  const [mode,          setMode]          = useState("login"); // "login" | "register" | "forgot"
+  const [username,      setUsername]      = useState("");
+  const [password,      setPassword]      = useState("");
+  const [showPassword,  setShowPassword]  = useState(false);
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState("");
+  // Subscription payment state (shown when login returns 402)
+  const [subStripePromise, setSubStripePromise] = useState(null);
+  const [subClientSecret,  setSubClientSecret]  = useState(null);
 
   const handleLogin = async (e) => {
     if (e) e.preventDefault();
-    setError("");
+    setError(""); setSubStripePromise(null); setSubClientSecret(null);
     setLoading(true);
     try {
       const res = await authApi.login(username, password);
       onLogin(res.data.token, res.data.user, res.data.required_version, res.data.download_url);
     } catch (err) {
-      setError(err.response?.data?.error || "Connection failed. Check that the server is running.");
+      if (err.response?.status === 402) {
+        const { client_secret, publishable_key, message } = err.response.data || {};
+        setError(message || "An active subscription is required.");
+        if (client_secret && publishable_key) {
+          setSubStripePromise(loadStripe(publishable_key));
+          setSubClientSecret(client_secret);
+        }
+      } else {
+        setError(err.response?.data?.error || "Connection failed. Check that the server is running.");
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  async function handleSubscriptionSuccess() {
+    setSubStripePromise(null);
+    setSubClientSecret(null);
+    setError("");
+    // Re-attempt login now that subscription is active
+    await handleLogin(null);
+  }
 
   // Expand card for register / forgot flows
   const isExpanded = mode === "register" || mode === "forgot";
@@ -593,8 +673,37 @@ export default function Login({ onLogin }) {
               </div>
 
               {error && (
-                <div className="flex items-start gap-2 bg-red-900/40 border border-red-700 text-red-300 rounded-xl px-4 py-3 mb-5 text-sm">
-                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><span>{error}</span>
+                <div className="mb-5 space-y-3">
+                  <div className="flex items-start gap-2 bg-red-900/40 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><span>{error}</span>
+                  </div>
+                  {subStripePromise && subClientSecret && (
+                    <div className="space-y-2">
+                      <p className="text-slate-400 text-xs">Enter your card to activate your subscription:</p>
+                      <Elements
+                        stripe={subStripePromise}
+                        options={{
+                          clientSecret: subClientSecret,
+                          appearance: {
+                            theme: "night",
+                            variables: {
+                              colorPrimary: "#6366f1",
+                              colorBackground: "#0f172a",
+                              colorText: "#f1f5f9",
+                              colorDanger: "#ef4444",
+                              fontFamily: "Segoe UI, Arial, sans-serif",
+                              borderRadius: "12px",
+                            },
+                          },
+                        }}
+                      >
+                        <StripePaymentForm
+                          onSuccess={handleSubscriptionSuccess}
+                          priceLabel="Subscribe — $5.00/mo"
+                        />
+                      </Elements>
+                    </div>
+                  )}
                 </div>
               )}
 

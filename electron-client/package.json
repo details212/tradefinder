@@ -1,6 +1,6 @@
 {
   "name": "tradefinder",
-  "version": "0.48.0",
+  "version": "0.49.0",
   "description": "TradeFinder – Stock market data viewer",
   "main": "electron/main.js",
   "scripts": {
@@ -16,6 +16,8 @@
   "author": "TradeFinder",
   "license": "MIT",
   "dependencies": {
+    "@stripe/react-stripe-js": "^6.3.0",
+    "@stripe/stripe-js": "^9.4.0",
     "axios": "^1.7.2",
     "date-fns": "^3.6.0",
     "highcharts": "^12.5.0",

@@ -266,8 +266,9 @@ export default function Dashboard({ user, onLogout }) {
   const [watchlistItems,   setWatchlistItems]    = useState([]);      // full objects
   const [watchlistPrices,  setWatchlistPrices]   = useState({});      // { AAPL: { price, change_pct } }
   const [loadingWatchlist, setLoadingWatchlist]  = useState(true);
-  const [activeView,       setActiveView]        = useState("stocks");
-  const [brokerStatus,     setBrokerStatus]      = useState(null); // null | { ok, paper }
+  const [activeView,             setActiveView]             = useState("stocks");
+  const [brokerStatus,           setBrokerStatus]           = useState(null); // null | { ok, paper }
+  const [patternAnalysisEnabled, setPatternAnalysisEnabled] = useState(false);
   /** Sidebar → Trade Ideas chart modal (key bumps so same ticker re-opens) */
   const [tradeIdeasOpenChart, setTradeIdeasOpenChart] = useState(null);
   /** Sidebar → Pattern Analysis chart modal */
@@ -382,6 +383,7 @@ export default function Dashboard({ user, onLogout }) {
         hiddenStrategies: hidden,
         soundEnabled:     p.stream_sound_enabled === "true",
       };
+      setPatternAnalysisEnabled(p.pattern_analysis === "1");
       if (andRepoll) pollLiveStream();
     } catch { /* non-fatal — keep existing prefs */ }
   }, [pollLiveStream]);
@@ -676,17 +678,19 @@ export default function Dashboard({ user, onLogout }) {
             <Lightbulb className="w-4 h-4" />
             Trade Ideas
           </button>
-          <button
-            onClick={() => setActiveView("patternanalysis")}
-            className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeView === "patternanalysis"
-                ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            Pattern Analysis
-          </button>
+          {patternAnalysisEnabled && (
+            <button
+              onClick={() => setActiveView("patternanalysis")}
+              className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeView === "patternanalysis"
+                  ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+              }`}
+            >
+              <TrendingUp className="w-4 h-4" />
+              Pattern Analysis
+            </button>
+          )}
           <button
             onClick={() => setActiveView("brokerage")}
             className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${

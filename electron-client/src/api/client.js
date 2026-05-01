@@ -188,6 +188,25 @@ export const resourcesApi = {
   status: () => api.get("/api/resources/status"),
 };
 
+// ── Stripe / Billing ──────────────────────────────────────────────────────────
+export const stripeApi = {
+  /** Returns { publishable_key } for initialising Stripe.js. */
+  getConfig: () =>
+    api.get("/api/stripe/config"),
+  /** Create a SetupIntent to collect card details. Returns { client_secret, publishable_key, mode }. */
+  createSubscription: () =>
+    api.post("/api/stripe/create-subscription"),
+  /** After SetupIntent confirmation, create the subscription server-side. */
+  confirmSetup: (setup_intent_id, payment_method_id) =>
+    api.post("/api/stripe/confirm-setup", { setup_intent_id, payment_method_id }),
+  /** Create a Stripe Customer Portal session. Returns { url } — open in system browser. */
+  getBillingPortal: () =>
+    api.post("/api/stripe/billing-portal"),
+  /** Poll subscription status for the authenticated user. Returns { status, period_end, active }. */
+  getSubscriptionStatus: () =>
+    api.get("/api/stripe/subscription-status"),
+};
+
 // ── Pattern Analysis Scanner ──────────────────────────────────────────────────
 export const scannerApi = {
   dates: ()       => api.get("/api/scanner/dates"),
