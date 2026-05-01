@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 @layer base {
+  /* Tailwind preflight strips the browser UA display:none on <script>/<style>;
+     restore it so dynamically-injected scripts (e.g. Stripe.js) stay invisible. */
+  script, style, link { display: none !important; }
+
   html, body, #root {
     height: 100%;
     margin: 0;
