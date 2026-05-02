@@ -1381,28 +1381,15 @@ Trade closed: ${fmtTs(order.synced_at)}
 `;
 
     try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-5.4-mini",
-          messages: [{ role: "user", content: prompt }],
-          max_completion_tokens: 800,
-          temperature: 0.4,
-        }),
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody?.error?.message || `OpenAI error ${res.status}`);
-      }
-      const data = await res.json();
+      const { data } = await aiApi.chat(
+        [{ role: "user", content: prompt }],
+        { model: "gpt-4o-mini", max_completion_tokens: 800, temperature: 0.4 },
+      );
       const text = data.choices?.[0]?.message?.content?.trim() ?? "No response returned.";
       setAiAnalysis({ text });
     } catch (err) {
-      setAiAnalysis({ error: err.message || "Failed to fetch AI analysis." });
+      const msg = err.response?.data?.error?.message || err.message || "Failed to fetch AI analysis.";
+      setAiAnalysis({ error: msg });
     }
   }, [order, rr, slippage, effectiveRR, exitType, rAchieved, tradeDuration,
       closedPl, closedPctChange, isClosedWin, isBreakeven]);

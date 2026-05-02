@@ -198,6 +198,9 @@ export const aiApi = {
   /** GET /api/ai/tts/:id — poll a Replicate prediction */
   pollTts: (predictionId) =>
     api.get(`/api/ai/tts/${predictionId}`),
+  /** POST /api/ai/chat — proxies OpenAI chat completions (key stays on server) */
+  chat: (messages, opts = {}) =>
+    api.post("/api/ai/chat", { messages, ...opts }, { timeout: 60_000 }),
 };
 
 // ── Stripe / Billing ──────────────────────────────────────────────────────────
