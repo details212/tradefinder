@@ -171,8 +171,10 @@ export const alpacaApi = {
   patchLevels:     (dbOrderId, data) => api.patch(`/api/broker/alpaca/order/${dbOrderId}/levels`, data),
   getOrderDetail:  (alpacaId)    => api.get(`/api/broker/alpaca/order/${alpacaId}`),
   getOrders:       (ticker = "") => api.get("/api/broker/alpaca/orders", { params: ticker ? { ticker } : {} }),
-  syncOrders:      ()            => api.post("/api/broker/alpaca/orders/sync"),
-  openTickers:     ()            => api.get("/api/broker/alpaca/orders/open-tickers"),
+  syncOrders:           ()               => api.post("/api/broker/alpaca/orders/sync"),
+  openTickers:          ()               => api.get("/api/broker/alpaca/orders/open-tickers"),
+  fixExitMethod:        (dbOrderId)      => api.patch(`/api/broker/alpaca/order/${dbOrderId}/exit-method`),
+  backfillExitMethods:  ()               => api.post("/api/broker/alpaca/orders/backfill-exit-method"),
 };
 
 // ── User preferences (per-user key/value store) ───────────────────────────────
@@ -186,6 +188,16 @@ export const preferencesApi = {
 // ── Resource status ───────────────────────────────────────────────────────────
 export const resourcesApi = {
   status: () => api.get("/api/resources/status"),
+};
+
+// ── AI proxy (TTS via Replicate, analysis via OpenAI) ────────────────────────
+export const aiApi = {
+  /** POST /api/ai/tts — proxies Replicate MiniMax Speech 2.8 Turbo */
+  tts: (text, opts = {}) =>
+    api.post("/api/ai/tts", { text, ...opts }, { timeout: 90_000 }),
+  /** GET /api/ai/tts/:id — poll a Replicate prediction */
+  pollTts: (predictionId) =>
+    api.get(`/api/ai/tts/${predictionId}`),
 };
 
 // ── Stripe / Billing ──────────────────────────────────────────────────────────

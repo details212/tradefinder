@@ -488,6 +488,8 @@ export default function AdminPanel({ user }) {
   const [lastSyncedAt,  setLastSyncedAt]  = useState(null);
   const [ordersPage,    setOrdersPage]    = useState(0);
   const [ordersFilter,  setOrdersFilter]  = useState("open"); // "open" | "closed"
+  const [backfilling,   setBackfilling]   = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null); // null | { updated, skipped, errors }
   const [reviewOrder,   setReviewOrder]   = useState(null);
   const [snapshotPrices, setSnapshotPrices] = useState({}); // ticker → { price, change_pct } from /api/snapshots/prices
   const OPEN_ORDERS_PER_PAGE   = 40;
@@ -611,7 +613,7 @@ export default function AdminPanel({ user }) {
                   {["open", "closed"].map(f => (
                     <button
                       key={f}
-                      onClick={() => { setOrdersFilter(f); setOrdersPage(0); }}
+                      onClick={() => { setOrdersFilter(f); setOrdersPage(0); setBackfillResult(null); }}
                       className={`px-3 py-1 capitalize transition ${
                         ordersFilter === f
                           ? "bg-brand-500/20 text-brand-400"
@@ -620,6 +622,45 @@ export default function AdminPanel({ user }) {
                     >{f}</button>
                   ))}
                 </span>
+
+                {/* Backfill exit methods — only shown on closed tab */}
+                {ordersFilter === "closed" && (
+                  <span className="flex items-center gap-1.5">
+                    <button
+                      onClick={async () => {
+                        setBackfilling(true);
+                        setBackfillResult(null);
+                        try {
+                          const res = await alpacaApi.backfillExitMethods();
+                          setBackfillResult(res.data);
+                          if (res.data.updated > 0) syncOrders(true);
+                        } catch (err) {
+                          setBackfillResult({ error: err?.response?.data?.error || "Backfill failed" });
+                        } finally {
+                          setBackfilling(false);
+                        }
+                      }}
+                      disabled={backfilling}
+                      title="Detect missing exit methods for all closed trades by querying Alpaca"
+                      className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-slate-700/50 bg-slate-800/50 text-slate-400 hover:text-amber-300 hover:border-amber-700/50 hover:bg-amber-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    >
+                      {backfilling
+                        ? <><Loader2 className="w-3 h-3 animate-spin" /> Detecting…</>
+                        : <><RefreshCw className="w-3 h-3" /> Fix Unknown Exits</>
+                      }
+                    </button>
+                    {backfillResult && !backfillResult.error && (
+                      <span className="text-[10px] text-emerald-400/80">
+                        {backfillResult.updated > 0
+                          ? `${backfillResult.updated} updated`
+                          : "Nothing to fix"}
+                      </span>
+                    )}
+                    {backfillResult?.error && (
+                      <span className="text-[10px] text-red-400/80">{backfillResult.error}</span>
+                    )}
+                  </span>
+                )}
 
                 {ordersLoading && (
                   <span className="flex items-center gap-1">

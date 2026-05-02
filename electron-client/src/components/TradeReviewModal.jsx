@@ -7,8 +7,8 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
-import { stockApi, alpacaApi } from "../api/client";
-import { Loader2, AlertCircle, AlertTriangle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check } from "lucide-react";
+import { stockApi, alpacaApi, aiApi } from "../api/client";
+import { Loader2, AlertCircle, AlertTriangle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check, ClipboardList, Sparkles, Volume2, VolumeX, Square } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
@@ -559,6 +559,198 @@ function ExitMethodBadge({ method }) {
   );
 }
 
+// ── Forensic Digest ───────────────────────────────────────────────────────────
+// Full table of every metric collected for a closed trade: planned vs actual
+// pricing, slippage breakdown, P/L derivation, risk parameters, timestamps.
+function DigestSection({ title, children }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[8px] font-bold uppercase tracking-[0.22em] text-slate-600 pb-1 mb-1 border-b border-slate-800/70">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function DigestRow({ label, value, color, italic }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2 py-[2.5px] border-b border-slate-800/30 last:border-0">
+      <span className="text-[10px] text-slate-500 shrink-0 leading-snug">{label}</span>
+      <span className={`font-mono text-[11px] text-right leading-snug break-all ${color ?? "text-slate-200"} ${italic ? "italic" : ""}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function TradeForensicDigest({
+  order, rr, slippage, effectiveRR, rAchieved, tradeDuration,
+  closedPl, closedPctChange, exitType, isClosedWin, isBreakeven,
+}) {
+  const isLong = order.direction === "long";
+
+  const fmtTs = (v) => {
+    if (!v) return "—";
+    try {
+      const ms = typeof v === "number" ? v : new Date(v.endsWith("Z") ? v : v + "Z").getTime();
+      return etTime.dateFormat("%b %e %Y, %H:%M ET", ms);
+    } catch { return String(v); }
+  };
+
+  const slipClr = (v) =>
+    v == null ? "text-slate-400" : v > 0.005 ? "text-red-400" : v < -0.005 ? "text-emerald-400" : "text-slate-400";
+  const plClr = (v) =>
+    v == null ? "text-slate-400" : v > 0.005 ? "text-emerald-400" : v < -0.005 ? "text-red-400" : "text-slate-400";
+  const sign$ = (v, d = 2) =>
+    v != null ? `${Number(v) >= 0 ? "+" : "−"}$${Math.abs(Number(v)).toFixed(d)}` : "—";
+  const signN = (v, d = 4) =>
+    v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(d)}` : "—";
+
+  // Entry fill color: bad if fill is worse than chart entry for the direction
+  const entryFillClr = (() => {
+    if (rr?.fillPrice == null || rr?.entry == null) return "text-slate-200";
+    const diff = isLong ? rr.fillPrice - rr.entry : rr.entry - rr.fillPrice;
+    return diff > 0.005 ? "text-red-400" : diff < -0.005 ? "text-emerald-400" : "text-slate-300";
+  })();
+
+  return (
+    <div className="border-b border-slate-700/80 bg-[#070d19] shrink-0 overflow-y-auto" style={{ maxHeight: "310px" }}>
+      {/* Digest header */}
+      <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/80 bg-slate-950/60 sticky top-0">
+        <ClipboardList className="w-3 h-3 text-slate-500" />
+        <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">Forensic Trade Digest</span>
+        <span className="text-[9px] text-slate-600 ml-1">— every recorded &amp; derived metric</span>
+      </div>
+
+      {/* 4-column grid */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 divide-x divide-slate-800/50">
+
+        {/* ── Col 1: Identity + Setup ── */}
+        <div className="px-4 py-3 flex flex-col gap-4">
+          <DigestSection title="Trade Identity">
+            <DigestRow label="DB Order ID"     value={order.id ?? "—"} color="text-slate-400" />
+            <DigestRow label="Alpaca Order ID" value={order.alpaca_order_id ?? "—"} color="text-slate-400" />
+            <DigestRow label="Ticker"          value={order.ticker ?? "—"} color="text-brand-400" />
+            <DigestRow label="Direction"       value={isLong ? "Long  ↑" : "Short ↓"} color={isLong ? "text-emerald-400" : "text-red-400"} />
+            <DigestRow label="Mode"            value={order.paper_mode ? "Paper" : "Live"} color={order.paper_mode ? "text-blue-400" : "text-slate-300"} />
+            <DigestRow label="Status"          value={order.status ?? "—"} />
+          </DigestSection>
+          <DigestSection title="Setup Metadata">
+            <DigestRow label="Signal Bar"      value={order.bar_time ?? "—"} color="text-slate-400" />
+            <DigestRow label="Threshold Ref"   value={order.threshold != null ? `$${Number(order.threshold).toFixed(2)}` : "—"} color="text-fuchsia-400" />
+            <DigestRow label="Entry Time"      value={fmtTs(order.entry_time)} color="text-slate-400" />
+          </DigestSection>
+        </div>
+
+        {/* ── Col 2: Order Parameters + Execution ── */}
+        <div className="px-4 py-3 flex flex-col gap-4">
+          <DigestSection title="Order Parameters (Requested)">
+            <DigestRow label="Entry Limit"               value={order.entry_price != null ? `$${Number(order.entry_price).toFixed(2)}` : "—"} color="text-blue-300" />
+            <DigestRow label="Stop Price"                value={order.stop_price != null  ? `$${Number(order.stop_price).toFixed(2)}`  : "—"} color="text-red-400" />
+            <DigestRow label="Target Price"              value={order.target_price != null ? `$${Number(order.target_price).toFixed(2)}` : "—"} color="text-emerald-400" />
+            <DigestRow label="Qty (ordered)"             value={String(order.qty ?? "—")} />
+            <DigestRow label="Risk to Reward (planned)"  value={order.rr_ratio != null ? Number(order.rr_ratio).toFixed(2) : "—"} />
+            <DigestRow label="Risk to Reward (effective)" value={order.rr_ratio_effective != null ? Number(order.rr_ratio_effective).toFixed(2) : "—"} />
+            <DigestRow label="Risk Amount"               value={order.risk_amt != null  ? `$${Number(order.risk_amt).toFixed(2)}`  : "—"} color="text-red-400" />
+            <DigestRow label="Reward Amount"             value={order.reward_amt != null ? `$${Number(order.reward_amt).toFixed(2)}` : "—"} color="text-emerald-400" />
+          </DigestSection>
+          <DigestSection title="Execution (Actual Fills)">
+            <DigestRow label="Chart Entry"     value={rr?.entry != null ? `$${rr.entry.toFixed(2)}` : "—"} color="text-slate-300" />
+            <DigestRow label="Entry Fill"      value={rr?.fillPrice != null ? `$${Number(rr.fillPrice).toFixed(2)}` : "—"} color={entryFillClr} />
+            <DigestRow label="Fill vs Limit"   value={slippage?.fillVsLimitPerShare != null ? `${signN(slippage.fillVsLimitPerShare)}/sh` : "—"} color={slipClr(slippage?.fillVsLimitPerShare)} />
+            <DigestRow label="Exit Fill"       value={rr?.exitPrice != null ? `$${Number(rr.exitPrice).toFixed(2)}` : "—"} color={isClosedWin ? "text-emerald-400" : "text-red-400"} />
+            <DigestRow label="Exit Reference"  value={exitType === "target" ? `$${rr?.target?.toFixed(2)} (target)` : exitType === "stop" ? `$${rr?.stop?.toFixed(2)} (stop)` : "—"} color="text-slate-400" />
+            <DigestRow label="Qty (filled)"    value={rr?.qty != null ? String(rr.qty) : "—"} />
+          </DigestSection>
+        </div>
+
+        {/* ── Col 3: Slippage + Outcome ── */}
+        <div className="px-4 py-3 flex flex-col gap-4">
+          <DigestSection title="Slippage Analysis">
+            <DigestRow label="Entry Slip/sh"   value={slippage?.entryCostPerShare != null ? `${signN(slippage.entryCostPerShare)}/sh` : "—"} color={slipClr(slippage?.entryCostPerShare)} />
+            <DigestRow label="Entry Slip $"    value={slippage?.entryCostDollar != null ? sign$(slippage.entryCostDollar) : "—"} color={slipClr(slippage?.entryCostDollar)} />
+            <DigestRow label="Fill vs Limit/sh" value={slippage?.fillVsLimitPerShare != null ? `${signN(slippage.fillVsLimitPerShare)}/sh` : "—"} color={slipClr(slippage?.fillVsLimitPerShare)} />
+            <DigestRow label="Exit Slip/sh"    value={slippage?.exitCostPerShare != null ? `${signN(slippage.exitCostPerShare)}/sh` : slippage?.hasExitRef === false ? "n/a (manual)" : "—"} color={slippage?.exitCostPerShare != null ? slipClr(slippage.exitCostPerShare) : "text-slate-600"} italic={slippage?.exitCostPerShare == null} />
+            <DigestRow label="Exit Slip $"     value={slippage?.exitCostDollar != null ? sign$(slippage.exitCostDollar) : "—"} color={slipClr(slippage?.exitCostDollar)} />
+            <DigestRow label="Round-trip $"    value={slippage?.totalCostDollar != null ? sign$(slippage.totalCostDollar) : "—"} color={slipClr(slippage?.totalCostDollar)} />
+            <DigestRow label="Slip % of Risk"  value={slippage?.pctOfRisk != null ? `${slippage.pctOfRisk > 0 ? "+" : ""}${slippage.pctOfRisk.toFixed(2)}%` : "—"} color={slippage?.pctOfRisk != null ? (slippage.pctOfRisk > 5 ? "text-red-400" : slippage.pctOfRisk < -5 ? "text-emerald-400" : "text-slate-400") : "text-slate-400"} />
+          </DigestSection>
+          <DigestSection title="Outcome &amp; Profit and Loss">
+            <DigestRow label="Profit and Loss"  value={closedPl != null ? sign$(closedPl) : "—"} color={plClr(closedPl)} />
+            <DigestRow label="% Change"        value={closedPctChange != null ? `${closedPctChange >= 0 ? "+" : ""}${closedPctChange.toFixed(3)}%` : "—"} color={plClr(closedPctChange)} />
+            <DigestRow label="R Achieved"      value={rAchieved != null ? `${rAchieved >= 0 ? "+" : ""}${rAchieved.toFixed(3)}R` : "—"} color={plClr(rAchieved)} />
+            <DigestRow label="Outcome"         value={isBreakeven ? "Breakeven" : isClosedWin ? "Win" : "Loss"} color={isBreakeven ? "text-slate-300" : isClosedWin ? "text-emerald-400" : "text-red-400"} />
+            <DigestRow label="Exit Category"   value={exitType === "target" ? "Target Hit" : exitType === "stop" ? "Stopped Out" : exitType === "manual" ? "Manual Exit" : "—"} />
+            <DigestRow label="Exit Method (raw)" value={order.exit_method ?? "—"} color="text-slate-400" />
+            <DigestRow label="Duration"        value={tradeDuration ?? "—"} />
+          </DigestSection>
+          <DigestSection title="Close Mechanism">
+            {(() => {
+              const m = order.exit_method;
+              const meta = m ? EXIT_METHOD_META[m] : null;
+              const isBracket   = m === "bracket_tp"    || m === "bracket_sl";
+              const isAutoClose = m === "auto_close_tp" || m === "auto_close_sl";
+              const isManual    = m === "manual";
+              const executor = isBracket   ? "Alpaca broker (bracket order)"
+                             : isAutoClose ? "TradeFinder automation service"
+                             : isManual    ? "Trader (manual close)"
+                             : "Unknown";
+              const executorColor = isBracket   ? "text-blue-400"
+                                  : isAutoClose ? "text-amber-400"
+                                  : isManual    ? "text-slate-300"
+                                  : "text-slate-600";
+              const sideColor = (m === "bracket_tp" || m === "auto_close_tp") ? "text-emerald-400"
+                              : (m === "bracket_sl" || m === "auto_close_sl") ? "text-red-400"
+                              : "text-slate-400";
+              return (
+                <>
+                  <DigestRow label="Closed by"     value={executor} color={executorColor} />
+                  <DigestRow label="TP or SL side" value={
+                    m === "bracket_tp"    ? "Take-profit hit" :
+                    m === "auto_close_tp" ? "Take-profit breach ×3" :
+                    m === "bracket_sl"    ? "Stop-loss hit" :
+                    m === "auto_close_sl" ? "Stop-loss breach ×3" :
+                    isManual              ? "N/A (manual)" : "—"
+                  } color={sideColor} />
+                  <DigestRow label="How it works"  value={meta?.desc ?? "—"} color="text-slate-400" italic />
+                  {isBracket && (
+                    <DigestRow label="Bracket type"  value="Native OCO bracket — broker fills TP/SL leg when price reaches level" color="text-slate-500" italic />
+                  )}
+                  {isAutoClose && (
+                    <DigestRow label="Auto-close"    value="System polled price, detected ≥3 consecutive level breaches, sent market order to Alpaca" color="text-slate-500" italic />
+                  )}
+                </>
+              );
+            })()}
+          </DigestSection>
+        </div>
+
+        {/* ── Col 4: Risk Parameters + Timestamps ── */}
+        <div className="px-4 py-3 flex flex-col gap-4">
+          <DigestSection title="Risk Parameters">
+            <DigestRow label="Stop Dist/sh"              value={rr ? `$${Math.abs(rr.entry - rr.stop).toFixed(2)}` : "—"} color="text-red-400" />
+            <DigestRow label="Target Dist/sh"            value={rr ? `$${Math.abs(rr.target - rr.entry).toFixed(2)}` : "—"} color="text-emerald-400" />
+            <DigestRow label="Planned Risk"              value={rr ? `$${(Math.abs(rr.entry - rr.stop) * rr.qty).toFixed(2)}` : "—"} color="text-red-400" />
+            <DigestRow label="Planned Reward"            value={rr ? `$${(Math.abs(rr.target - rr.entry) * rr.qty).toFixed(2)}` : "—"} color="text-emerald-400" />
+            <DigestRow label="Effective Risk to Reward"  value={effectiveRR ?? "—"} />
+            <DigestRow label="Risk Amount (stored)"      value={order.risk_amt != null  ? `$${Number(order.risk_amt).toFixed(2)}`  : "—"} color="text-slate-400" />
+            <DigestRow label="Reward Amount (stored)"    value={order.reward_amt != null ? `$${Number(order.reward_amt).toFixed(2)}` : "—"} color="text-slate-400" />
+          </DigestSection>
+          <DigestSection title="Timestamps (ET)">
+            <DigestRow label="Order Created"   value={fmtTs(order.created_at)} color="text-slate-400" />
+            <DigestRow label="Entry Time"      value={fmtTs(order.entry_time)} color="text-slate-400" />
+            <DigestRow label="Close / Sync"    value={fmtTs(order.synced_at)} color="text-slate-400" />
+            <DigestRow label="Close Time (drv)" value={fmtTs(rr?.closeTime)} color="text-slate-400" />
+            <DigestRow label="Signal Bar"      value={order.bar_time ?? "—"} color="text-slate-400" />
+          </DigestSection>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [bars,      setBars]      = useState([]);
@@ -585,6 +777,20 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [editLevelsLoading, setEditLevelsLoading] = useState(false);
   const [editLevelsError,   setEditLevelsError]   = useState(null);
   const [editLevelsSaved,   setEditLevelsSaved]   = useState(false);
+
+  // Forensic digest toggle (closed trades only)
+  const [showDigest, setShowDigest] = useState(false);
+
+  // Exit-method backfill state (for "Unknown" trades)
+  const [fixingExitMethod, setFixingExitMethod]   = useState(false);
+  const [fixExitMethodResult, setFixExitMethodResult] = useState(null); // null | {exit_method, source} | {error}
+
+  // AI trade analysis (closed trades only)
+  const [aiAnalysis, setAiAnalysis] = useState(null); // null | {loading} | {text} | {error}
+
+  // TTS audio playback
+  const [audioState, setAudioState] = useState(null); // null | {loading} | {playing, url} | {error}
+  const audioRef = useRef(null);
 
   // True when the order was opened (created_at) on today's Eastern-Time date.
   const isDayTrade = useMemo(() => {
@@ -1020,13 +1226,26 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   }, [order.entry_time, rr?.closeTime]);
 
   const exitType = useMemo(() => {
-    if (order.is_open || !rr?.exitPrice || !rr?.target || !rr?.stop || !rr?.entry) return null;
+    if (order.is_open) return null;
+
+    // exit_method is the authoritative source — use it first.
+    // bracket_tp / auto_close_tp  → TP side ("target")
+    // bracket_sl / auto_close_sl  → SL side ("stop")
+    // manual                      → manual
+    const m = order.exit_method;
+    if (m === "bracket_tp"    || m === "auto_close_tp") return "target";
+    if (m === "bracket_sl"    || m === "auto_close_sl") return "stop";
+    if (m === "manual") return "manual";
+
+    // Fallback: derive from exit-price proximity for legacy rows that
+    // pre-date exit_method tracking.
+    if (!rr?.exitPrice || !rr?.target || !rr?.stop || !rr?.entry) return null;
     const ep  = Number(rr.exitPrice);
     const tol = Math.max(Math.abs(rr.entry - rr.stop) * 0.10, 0.05);
     if (Math.abs(ep - rr.target) <= tol) return "target";
     if (Math.abs(ep - rr.stop)   <= tol) return "stop";
     return "manual";
-  }, [order.is_open, rr]);
+  }, [order.is_open, order.exit_method, rr]);
 
   const closedPctChange = useMemo(() => {
     if (order.is_open || !rr?.exitPrice || !fillPrice) return null;
@@ -1082,6 +1301,169 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       pctOfRisk,         hasExitRef: refExitPrice != null,
     };
   }, [order.is_open, order.entry_price, rr, exitType, isLong]);
+
+  // ── AI Trade Analysis ─────────────────────────────────────────────────────
+  // Defined after slippage useMemo so it can close over the computed value.
+  const handleAIAnalysis = useCallback(async () => {
+    if (!rr) return;
+    setAiAnalysis({ loading: true });
+
+    const isLongDir = order.direction === "long";
+    const n = (v, d = 2) => v != null ? Number(v).toFixed(d) : "N/A";
+    const s$ = (v, d = 2) => v != null ? `${Number(v) >= 0 ? "+" : "−"}$${Math.abs(Number(v)).toFixed(d)}` : "N/A";
+    const fmtTs = (v) => {
+      if (!v) return "N/A";
+      try {
+        const ms = typeof v === "number" ? v : new Date(v.endsWith("Z") ? v : v + "Z").getTime();
+        return etTime.dateFormat("%b %e %Y %H:%M ET", ms);
+      } catch { return String(v); }
+    };
+
+    const sl = slippage;
+    const plannedRisk$   = rr ? (Math.abs(rr.entry - rr.stop)   * rr.qty).toFixed(2) : "N/A";
+    const plannedReward$ = rr ? (Math.abs(rr.target - rr.entry) * rr.qty).toFixed(2) : "N/A";
+
+    const prompt = `You are a friendly but honest trading coach giving a trader a quick debrief on their just-closed trade. \
+Your tone is warm, clear, and encouraging — like a knowledgeable friend who tells it straight without being harsh. \
+Write 2–3 short paragraphs that give a high-level human summary of the trade: \
+open with what the trader was trying to do and whether the core idea worked out, \
+then highlight what went right (good setup, clean execution, tight slippage, disciplined exit, etc.), \
+and finish with what went wrong or could be improved (bad fill, oversize risk, stop too tight, price moved against them, etc.). \
+If nothing went wrong, say so honestly. If nothing went right beyond following the plan, say that too. \
+Keep it conversational and easy to understand for someone who is not a professional. \
+STRICT STYLE RULES — you must follow these exactly: \
+(a) All dollar amounts must be rounded to exactly 2 decimal places (e.g. $74.35, not $74.3500). \
+(b) Never write "R/R" — always write "Risk to Reward" in full. \
+(c) Never write "P/L" — always write "Profit and Loss" in full. \
+(d) Do not use bullet points — write in flowing prose paragraphs only. \
+(e) Do not start with "This trade" — vary the opening.
+
+=== FORENSIC TRADE DATA ===
+
+IDENTITY
+Ticker: ${order.ticker}  |  Direction: ${isLongDir ? "Long (buy)" : "Short (sell)"}  |  Mode: ${order.paper_mode ? "Paper" : "Live"}  |  Status: ${order.status ?? "N/A"}
+
+ORDER PARAMETERS (what was requested)
+Entry Limit Price: $${n(order.entry_price)}
+Stop Price: $${n(order.stop_price)}
+Target Price: $${n(order.target_price)}
+Quantity: ${order.qty ?? "N/A"} shares
+Planned Risk to Reward: ${n(order.rr_ratio)}  |  Effective Risk to Reward: ${effectiveRR ?? "N/A"}
+Planned Risk: $${plannedRisk$}  |  Planned Reward: $${plannedReward$}
+
+EXECUTION (what actually happened)
+Chart Entry (bar close): $${n(rr.entry)}
+Entry Fill Price: $${rr.fillPrice != null ? n(rr.fillPrice) : "N/A"}
+Fill vs Limit delta: ${sl?.fillVsLimitPerShare != null ? `${sl.fillVsLimitPerShare > 0 ? "+" : ""}${sl.fillVsLimitPerShare.toFixed(2)}/sh` : "N/A"}
+Exit Fill Price: $${rr.exitPrice != null ? n(rr.exitPrice) : "N/A"}
+Exit Reference: ${exitType === "target" ? `$${n(rr.target)} (take-profit target)` : exitType === "stop" ? `$${n(rr.stop)} (stop-loss)` : "manual — no clean reference"}
+
+SLIPPAGE ANALYSIS
+Entry slippage vs chart entry: ${sl?.entryCostPerShare != null ? `${sl.entryCostPerShare > 0 ? "+" : ""}${sl.entryCostPerShare.toFixed(2)}/sh (${s$(sl.entryCostDollar)} total)` : "N/A"}
+Entry fill vs submitted limit: ${sl?.fillVsLimitPerShare != null ? `${sl.fillVsLimitPerShare > 0 ? "+" : ""}${sl.fillVsLimitPerShare.toFixed(2)}/sh` : "N/A"}
+Exit slippage vs reference: ${sl?.exitCostPerShare != null ? `${sl.exitCostPerShare > 0 ? "+" : ""}${sl.exitCostPerShare.toFixed(2)}/sh (${s$(sl.exitCostDollar)} total)` : sl?.hasExitRef === false ? "N/A (manual exit, no reference)" : "N/A"}
+Round-trip slippage cost: ${sl?.totalCostDollar != null ? s$(sl.totalCostDollar) : "N/A"}
+Slippage as % of planned risk: ${sl?.pctOfRisk != null ? `${sl.pctOfRisk.toFixed(2)}%` : "N/A"}
+
+OUTCOME & PROFIT AND LOSS
+Final Realized Profit and Loss: ${closedPl != null ? s$(closedPl) : "N/A"}
+% Change (fill to exit): ${closedPctChange != null ? `${closedPctChange >= 0 ? "+" : ""}${closedPctChange.toFixed(2)}%` : "N/A"}
+Risk Units Achieved: ${rAchieved != null ? `${rAchieved >= 0 ? "+" : ""}${rAchieved.toFixed(2)}R` : "N/A"}
+Outcome: ${isBreakeven ? "Breakeven" : isClosedWin ? "WIN" : "LOSS"}
+Exit Category: ${exitType === "target" ? "Target Hit" : exitType === "stop" ? "Stopped Out (stop-loss triggered)" : exitType === "manual" ? "Manual Exit" : "Unknown"}
+Exit Method: ${order.exit_method ?? "N/A"}
+Trade Duration: ${tradeDuration ?? "N/A"}
+
+TIMESTAMPS
+Order placed: ${fmtTs(order.created_at)}
+Entry filled: ${fmtTs(order.entry_time)}
+Trade closed: ${fmtTs(order.synced_at)}
+`;
+
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-5.4-mini",
+          messages: [{ role: "user", content: prompt }],
+          max_completion_tokens: 800,
+          temperature: 0.4,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody?.error?.message || `OpenAI error ${res.status}`);
+      }
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content?.trim() ?? "No response returned.";
+      setAiAnalysis({ text });
+    } catch (err) {
+      setAiAnalysis({ error: err.message || "Failed to fetch AI analysis." });
+    }
+  }, [order, rr, slippage, effectiveRR, exitType, rAchieved, tradeDuration,
+      closedPl, closedPctChange, isClosedWin, isBreakeven]);
+
+  // ── Text-to-Speech (Replicate / MiniMax Speech 2.8 Turbo) ─────────────────
+  const stopAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+    setAudioState(prev => prev?.url ? { ...prev, playing: false } : null);
+  }, []);
+
+  const handleTTS = useCallback(async (text) => {
+    stopAudio();
+    setAudioState({ loading: true });
+    try {
+      const res = await aiApi.tts(text, { voice_id: "English_MatureBoss", speed: 1.0, emotion: "neutral" });
+      let prediction = res.data;
+
+      // If Prefer:wait timed out server-side, poll until complete
+      while (prediction.status === "starting" || prediction.status === "processing") {
+        await new Promise(r => setTimeout(r, 1200));
+        const poll = await aiApi.pollTts(prediction.id);
+        prediction = poll.data;
+      }
+      if (prediction.status === "failed") {
+        throw new Error(prediction.error || "Speech generation failed");
+      }
+
+      const audioUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+      if (!audioUrl) throw new Error("No audio URL returned from Replicate");
+
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      audio.onended = () => setAudioState({ url: audioUrl, playing: false });
+      audio.onerror = () => setAudioState({ url: audioUrl, playing: false, error: "Playback error" });
+      setAudioState({ url: audioUrl, playing: true });
+      await audio.play();
+    } catch (err) {
+      const msg = err?.response?.data?.error || err?.response?.data?.detail || err.message || "TTS failed";
+      setAudioState({ error: msg });
+    }
+  }, [stopAudio]);
+
+  // Auto-play TTS whenever a fresh AI analysis text arrives
+  useEffect(() => {
+    if (aiAnalysis?.text) {
+      handleTTS(aiAnalysis.text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiAnalysis?.text]);
+
+  // Stop audio when AI panel is dismissed
+  useEffect(() => {
+    if (!aiAnalysis) stopAudio();
+  }, [aiAnalysis, stopAudio]);
+
+  // Cleanup on modal unmount
+  useEffect(() => () => stopAudio(), [stopAudio]);
 
   return (
     <div
@@ -1618,10 +2000,233 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
                 <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500 mb-2">
                   Exit Method
                 </span>
-                <ExitMethodBadge method={order.exit_method} />
+                <ExitMethodBadge method={fixExitMethodResult?.exit_method ?? order.exit_method} />
+
+                {/* Backfill button — only shown when exit_method is unrecorded */}
+                {!order.exit_method && !fixExitMethodResult?.exit_method && (
+                  <button
+                    onClick={async () => {
+                      setFixingExitMethod(true);
+                      setFixExitMethodResult(null);
+                      try {
+                        const res = await alpacaApi.fixExitMethod(order.id);
+                        setFixExitMethodResult(res.data);
+                        // Patch the local order object so badge + digest both update
+                        if (res.data.exit_method) order.exit_method = res.data.exit_method;
+                      } catch (err) {
+                        setFixExitMethodResult({ error: err?.response?.data?.error || "Failed to detect exit method" });
+                      } finally {
+                        setFixingExitMethod(false);
+                      }
+                    }}
+                    disabled={fixingExitMethod}
+                    className="mt-2 flex items-center gap-1 text-[9px] text-amber-400/80 hover:text-amber-300 border border-amber-700/40 hover:border-amber-600 bg-amber-900/20 hover:bg-amber-900/30 rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {fixingExitMethod
+                      ? <><Loader2 className="w-2.5 h-2.5 animate-spin" /> Detecting…</>
+                      : <><RefreshCw className="w-2.5 h-2.5" /> Detect from Alpaca</>
+                    }
+                  </button>
+                )}
+                {fixExitMethodResult?.error && (
+                  <span className="mt-1 text-[9px] text-red-400/80">{fixExitMethodResult.error}</span>
+                )}
+                {fixExitMethodResult?.exit_method && (
+                  <span className="mt-1 text-[9px] text-emerald-400/70 italic">
+                    {fixExitMethodResult.source === "inferred" ? "Detected & saved" : "Saved"}
+                  </span>
+                )}
               </div>
             )}
 
+            {/* Forensic Digest + AI Analysis toggles */}
+            {!order.is_open && (
+              <div className="flex items-center gap-2 px-4 py-3 shrink-0 border-l border-slate-700/50 ml-auto">
+                {/* Digest toggle */}
+                <div className="flex flex-col items-center gap-1">
+                  <button
+                    onClick={() => setShowDigest(v => !v)}
+                    className={`flex items-center gap-1.5 text-[10px] font-semibold px-3 py-1.5 rounded border transition-colors ${
+                      showDigest
+                        ? "bg-indigo-900/50 border-indigo-600/60 text-indigo-300 hover:bg-indigo-900/70"
+                        : "bg-slate-800/60 border-slate-600/50 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200"
+                    }`}
+                  >
+                    <ClipboardList className="w-3 h-3" />
+                    {showDigest ? "Hide Digest" : "Trade Digest"}
+                  </button>
+                </div>
+
+                {/* AI Analysis button */}
+                <div className="flex flex-col items-center gap-1">
+                  <button
+                    onClick={() => {
+                      if (aiAnalysis?.text || aiAnalysis?.error) {
+                        setAiAnalysis(null);
+                      } else {
+                        handleAIAnalysis();
+                      }
+                    }}
+                    disabled={aiAnalysis?.loading}
+                    className={`flex items-center gap-1.5 text-[10px] font-semibold px-3 py-1.5 rounded border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                      aiAnalysis?.text
+                        ? "bg-violet-900/50 border-violet-600/60 text-violet-300 hover:bg-violet-900/70"
+                        : aiAnalysis?.error
+                        ? "bg-red-900/40 border-red-700/50 text-red-400 hover:bg-red-900/60"
+                        : "bg-slate-800/60 border-slate-600/50 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200"
+                    }`}
+                  >
+                    {aiAnalysis?.loading
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Sparkles className="w-3 h-3" />
+                    }
+                    {aiAnalysis?.loading ? "Analyzing…"
+                      : aiAnalysis?.text  ? "Hide"
+                      : aiAnalysis?.error ? "Retry"
+                      : "Analysis"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ── CLOSED TRADE: Forensic Digest ── */}
+        {!order.is_open && rr && showDigest && (
+          <TradeForensicDigest
+            order={order}
+            rr={rr}
+            slippage={slippage}
+            effectiveRR={effectiveRR}
+            rAchieved={rAchieved}
+            tradeDuration={tradeDuration}
+            closedPl={closedPl}
+            closedPctChange={closedPctChange}
+            exitType={exitType}
+            isClosedWin={isClosedWin}
+            isBreakeven={isBreakeven}
+          />
+        )}
+
+        {/* ── CLOSED TRADE: AI Analysis panel ── */}
+        {!order.is_open && aiAnalysis && (
+          <div className="border-b border-slate-700/80 bg-[#0a0718] shrink-0 overflow-y-auto" style={{ maxHeight: "280px" }}>
+            {/* Header */}
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/80 bg-slate-950/60 sticky top-0">
+              <Sparkles className="w-3 h-3 text-violet-400" />
+              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-violet-300">AI Trade Analysis</span>
+
+              {/* Audio status indicator */}
+              <div className="flex items-center gap-1.5 ml-3">
+                {audioState?.loading && (
+                  <span className="flex items-center gap-1 text-[9px] text-amber-400/80">
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" /> Generating audio…
+                  </span>
+                )}
+                {audioState?.playing && (
+                  <span className="flex items-center gap-1 text-[9px] text-emerald-400/80 animate-pulse">
+                    <Volume2 className="w-2.5 h-2.5" /> Playing
+                  </span>
+                )}
+                {audioState?.url && !audioState.playing && !audioState.loading && (
+                  <span className="flex items-center gap-1 text-[9px] text-slate-500">
+                    <VolumeX className="w-2.5 h-2.5" /> Audio ready
+                  </span>
+                )}
+                {audioState?.error && (
+                  <span className="flex items-center gap-1 text-[9px] text-red-400/80">
+                    <AlertCircle className="w-2.5 h-2.5" /> Audio error
+                  </span>
+                )}
+              </div>
+
+              {/* Audio controls */}
+              <div className="flex items-center gap-1 ml-1">
+                {audioState?.playing && (
+                  <button
+                    onClick={stopAudio}
+                    title="Stop audio"
+                    className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-red-400 transition-colors px-1.5 py-0.5 rounded border border-slate-700/50 hover:border-red-700/50"
+                  >
+                    <Square className="w-2.5 h-2.5" /> Stop
+                  </button>
+                )}
+                {audioState?.url && !audioState.playing && !audioState.loading && (
+                  <button
+                    onClick={() => {
+                      if (audioRef.current) {
+                        audioRef.current.currentTime = 0;
+                        audioRef.current.play();
+                        setAudioState(prev => ({ ...prev, playing: true }));
+                      } else if (audioState.url) {
+                        const audio = new Audio(audioState.url);
+                        audioRef.current = audio;
+                        audio.onended = () => setAudioState(prev => ({ ...prev, playing: false }));
+                        audio.play();
+                        setAudioState(prev => ({ ...prev, playing: true }));
+                      }
+                    }}
+                    title="Replay audio"
+                    className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-emerald-400 transition-colors px-1.5 py-0.5 rounded border border-slate-700/50 hover:border-emerald-700/50"
+                  >
+                    <Volume2 className="w-2.5 h-2.5" /> Replay
+                  </button>
+                )}
+                {aiAnalysis.text && (
+                  <button
+                    onClick={() => handleTTS(aiAnalysis.text)}
+                    disabled={audioState?.loading}
+                    title="Re-generate audio"
+                    className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-amber-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-0.5 rounded border border-slate-700/50 hover:border-amber-700/50"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" /> New audio
+                  </button>
+                )}
+              </div>
+
+              {aiAnalysis.text && (
+                <button
+                  onClick={handleAIAnalysis}
+                  className="ml-auto flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  <RefreshCw className="w-2.5 h-2.5" /> Regenerate text
+                </button>
+              )}
+            </div>
+
+            {/* Loading */}
+            {aiAnalysis.loading && (
+              <div className="flex items-center gap-2 px-5 py-6 text-slate-500 text-xs">
+                <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
+                <span>Analyzing…</span>
+              </div>
+            )}
+
+            {/* Error */}
+            {aiAnalysis.error && (
+              <div className="flex items-start gap-2 px-5 py-4 text-red-400 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{aiAnalysis.error}</span>
+              </div>
+            )}
+
+            {/* Result — only shown once audio has started (or failed to generate) */}
+            {aiAnalysis.text && (audioState?.playing || audioState?.url || audioState?.error) && (
+              <div className="px-5 py-4 text-[12px] text-slate-300 leading-relaxed space-y-3">
+                {aiAnalysis.text.split(/\n\n+/).map((para, i) => (
+                  <p key={i}>{para}</p>
+                ))}
+              </div>
+            )}
+
+            {/* Waiting for audio — show a holding message */}
+            {aiAnalysis.text && audioState?.loading && (
+              <div className="flex items-center gap-2 px-5 py-6 text-slate-600 text-xs italic">
+                <Volume2 className="w-3.5 h-3.5 text-amber-500/60" />
+                <span>Generating audio — analysis will appear when playback begins…</span>
+              </div>
+            )}
           </div>
         )}
 

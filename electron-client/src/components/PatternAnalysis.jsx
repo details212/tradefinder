@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, cloneElement } from "react";
-import { scannerApi, stockApi } from "../api/client";
+import { scannerApi, stockApi, alpacaApi } from "../api/client";
 import {
   Play,
   RotateCcw,
@@ -158,11 +158,11 @@ const DEFAULT_FILTERS = {
   rsiMax:           "",
   rsiAbove50:       false,
   rsiBelow50:       false,
-  volLabels:        ["XHigh", "High", "Med"],
+  volLabels:        ["XHigh", "High", "Med", "Norm", "Low"],
   volRatioMin:      "",
   pctFromHighMax:   "",
   pctFromLowMin:    "",
-  atrSqueeze:       false,
+  atrSqueeze:       true,
   atrSqueezeBreak:  false,
   atrDeclBarsMin:   "",
   rmv15Compressed:  false,
@@ -216,6 +216,15 @@ export default function PatternAnalysis({ onSelectTicker, openChartRequest, onCo
   const hasAutoScanned = useRef(false);
   const [chartModal,   setChartModal]   = useState(null); // null | { ticker }
   const [chartHeight,  setChartHeight]  = useState(null);
+  const [openTickers,  setOpenTickers]  = useState(new Set());
+
+  const refreshOpenTickers = useCallback(() => {
+    alpacaApi.openTickers()
+      .then(r => setOpenTickers(new Set(r.data.tickers ?? [])))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => { refreshOpenTickers(); }, [refreshOpenTickers]);
   /** Draft in the symbol box vs last-applied value sent to the API */
   const [symbolDraft,    setSymbolDraft]    = useState("");
   const [symbolApplied,  setSymbolApplied]  = useState("");
@@ -500,13 +509,13 @@ export default function PatternAnalysis({ onSelectTicker, openChartRequest, onCo
     if (!filters.aboveSma200)   n++;
     if (filters.rsiAbove50)     n++;
     if (filters.rsiBelow50)     n++;
-    if (filters.atrSqueeze)     n++;
+    if (!filters.atrSqueeze)    n++;
     if (filters.atrSqueezeBreak)n++;
     if (filters.atrDeclBarsMin) n++;
     if (filters.rmv15Compressed)n++;
     if (filters.rsAboveSma50)   n++;
     if (filters.rsBelowSma50)   n++;
-    const defVol = ["XHigh", "High", "Med"];
+    const defVol = ["XHigh", "High", "Med", "Norm", "Low"];
     defVol.forEach((l) => { if (!filters.volLabels.includes(l)) n++; });
     filters.volLabels.forEach((l) => { if (!defVol.includes(l)) n++; });
     return n;
@@ -533,16 +542,19 @@ export default function PatternAnalysis({ onSelectTicker, openChartRequest, onCo
   const cols = [
     {
       key: "ticker", label: "Symbol", sortable: true,
-      cell: (r) => (
-        <td className="px-3 py-2.5">
-          <button
-            onClick={() => setChartModal({ ticker: r.ticker })}
-            className="font-bold text-yellow-400 hover:text-yellow-300 hover:underline text-left transition-colors"
-          >
-            {r.ticker}
-          </button>
-        </td>
-      ),
+      cell: (r) => {
+        const inOpenTrade = openTickers.has(r.ticker);
+        return (
+          <td className="px-3 py-2.5" title={inOpenTrade ? "Trade Currently Open" : undefined}>
+            <button
+              onClick={() => setChartModal({ ticker: r.ticker })}
+              className={`font-bold text-left transition-colors hover:underline ${inOpenTrade ? "opacity-50 text-slate-400 line-through decoration-red-400 decoration-2" : "text-yellow-400 hover:text-yellow-300"}`}
+            >
+              {r.ticker}
+            </button>
+          </td>
+        );
+      },
     },
     {
       key: "bar_date", label: "Date", sortable: true,
@@ -1120,7 +1132,7 @@ export default function PatternAnalysis({ onSelectTicker, openChartRequest, onCo
       {chartModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          onClick={() => setChartModal(null)}
+          onClick={() => { setChartModal(null); refreshOpenTickers(); }}
         >
           <div
             className="relative bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
@@ -1131,7 +1143,7 @@ export default function PatternAnalysis({ onSelectTicker, openChartRequest, onCo
             <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 shrink-0">
               <span className="text-lg font-bold text-yellow-400">{chartModal.ticker}</span>
               <button
-                onClick={() => setChartModal(null)}
+                onClick={() => { setChartModal(null); refreshOpenTickers(); }}
                 className="ml-auto text-slate-500 hover:text-slate-200 transition"
               >
                 <X className="w-5 h-5" />
@@ -1143,7 +1155,7 @@ export default function PatternAnalysis({ onSelectTicker, openChartRequest, onCo
                 <PatternAnalysisChart
                   ticker={chartModal.ticker}
                   height={chartHeight}
-                  onClose={() => setChartModal(null)}
+                  onClose={() => { setChartModal(null); refreshOpenTickers(); }}
                 />
               )}
             </div>

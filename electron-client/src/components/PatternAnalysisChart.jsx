@@ -167,7 +167,7 @@ function buildOptions(ticker, ohlcv, volume, studies, showPanes, rsiCrossUpTs) {
     },
 
     rangeSelector: {
-      selected: 4,
+      selected: 2,
       inputStyle:  { color: C.text,  background: C.surface, border: `1px solid ${C.border}` },
       labelStyle:  { color: C.muted },
       buttonTheme: {
@@ -295,6 +295,9 @@ function buildOptions(ticker, ohlcv, volume, studies, showPanes, rsiCrossUpTs) {
     },
 
     plotOptions: {
+      series: {
+        states: { inactive: { enabled: false } },
+      },
       candlestick: {
         color: C.red, lineColor: C.red, upColor: C.green, upLineColor: C.green,
         dataGrouping: { enabled: false },
@@ -317,8 +320,8 @@ function buildOptions(ticker, ohlcv, volume, studies, showPanes, rsiCrossUpTs) {
       { type: "line", name: "SMA 200", data: st.sma200 || [], yAxis: 0, color: C.red,    lineWidth: 1.5, marker: { enabled: false } },
       { type: "line", name: "EMA 10",  data: st.ema10  || [], yAxis: 0, color: C.green,  lineWidth: 1, marker: { enabled: false } },
       { type: "line", name: "EMA 20",  data: st.ema20  || [], yAxis: 0, color: C.purple, lineWidth: 1, marker: { enabled: false } },
-      { type: "line", name: "52 Week High", data: st.dcUpper || [], yAxis: 0, color: "#2dd4bf", lineWidth: 1, dashStyle: "Dash", marker: { enabled: false } },
-      { type: "line", name: "52 Week Low",  data: st.dcLower || [], yAxis: 0, color: "#2dd4bf", lineWidth: 1, dashStyle: "Dash", marker: { enabled: false } },
+      { type: "line", name: "52 Week High", data: st.dcUpper || [], yAxis: 0, color: "#2dd4bf", lineWidth: 1, dashStyle: "Dash", marker: { enabled: false }, visible: false },
+      { type: "line", name: "52 Week Low",  data: st.dcLower || [], yAxis: 0, color: "#2dd4bf", lineWidth: 1, dashStyle: "Dash", marker: { enabled: false }, visible: false },
       { type: "line", name: "Pivots", data: pivotPts, yAxis: 0, color: "rgba(148,163,184,0.55)", lineWidth: 1, dashStyle: "Dash", marker: { enabled: false }, visible: false },
       // ── Volume pane ──
       { type: "column",  name: "Volume",   id: "volume", data: volume,      yAxis: 1, linkedTo: "main", animation: false },
@@ -428,8 +431,14 @@ function drawColoredZones(chart, rr) {
   rrGreyElems.push(chart.renderer.text(`▼  $${stop.toFixed(2)}  (−${stpPct}%)  ×${qty}  =  $${(risk * qty).toFixed(2)}`,
     zoneX + zoneW / 2, (redTop + redBot) / 2 + 4).attr({ align: "center", zIndex: 5 })
     .css({ color: C.red, fontSize: "11px", fontWeight: "bold", backgroundColor: "rgba(15,23,42,0.85)", padding: "2px 8px", borderRadius: "3px" }).add());
+  // Lines from entry bar to right edge (solid, bright)
   rrGreyElems.push(chart.renderer.path().attr({ d: `M ${zoneX} ${targetY} L ${rightEdge} ${targetY}`, stroke: C.green, "stroke-width": 2, zIndex: 5 }).add());
   rrGreyElems.push(chart.renderer.path().attr({ d: `M ${zoneX} ${stopY} L ${rightEdge} ${stopY}`,   stroke: C.red,   "stroke-width": 2, zIndex: 5 }).add());
+  // Lines extending left of entry bar (dashed, dimmer)
+  const leftEdge = chart.plotLeft;
+  rrGreyElems.push(chart.renderer.path().attr({ d: `M ${leftEdge} ${targetY} L ${zoneX} ${targetY}`, stroke: C.green, "stroke-width": 1, "stroke-dasharray": "4,4", "stroke-opacity": 0.5, zIndex: 4 }).add());
+  rrGreyElems.push(chart.renderer.path().attr({ d: `M ${leftEdge} ${stopY}   L ${zoneX} ${stopY}`,   stroke: C.red,   "stroke-width": 1, "stroke-dasharray": "4,4", "stroke-opacity": 0.5, zIndex: 4 }).add());
+  rrGreyElems.push(chart.renderer.path().attr({ d: `M ${leftEdge} ${entryY}  L ${zoneX} ${entryY}`,  stroke: C.muted, "stroke-width": 1, "stroke-dasharray": "4,4", "stroke-opacity": 0.5, zIndex: 4 }).add());
   [1,2,3,4,5,6,7,8,9,10].forEach(r => {
     if (r >= rrNum) return;
     const rPrice = entry + r * risk;
@@ -848,9 +857,9 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
     _ignoreNextBoxRedraw = true;
     chart.redraw(false);
     updatePaneLabels(chart, showPanes);
-    applyRR(chart, rrRef.current);
+    applyRR(chart, rr);
     renderBoxes(chart, boxesRef.current, handleDeleteBox, handleBoxToWatchlist);
-  });
+  }, [chartOptions, showOverlay, showPanes, rr, handleDeleteBox, handleBoxToWatchlist]);
 
   // ── R/R drawing logic ─────────────────────────────────────────────────────
   useEffect(() => { rrRef.current = rr; }, [rr]);
@@ -1135,6 +1144,10 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
   // the available content height passed by the parent modal.
   const TOOLBAR_H = 76;
   const chartContainerHeightPx = height != null ? Math.max(200, height - TOOLBAR_H) : 400;
+  const chartContainerProps = useMemo(
+    () => ({ style: { height: `${chartContainerHeightPx}px`, width: "100%" } }),
+    [chartContainerHeightPx]
+  );
 
   // ── MA alignment arrows ───────────────────────────────────────────────────
   const maArrows = hoverInfo ? (() => {
@@ -1302,7 +1315,7 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                 highcharts={Highcharts}
                 constructorType="stockChart"
                 options={chartOptions}
-                containerProps={{ style: { height: `${chartContainerHeightPx}px`, width: "100%" } }}
+                containerProps={chartContainerProps}
               />
             </div>
           </div>
@@ -1496,8 +1509,9 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
         const liveLast = liveQuote?.last > 0 ? liveQuote.last : null;
         const smartEntry = parseFloat(((liveAsk ?? liveLast ?? rr.entry) + 0.01).toFixed(2));
         const entrySource = liveAsk != null ? "ask + $0.01" : liveLast != null ? "last trade" : "chart level";
+        const safeTarget = parseFloat(Math.max(rr.target, smartEntry + 0.01).toFixed(2));
         const risk   = Math.abs(smartEntry - rr.stop);
-        const reward = Math.abs(rr.target  - smartEntry);
+        const reward = Math.abs(safeTarget  - smartEntry);
         const rrRatio = risk > 0 ? (reward / risk).toFixed(2) : "∞";
         const hasErr  = rr.stop >= smartEntry;
         const Row = ({ label, value, valueClass = "text-slate-200" }) => (
@@ -1523,7 +1537,7 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                   <div className="flex flex-col items-end"><span className="font-mono text-xs font-semibold">${smartEntry.toFixed(2)}</span><span className="text-[10px] text-slate-600">{entrySource}</span></div>
                 </div>
                 <Row label="Stop loss"   value={`$${rr.stop.toFixed(2)}`}         valueClass="text-red-400" />
-                <Row label="Take profit" value={`$${rr.target.toFixed(2)}`}         valueClass="text-emerald-400" />
+                <Row label="Take profit" value={`$${safeTarget.toFixed(2)}`}         valueClass="text-emerald-400" />
               </div>
               <div className="mx-4 mb-3 rounded-lg bg-slate-900/60 border border-slate-700/50 px-3 py-2 flex items-center justify-between text-xs">
                 <span className="text-slate-500">R/R</span><span className="text-white font-bold font-mono">{rrRatio}</span>
@@ -1553,12 +1567,12 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                     onClick={async () => {
                       setOrderResult(null); setOrderSubmitting(true);
                       const risk2   = Math.abs(smartEntry - rr.stop);
-                      const reward2 = Math.abs(rr.target  - smartEntry);
+                      const reward2 = Math.abs(safeTarget  - smartEntry);
                       try {
                         const res = await alpacaApi.placeOrder({
                           ticker, direction: "long", order_type: "limit", entry_tif: "gtc",
                           qty: rr.qty, entry_price: smartEntry, stop_price: rr.stop,
-                          target_price: rr.target, rr_ratio: rr.rrRatio ?? null,
+                          target_price: safeTarget, rr_ratio: rr.rrRatio ?? null,
                           rr_ratio_effective: risk2>0?parseFloat((reward2/risk2).toFixed(4)):null,
                           risk_amt: parseFloat((risk2*rr.qty).toFixed(4)), reward_amt: parseFloat((reward2*rr.qty).toFixed(4)),
                           bias: null, bar_time: null, threshold: null, entry_time: rr.entryTime ?? null,

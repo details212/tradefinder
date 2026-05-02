@@ -19,6 +19,8 @@ migrations/versions/
 electron-client/node_modules/
 electron-client/dist/
 electron-client/dist-exe/
+electron-client/.env
+electron-client/.env.local
 
 # ── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
