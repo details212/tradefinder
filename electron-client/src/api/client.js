@@ -81,8 +81,13 @@ export const authApi = {
 
 // ── Stocks ───────────────────────────────────────────────────────────────────
 export const stockApi = {
-  // Search (local DB)
+  // Search (local DB) — supports q, sector, industry, page, page_size
   search: (q, extra = {}) => api.get("/api/stocks/search", { params: { q, ...extra?.params } }),
+
+  // Sector / industry lists
+  sectors:       ()       => api.get("/api/stocks/sectors"),
+  industries:    (sector) => api.get("/api/stocks/industries", { params: sector ? { sector } : {} }),
+  sectorHeatmap: ()       => api.get("/api/stocks/sector-heatmap"),
 
   // Quote & price
   quote: (ticker) => api.get(`/api/stocks/${ticker}/quote`),
