@@ -404,7 +404,7 @@ export default function NewTrade({ onSelectTicker }) {
         )}
 
         {/* ── Sector heatmap (shown when no text query and no filter active) ── */}
-        {!query.trim() && (
+        {!query.trim() && !hasFilter && (
           <div className="mt-2 bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
             <SectorHeatmap
               onSectorClick={(sector) => {
