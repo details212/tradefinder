@@ -27,7 +27,8 @@ export default function SupportPanel({ user }) {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 bg-slate-950 min-h-0">
+    <div className="h-full overflow-y-auto bg-slate-950">
+      <div className="p-6">
       <div className="max-w-2xl mx-auto">
 
         {/* Header */}
@@ -130,6 +131,7 @@ export default function SupportPanel({ user }) {
           </button>
 
         </form>
+      </div>
       </div>
     </div>
   );
