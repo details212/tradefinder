@@ -36,6 +36,138 @@ const C = {
   orange: "#f97316",
 };
 
+// ── Volume Profile ─────────────────────────────────────────────────────────────
+const VP_RANGES    = 120;
+const VP_MAX_WIDTH = 0.18;
+const VP_UP_COLOR  = "rgba(0,200,190,0.50)";
+const VP_DN_COLOR  = "rgba(220,50,100,0.50)";
+const VP_POC_COLOR = "#94a3b8";
+const VP_VA_COLOR  = "#7dd3fc";
+const VP_VA_PCT    = 0.70;
+
+let vpElems = [];
+function clearVPElems() {
+  vpElems.forEach(el => { try { el.destroy(); } catch (_) {} });
+  vpElems = [];
+}
+
+function drawVolumeProfile(chart, bars) {
+  clearVPElems();
+  if (!chart || !bars.length) return;
+
+  const xAxis = chart.xAxis[0];
+  const yAxis = chart.yAxis[0];
+  const extr  = xAxis.getExtremes();
+
+  const visible = bars.filter(b => b.t >= extr.min && b.t <= extr.max && b.h != null);
+  if (visible.length < 2) return;
+
+  let priceMin = Infinity, priceMax = -Infinity;
+  for (const b of visible) {
+    if (b.l < priceMin) priceMin = b.l;
+    if (b.h > priceMax) priceMax = b.h;
+  }
+  if (priceMax <= priceMin) return;
+
+  const bucketSize = (priceMax - priceMin) / VP_RANGES;
+  const upVol      = new Float64Array(VP_RANGES);
+  const downVol    = new Float64Array(VP_RANGES);
+
+  for (const b of visible) {
+    const isUp   = b.c >= b.o;
+    const bRange = b.h - b.l;
+    const iStart = Math.max(0, Math.floor((b.l - priceMin) / bucketSize));
+    const iEnd   = Math.min(VP_RANGES - 1, Math.floor((b.h - priceMin) / bucketSize));
+    for (let i = iStart; i <= iEnd; i++) {
+      const bktLow  = priceMin + i * bucketSize;
+      const bktHigh = bktLow + bucketSize;
+      const overlap = bRange > 0
+        ? (Math.min(b.h, bktHigh) - Math.max(b.l, bktLow)) / bRange
+        : 1 / (iEnd - iStart + 1);
+      const vol = b.v * Math.max(0, overlap);
+      if (isUp) upVol[i]   += vol;
+      else      downVol[i] += vol;
+    }
+  }
+
+  let maxBucketVol = 0, totalVol = 0, pocIdx = 0;
+  for (let i = 0; i < VP_RANGES; i++) {
+    const tv = upVol[i] + downVol[i];
+    totalVol += tv;
+    if (tv > maxBucketVol) { maxBucketVol = tv; pocIdx = i; }
+  }
+  if (maxBucketVol === 0) return;
+
+  let vaVol = upVol[pocIdx] + downVol[pocIdx], vaLow = pocIdx, vaHigh = pocIdx;
+  const vaTarget = totalVol * VP_VA_PCT;
+  while (vaVol < vaTarget) {
+    const aboveVol = vaHigh + 1 < VP_RANGES ? upVol[vaHigh + 1] + downVol[vaHigh + 1] : 0;
+    const belowVol = vaLow  - 1 >= 0        ? upVol[vaLow  - 1] + downVol[vaLow  - 1] : 0;
+    if (aboveVol === 0 && belowVol === 0) break;
+    if (aboveVol >= belowVol) { vaHigh++; vaVol += aboveVol; }
+    else                      { vaLow--;  vaVol += belowVol; }
+  }
+
+  const vahPrice = priceMin + (vaHigh + 1) * bucketSize;
+  const valPrice = priceMin + vaLow * bucketSize;
+
+  const plotLeft        = chart.plotLeft;
+  const plotRight       = chart.plotLeft + chart.plotWidth;
+  const plotTop         = chart.plotTop;
+  const pricePaneBottom = plotTop + chart.plotHeight * 0.80;
+  const maxBarWidth     = chart.plotWidth * VP_MAX_WIDTH;
+
+  for (let i = 0; i < VP_RANGES; i++) {
+    const tv = upVol[i] + downVol[i];
+    if (tv === 0) continue;
+    const bktLow  = priceMin + i * bucketSize;
+    const bktHigh = bktLow + bucketSize;
+    const yTop    = yAxis.toPixels(bktHigh, false);
+    const yBottom = yAxis.toPixels(bktLow,  false);
+    const top     = Math.max(yTop,    plotTop);
+    const bottom  = Math.min(yBottom, pricePaneBottom);
+    if (bottom <= top) continue;
+    const barH  = bottom - top;
+    const upW   = (upVol[i]   / maxBucketVol) * maxBarWidth;
+    const downW = (downVol[i] / maxBucketVol) * maxBarWidth;
+    if (upW >= 0.5)
+      vpElems.push(chart.renderer.rect(plotLeft, top, upW, barH).attr({ fill: VP_UP_COLOR, zIndex: 1 }).add());
+    if (downW >= 0.5)
+      vpElems.push(chart.renderer.rect(plotLeft + upW, top, downW, barH).attr({ fill: VP_DN_COLOR, zIndex: 1 }).add());
+  }
+
+  const pocPrice = priceMin + (pocIdx + 0.5) * bucketSize;
+  const pocYPx   = yAxis.toPixels(pocPrice, false);
+  if (pocYPx >= plotTop && pocYPx <= pricePaneBottom) {
+    vpElems.push(chart.renderer.path(["M", plotLeft, pocYPx, "L", plotRight, pocYPx])
+      .attr({ stroke: VP_POC_COLOR, "stroke-width": 1.5, "stroke-dasharray": "4,3", zIndex: 4 }).add());
+    vpElems.push(chart.renderer.text(`POC $${pocPrice.toFixed(2)}`, plotRight - 4, pocYPx - 3)
+      .attr({ align: "right", zIndex: 5 })
+      .css({ color: VP_POC_COLOR, fontSize: "9px", fontWeight: "700", backgroundColor: "rgba(15,23,42,0.80)", padding: "1px 4px" })
+      .add());
+  }
+
+  const vahYPx = yAxis.toPixels(vahPrice, false);
+  if (vahYPx >= plotTop && vahYPx <= pricePaneBottom) {
+    vpElems.push(chart.renderer.path(["M", plotLeft, vahYPx, "L", plotRight, vahYPx])
+      .attr({ stroke: VP_VA_COLOR, "stroke-width": 1, "stroke-dasharray": "6,3", zIndex: 4 }).add());
+    vpElems.push(chart.renderer.text(`VAH $${vahPrice.toFixed(2)}`, plotRight - 4, vahYPx - 3)
+      .attr({ align: "right", zIndex: 5 })
+      .css({ color: VP_VA_COLOR, fontSize: "9px", fontWeight: "600", backgroundColor: "rgba(15,23,42,0.80)", padding: "1px 4px" })
+      .add());
+  }
+
+  const valYPx = yAxis.toPixels(valPrice, false);
+  if (valYPx >= plotTop && valYPx <= pricePaneBottom) {
+    vpElems.push(chart.renderer.path(["M", plotLeft, valYPx, "L", plotRight, valYPx])
+      .attr({ stroke: VP_VA_COLOR, "stroke-width": 1, "stroke-dasharray": "6,3", zIndex: 4 }).add());
+    vpElems.push(chart.renderer.text(`VAL $${valPrice.toFixed(2)}`, plotRight - 4, valYPx + 10)
+      .attr({ align: "right", zIndex: 5 })
+      .css({ color: VP_VA_COLOR, fontSize: "9px", fontWeight: "600", backgroundColor: "rgba(15,23,42,0.80)", padding: "1px 4px" })
+      .add());
+  }
+}
+
 // ── Pane layout constants (% of chart height) ─────────────────────────────────
 // Price pane is separate; volume + ATR + RS + RMV + RSI share one equal height each.
 const GAP = 1.5, PRICE_H = 40;
@@ -616,6 +748,12 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
   const boxesRef   = useRef([]);
   const boxModeRef = useRef(false);
 
+  // ── Volume Profile ────────────────────────────────────────────────────────
+  const [vpBars,     setVpBars]     = useState([]);
+  const [showVBP,    setShowVBP]    = useState(true);
+  const [chartReady, setChartReady] = useState(false);
+  const showVBPRef = useRef(true);
+
   // ── Fetch data ────────────────────────────────────────────────────────────
   const fetchData = useCallback(() => {
     if (!ticker) return;
@@ -642,11 +780,49 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // ── Fetch 4-hour bars for volume profile ──────────────────────────────────
+  useEffect(() => {
+    if (!ticker) return;
+    const today = new Date();
+    const from  = new Date(today);
+    from.setDate(from.getDate() - 90);
+    const fmt = d => d.toISOString().slice(0, 10);
+    stockApi.history(ticker, { multiplier: 4, timespan: "hour", from: fmt(from), to: fmt(today), limit: 2000 })
+      .then(r => {
+        const raw = (r.data.bars || []).sort((a, b) => a.t - b.t);
+        setVpBars(raw.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v })));
+      })
+      .catch(() => setVpBars([]));
+  }, [ticker]);
+
   // ── Risk prefs + portfolio ─────────────────────────────────────────────────
   useEffect(() => {
     preferencesApi.get().then(r => { const p=r.data.preferences??{}; if (p.risk_mode&&p.risk_value) setRiskPrefs(p); }).catch(()=>{});
     alpacaApi.test().then(r => { if (r.data.ok) setPortfolioValue(r.data.portfolio_value??null); }).catch(()=>{});
   }, []);
+
+  // ── Wire volume profile to chart render ──────────────────────────────────
+  useEffect(() => { showVBPRef.current = showVBP; }, [showVBP]);
+
+  useEffect(() => {
+    // chartReady flips true once chartOptions is built, ensuring the Highcharts
+    // instance exists before we try to attach the render listener.
+    const chart = chartRef.current?.chart;
+    if (!chart || !vpBars.length) return;
+    const onRender = () => {
+      if (showVBPRef.current) drawVolumeProfile(chart, vpBars);
+      else                    clearVPElems();
+    };
+    // Defer the first draw so Highstock's range-selector can apply its default
+    // extremes before we call getExtremes() — otherwise visible bars = 0.
+    const timer = setTimeout(onRender, 400);
+    Highcharts.addEvent(chart, "render", onRender);
+    return () => {
+      clearTimeout(timer);
+      Highcharts.removeEvent(chart, "render", onRender);
+      clearVPElems();
+    };
+  }, [vpBars, showVBP, chartReady]);
 
   // ── Sync box refs (local + module-level for chart events) ────────────────
   useEffect(() => { boxesRef.current = boxes; _boxesRef.current = boxes; }, [boxes]);
@@ -860,6 +1036,11 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
     applyRR(chart, rr);
     renderBoxes(chart, boxesRef.current, handleDeleteBox, handleBoxToWatchlist);
   }, [chartOptions, showOverlay, showPanes, rr, handleDeleteBox, handleBoxToWatchlist]);
+
+  // ── Signal VP effect once chart is mounted ────────────────────────────────
+  useEffect(() => {
+    if (chartOptions) setChartReady(v => !v);
+  }, [chartOptions]);
 
   // ── R/R drawing logic ─────────────────────────────────────────────────────
   useEffect(() => { rrRef.current = rr; }, [rr]);
@@ -1215,6 +1396,18 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
               <TB onClick={() => togglePane("rs")}  active={showPanes.rs}  dot={C.blue}>RS</TB>
               <TB onClick={() => togglePane("rmv")} active={showPanes.rmv} dot={C.orange}>RMV</TB>
               <TB onClick={() => togglePane("rsi")} active={showPanes.rsi} dot={C.purple}>RSI</TB>
+              <span className="w-px h-4 bg-slate-700 mx-1" />
+              <button
+                onClick={() => setShowVBP(v => !v)}
+                title="Toggle volume profile (4-hour bars, visible-range volume-at-price)"
+                className={`px-2.5 py-1 rounded text-xs font-medium border transition ${
+                  showVBP
+                    ? "bg-indigo-900/40 border-indigo-600/60 text-indigo-300"
+                    : "bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-200 hover:border-slate-500"
+                }`}
+              >
+                Vol Profile
+              </button>
               <button onClick={fetchData} className="ml-auto text-slate-600 hover:text-slate-300 transition" title="Refresh">
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>

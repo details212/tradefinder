@@ -230,6 +230,12 @@ export const stripeApi = {
     api.get("/api/stripe/invoices"),
 };
 
+// ── Support ───────────────────────────────────────────────────────────────────
+export const supportApi = {
+  /** POST /api/support/contact — sends an in-app support message to the admin */
+  contact: (data) => api.post("/api/support/contact", data),
+};
+
 // ── Pattern Analysis Scanner ──────────────────────────────────────────────────
 export const scannerApi = {
   dates: ()       => api.get("/api/scanner/dates"),

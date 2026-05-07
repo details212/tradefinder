@@ -704,8 +704,8 @@ export default function AdminPanel({ user }) {
               {ordersFilter === "open" ? (
                 <>
                   {/* ── Open trades headers ── */}
-                  <div className="grid grid-cols-[1.5fr_0.7fr_0.7fr_0.4fr_1fr_1fr_1fr_0.6fr_1fr_0.8fr_1.1fr_0.9fr] gap-3 px-5 py-2 border-b border-slate-800/40">
-                    {["Ticker", "Detail", "Chart", "Dir", "Fill / Entry", "Stop", "Target", "Qty", "Open P/L", "State", "Status", "Placed"].map(h => (
+                  <div className="grid grid-cols-[1.5fr_0.7fr_0.7fr_0.4fr_1fr_1fr_1fr_0.6fr_1fr_0.8fr_1.1fr_1.4fr] gap-3 px-5 py-2 border-b border-slate-800/40">
+                    {["Ticker", "Detail", "Chart", "Dir", "Fill / Entry", "Stop", "Target", "Qty", "Open P/L", "State", "Status", "Start Date"].map(h => (
                       <span key={h} className={`text-[10px] font-semibold text-slate-500 uppercase tracking-wider${h === "Dir" ? " text-center" : ""}`}>{h}</span>
                     ))}
                   </div>
@@ -714,6 +714,7 @@ export default function AdminPanel({ user }) {
                   <div className="divide-y divide-slate-800/40">
                     {visibleOrders
                       .filter(o => o.is_open)
+                      .slice().sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
                       .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE)
                       .map(o => {
                         const isLong    = o.direction === "long";
@@ -736,7 +737,7 @@ export default function AdminPanel({ user }) {
                         return (
                           <div
                             key={o.id}
-                            className={`grid grid-cols-[1.5fr_0.7fr_0.7fr_0.4fr_1fr_1fr_1fr_0.6fr_1fr_0.8fr_1.1fr_0.9fr] gap-3 px-5 py-3 transition items-center ${
+                            className={`grid grid-cols-[1.5fr_0.7fr_0.7fr_0.4fr_1fr_1fr_1fr_0.6fr_1fr_0.8fr_1.1fr_1.4fr] gap-3 px-5 py-3 transition items-center ${
                               beyondTakeProfit ? "tp-row-flash" : "hover:bg-slate-800/30"
                             }`}
                           >
@@ -766,12 +767,12 @@ export default function AdminPanel({ user }) {
               ) : (
                 <>
                   {/* ── Closed trades headers ── */}
-                  <div className="grid grid-cols-[1.4fr_0.5fr_0.5fr_0.4fr_0.9fr_1fr_0.5fr_0.8fr_0.7fr_1fr_0.8fr_0.9fr_1fr] gap-3 px-5 py-2 border-b border-slate-800/40">
+                  <div className="grid grid-cols-[1.4fr_0.5fr_0.5fr_0.4fr_0.9fr_1fr_0.5fr_0.8fr_0.7fr_1fr_0.8fr_0.9fr_1.4fr] gap-3 px-5 py-2 border-b border-slate-800/40">
                     {[
                       { h: "Ticker" }, { h: "Detail" }, { h: "Chart" }, { h: "Dir", center: true },
                       { h: "Entry Limit" }, { h: "Fill / Slippage" }, { h: "Qty" },
                       { h: "Risk $" }, { h: "R/R" }, { h: "Final P/L" }, { h: "R Result" },
-                      { h: "Status" }, { h: "Date" },
+                      { h: "Status" }, { h: "Closed Date" },
                     ].map(({ h, center }) => (
                       <span key={h} className={`text-[10px] font-semibold text-slate-500 uppercase tracking-wider${center ? " text-center" : ""}`}>{h}</span>
                     ))}
@@ -781,6 +782,7 @@ export default function AdminPanel({ user }) {
                   <div className="divide-y divide-slate-800/40">
                     {visibleOrders
                       .filter(o => !o.is_open)
+                      .slice().sort((a, b) => new Date(b.closed_at ?? b.synced_at ?? b.created_at ?? 0) - new Date(a.closed_at ?? a.synced_at ?? a.created_at ?? 0))
                       .slice(ordersPage * CLOSED_ORDERS_PER_PAGE, (ordersPage + 1) * CLOSED_ORDERS_PER_PAGE)
                       .map(o => {
                         const isLong    = o.direction === "long";
@@ -806,11 +808,11 @@ export default function AdminPanel({ user }) {
                         const rColor    = rResult == null ? "text-slate-500" : rResult > 0 ? "text-emerald-400" : "text-red-400";
 
                         const statusColor = o.status === "filled" ? "text-emerald-400" : o.status === "canceled" || o.status === "expired" ? "text-slate-400" : "text-yellow-400";
-                        const date = o.synced_at ?? o.created_at;
+                        const date = o.closed_at ?? o.synced_at ?? o.created_at;
                         const dateStr = date ? new Date(date).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
                         return (
-                          <div key={o.id} className="grid grid-cols-[1.4fr_0.5fr_0.5fr_0.4fr_0.9fr_1fr_0.5fr_0.8fr_0.7fr_1fr_0.8fr_0.9fr_1fr] gap-3 px-5 py-3 hover:bg-slate-800/30 transition items-center">
+                          <div key={o.id} className="grid grid-cols-[1.4fr_0.5fr_0.5fr_0.4fr_0.9fr_1fr_0.5fr_0.8fr_0.7fr_1fr_0.8fr_0.9fr_1.4fr] gap-3 px-5 py-3 hover:bg-slate-800/30 transition items-center">
                             {/* Ticker */}
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="font-bold text-slate-100 text-sm truncate">{o.ticker}</span>
