@@ -11,6 +11,7 @@ import AdminPanel from "./AdminPanel";
 import LeaderBoard from "./LeaderBoard";
 import SubscriptionPanel from "./SubscriptionPanel";
 import SupportPanel from "./SupportPanel";
+import DataDownload from "./DataDownload";
 import logo from "../assets/logo.png";
 import {
   LogOut,
@@ -29,6 +30,7 @@ import {
   Trophy,
   CreditCard,
   LifeBuoy,
+  FileDown,
 } from "lucide-react";
 
 function WatchlistTile({ ticker, bias, threshold, barTime, source, liveData, onClick, onRemove }) {
@@ -672,6 +674,17 @@ export default function Dashboard({ user, onLogout }) {
             New Trade
           </button>
           <button
+            onClick={() => setActiveView("datadownload")}
+            className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+              activeView === "datadownload"
+                ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+            }`}
+          >
+            <FileDown className="w-4 h-4" />
+            Data Download
+          </button>
+          <button
             onClick={() => setActiveView("tradeideas")}
             className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
               activeView === "tradeideas"
@@ -769,6 +782,8 @@ export default function Dashboard({ user, onLogout }) {
               <BrokerageSettings />
             ) : activeView === "leaderboard" ? (
               <LeaderBoard />
+            ) : activeView === "datadownload" ? (
+              <DataDownload />
             ) : activeView === "newtrade" ? (
               <NewTrade onSelectTicker={handleSelectTicker} />
             ) : activeView === "tradeideas" ? (

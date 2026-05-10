@@ -236,6 +236,21 @@ export const supportApi = {
   contact: (data) => api.post("/api/support/contact", data),
 };
 
+// ── Data Download ─────────────────────────────────────────────────────────────
+// SSE stream is opened directly via EventSource (token passed as ?token= param).
+// This module only handles the final CSV retrieval once the job is ready.
+export const dataDownloadApi = {
+  /**
+   * GET /api/download/ohlcv/result/<job_id>
+   * Returns raw CSV text. Caller converts to Blob and triggers browser download.
+   */
+  result: (jobId) =>
+    api.get(`/api/download/ohlcv/result/${jobId}`, {
+      responseType: "text",
+      timeout: 60_000,
+    }),
+};
+
 // ── Pattern Analysis Scanner ──────────────────────────────────────────────────
 export const scannerApi = {
   dates: ()       => api.get("/api/scanner/dates"),

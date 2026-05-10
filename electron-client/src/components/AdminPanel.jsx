@@ -47,7 +47,7 @@ function ServerHeartbeatCard() {
     try {
       await api.get("/api/health", { timeout: 3000 });
       const ms = Date.now() - t0;
-      const q  = ms < 50 ? "green" : ms < 600 ? "yellow" : "red";
+      const q  = ms < 70 ? "green" : ms < 200 ? "yellow" : "red";
       setLatency(ms);
       setQuality(q);
       setHistory(h => [...h.slice(-(NUM_TICKS - 1)), { ms, q }]);
@@ -302,16 +302,16 @@ const PING_HOSTS = [
 
 function LatencyBar({ ms }) {
   if (ms == null) return null;
-  // Green < 80ms, yellow < 250ms, red >= 250ms
-  const color = ms < 80 ? "bg-emerald-500" : ms < 250 ? "bg-yellow-500" : "bg-red-500";
-  const width = Math.min(100, (ms / 400) * 100);
+  // Green < 70ms, yellow < 200ms, red >= 200ms
+  const color = ms < 70 ? "bg-emerald-500" : ms < 200 ? "bg-yellow-500" : "bg-red-500";
+  const width = Math.min(100, (ms / 300) * 100);
   return (
     <div className="flex items-center gap-2 flex-1">
       <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${width}%` }} />
       </div>
       <span className={`text-xs tabular-nums font-medium w-14 text-right ${
-        ms < 80 ? "text-emerald-400" : ms < 250 ? "text-yellow-400" : "text-red-400"
+        ms < 70 ? "text-emerald-400" : ms < 200 ? "text-yellow-400" : "text-red-400"
       }`}>{ms} ms</span>
     </div>
   );
@@ -1099,8 +1099,8 @@ export default function AdminPanel({ user }) {
                       </div>
                       {r?.latency_ms != null && (
                         <span className={`text-[11px] font-mono tabular-nums shrink-0 ${
-                          r.latency_ms < 300  ? "text-emerald-500"
-                          : r.latency_ms < 800 ? "text-yellow-500"
+                          r.latency_ms < 70  ? "text-emerald-500"
+                          : r.latency_ms < 200 ? "text-yellow-500"
                           : "text-red-500"
                         }`}>
                           {r.latency_ms}ms

@@ -1,6 +1,6 @@
 {
   "name": "tradefinder",
-  "version": "0.60.0",
+  "version": "0.65.0",
   "description": "TradeFinder – Stock market data viewer",
   "main": "electron/main.js",
   "scripts": {
@@ -23,7 +23,7 @@
     "highcharts": "^12.5.0",
     "highcharts-react-official": "^3.2.3",
     "lightweight-charts": "^5.1.0",
-    "lucide-react": "^0.395.0",
+    "lucide-react": "0.395.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.24.1",
