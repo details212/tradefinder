@@ -39,9 +39,7 @@ const MINUTE_TFS  = new Set(["1min", "5min", "10min", "15min", "30min", "45min"]
 const HOUR_TFS    = new Set(["1h", "2h", "3h", "4h"]);
 
 function getMaxMonths(tf) {
-  if (MINUTE_TFS.has(tf)) return 12;
-  if (HOUR_TFS.has(tf))   return 36;
-  return 60;
+  return 12;
 }
 
 function getWindowOptions(tf) {
@@ -52,15 +50,15 @@ function getWindowOptions(tf) {
     }));
   }
   if (HOUR_TFS.has(tf)) {
-    return [12, 24, 36].map((m) => ({
-      months: m,
-      label:  `${m / 12}yr`,
+    return Array.from({ length: 12 }, (_, i) => ({
+      months: i + 1,
+      label:  `${i + 1}mo`,
     }));
   }
-  // Day / week / month — up to 5 years
-  return [12, 24, 36, 48, 60].map((m) => ({
-    months: m,
-    label:  `${m / 12}yr`,
+  // Day / week / month — 1–12 months then up to 5 years
+  return Array.from({ length: 12 }, (_, i) => ({
+    months: i + 1,
+    label:  `${i + 1}mo`,
   }));
 }
 
@@ -281,7 +279,7 @@ export default function DataDownload() {
       addLog(
         "page",
         `Page ${d.page} received — ${d.bars_this_page.toLocaleString()} bars`,
-        `Running total: ${d.bars_total.toLocaleString()} bars  ·  Polygon status: ${d.polygon_status}`,
+        `Running total: ${d.bars_total.toLocaleString()} bars  ·  Tradefinder Tick Farm status: ${d.polygon_status}`,
       );
     });
 
@@ -403,7 +401,7 @@ export default function DataDownload() {
               Data Download
             </h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              Export OHLCV history to CSV via Polygon — pages slowly to stay within rate limits.
+              Export OHLCV history to CSV via Tradefinder Tick Farm — pages slowly to stay within rate limits.
             </p>
           </div>
           <PhaseBadge phase={phase} />
