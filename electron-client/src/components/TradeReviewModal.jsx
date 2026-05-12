@@ -125,6 +125,21 @@ function buildOptions(ticker, ohlcv, barTimeMs) {
   };
 }
 
+// Expand the price-pane Y-axis so the full R/R drawing is visible.
+// Only ever widens the view — never shrinks it — so candle context is preserved.
+function expandYAxisForRR(chart, rr) {
+  if (!chart || !rr?.stop || !rr?.entry || !rr?.target) return;
+  const yAxis = chart.yAxis[0];
+  const cur   = yAxis.getExtremes();
+  const low   = Math.min(rr.stop, rr.entry, rr.target);
+  const high  = Math.max(rr.stop, rr.entry, rr.target);
+  if (low >= cur.min && high <= cur.max) return; // already fully visible
+  const pad    = Math.max((high - low) * 0.08, Math.abs(high - low) * 0.05, 0.10);
+  const newMin = Math.min(low  - pad, cur.min);
+  const newMax = Math.max(high + pad, cur.max);
+  yAxis.setExtremes(newMin, newMax, true, false);
+}
+
 // ── R/R drawing helpers (mirrors ModalChart) ─────────────────────────────────
 const RR_BANDS    = ["rr-profit", "rr-loss"];
 const RR_LINES    = ["rr-entry"];
@@ -1112,6 +1127,18 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     chart.xAxis[0].setExtremes(bars[Math.max(0, fromIdx)].t, padT, true, false);
   }, [bars, paddedLastT, order.entry_time]);
 
+  // Expand Y-axis to show the full R/R drawing (stop → target) with padding
+  const fitRRZoom = useCallback(() => {
+    const chart = chartRef.current?.chart;
+    if (!chart || !rr?.stop || !rr?.target) return;
+    const yAxis  = chart.yAxis[0];
+    const cur    = yAxis.getExtremes();
+    const low    = Math.min(rr.stop,   rr.entry, rr.target, cur.min);
+    const high   = Math.max(rr.stop,   rr.entry, rr.target, cur.max);
+    const pad    = (high - low) * 0.08;
+    yAxis.setExtremes(low - pad, high + pad, true, false);
+  }, [rr]);
+
   useEffect(() => {
     const chart = chartRef.current?.chart;
     if (!chart || !bars.length) return;
@@ -1141,8 +1168,12 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   // Keep rrRef in sync
   useEffect(() => { rrRef.current = rr; }, [rr]);
 
-  // Draw R/R levels
-  useEffect(() => { applyRR(chartRef.current?.chart, rr); }, [rr, bars]);
+  // Draw R/R levels and auto-expand Y-axis to show full drawing
+  useEffect(() => {
+    const chart = chartRef.current?.chart;
+    applyRR(chart, rr);
+    expandYAxisForRR(chart, rr);
+  }, [rr, bars]);
 
   // Re-clip + redraw on render (zoom / scroll)
   useEffect(() => {
@@ -1593,6 +1624,17 @@ Trade closed: ${fmtTs(order.synced_at)}
               </button>
             ))}
           </div>
+
+          {/* Fit R/R — expand Y-axis to show full stop→target range */}
+          {rr && (
+            <button
+              onClick={fitRRZoom}
+              title="Zoom Y-axis to show the full R/R drawing"
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-400 hover:text-yellow-300 border border-slate-700 hover:border-yellow-600/60 transition shrink-0"
+            >
+              Fit R/R
+            </button>
+          )}
 
           {/* Last price + refresh indicator */}
           <div className="flex items-center gap-x-3 text-xs ml-2">

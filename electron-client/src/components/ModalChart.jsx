@@ -266,6 +266,21 @@ function deriveQty(entry, riskPrefs, portfolioValue) {
   return Math.max(1, Math.floor(riskDollars / entry));
 }
 
+// Expand the price-pane Y-axis so the full R/R drawing is visible.
+// Only ever widens the view — never shrinks it — so candle context is preserved.
+function expandYAxisForRR(chart, rr) {
+  if (!chart || !rr?.stop || !rr?.entry || !rr?.target) return;
+  const yAxis = chart.yAxis[0];
+  const cur   = yAxis.getExtremes();
+  const low   = Math.min(rr.stop, rr.entry, rr.target);
+  const high  = Math.max(rr.stop, rr.entry, rr.target);
+  if (low >= cur.min && high <= cur.max) return; // already fully visible
+  const pad    = Math.max((high - low) * 0.08, Math.abs(high - low) * 0.05, 0.10);
+  const newMin = Math.min(low  - pad, cur.min);
+  const newMax = Math.max(high + pad, cur.max);
+  yAxis.setExtremes(newMin, newMax, true, false);
+}
+
 // ── R/R drawing helpers ───────────────────────────────────────────────────────
 const RR_BANDS     = ["rr-profit", "rr-loss"];
 const RR_LINES     = ["rr-entry"];
@@ -769,6 +784,18 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
     }
   }, [bars, paddedLastT]);
 
+  // Expand Y-axis to show the full R/R drawing (stop → target) with padding
+  const fitRRZoom = useCallback(() => {
+    const chart = chartRef.current?.chart;
+    if (!chart || !rr?.stop || !rr?.target) return;
+    const yAxis   = chart.yAxis[0];
+    const cur     = yAxis.getExtremes();
+    const low     = Math.min(rr.stop,   rr.entry, rr.target, cur.min);
+    const high    = Math.max(rr.stop,   rr.entry, rr.target, cur.max);
+    const pad     = (high - low) * 0.08;
+    yAxis.setExtremes(low - pad, high + pad, true, false);
+  }, [rr]);
+
   // ── Data fetch ──────────────────────────────────────────────────────────────
   const fetchBars = useCallback(() => {
     if (!ticker) return;
@@ -959,7 +986,9 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
   // ── Imperative R/R drawing (re-runs when rr, bars, or constraint toggle changes) ──
   useEffect(() => {
-    applyRR(chartRef.current?.chart, rr, useRRConstraint);
+    const chart = chartRef.current?.chart;
+    applyRR(chart, rr, useRRConstraint);
+    expandYAxisForRR(chart, rr);
   }, [rr, bars, useRRConstraint]);
 
   // ── Re-clip + redraw on every Highcharts render (zoom / scroll) ────────────
@@ -1046,6 +1075,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
           }
           rrRef.current = newRr;
           applyRR(chart, newRr, useRRConstraint);
+          expandYAxisForRR(chart, newRr);
         });
         return;
       }
@@ -1200,12 +1230,21 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
             </button>
 
             {rr && (
-              <button
-                onClick={() => { setRr(null); setQtyDerived(false); }}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-500 hover:text-red-400 border border-transparent hover:border-red-900/50 transition"
-              >
-                <X className="w-3 h-3" /> Clear
-              </button>
+              <>
+                <button
+                  onClick={fitRRZoom}
+                  title="Zoom Y-axis to show the full R/R drawing"
+                  className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-400 hover:text-yellow-300 border border-slate-700 hover:border-yellow-600/60 transition"
+                >
+                  Fit R/R
+                </button>
+                <button
+                  onClick={() => { setRr(null); setQtyDerived(false); }}
+                  className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-500 hover:text-red-400 border border-transparent hover:border-red-900/50 transition"
+                >
+                  <X className="w-3 h-3" /> Clear
+                </button>
+              </>
             )}
 
             {/* Vol Profile toggle */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { tradeIdeasApi, stockApi, snapshotsApi, alpacaApi } from "../api/client";
+import { tradeIdeasApi, stockApi, snapshotsApi, alpacaApi, preferencesApi } from "../api/client";
 import {
   Lightbulb, TrendingUp, TrendingDown, RefreshCw,
   ChevronRight, AlertCircle, Loader2, ArrowUpRight,
@@ -527,11 +527,14 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   const [snapPrices,     setSnapPrices]     = useState({});
   const [wlLoading,      setWlLoading]      = useState({});
   const [showPrevDays,   setShowPrevDays]   = useState(false);
-  /** Minimum MA alignment score (Info column) to show; 0 = no filter. Resets to 3 when switching strategy. */
+  /** Minimum MA alignment score (Info column) to show; 0 = no filter. Resets to user default when switching strategy. */
   const [minInfoScore,    setMinInfoScore]   = useState(3);
   const [infoPopover,    setInfoPopover]    = useState(null);
   const [maCache,        setMaCache]        = useState({});   // triggers re-render when MA data arrives
   const [tickerNames,    setTickerNames]    = useState({});   // ticker → company name for hover tooltip
+  /** "long" | "short" | "both" — controls which strategies appear in the sidebar */
+  const [directionFilter, setDirectionFilter] = useState("both");
+  const defaultInfoScoreRef = useRef(3);      // kept in sync with user pref; used when switching strategies
   const infoCacheRef       = useRef({});
   const scheduledMaRef     = useRef(new Set()); // in-flight MA fetches (avoid duplicate requests)
   const hideTimerRef       = useRef(null);
@@ -547,6 +550,21 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     alpacaApi.openTickers()
       .then(r => setOpenTickers(new Set(r.data.tickers ?? [])))
       .catch(() => {}); // non-fatal — fail silently
+  }, []);
+
+  // Load user Trade Ideas preferences on mount
+  useEffect(() => {
+    preferencesApi.get()
+      .then(r => {
+        const p = r.data.preferences ?? {};
+        if (p.tradeideas_default_info != null) {
+          const n = Math.min(5, Math.max(0, Number(p.tradeideas_default_info)));
+          defaultInfoScoreRef.current = n;
+          setMinInfoScore(n);
+        }
+        if (p.tradeideas_direction) setDirectionFilter(p.tradeideas_direction);
+      })
+      .catch(() => {});
   }, []);
 
   // Compute chart height when modal opens: modal is 95vh, header ~56px
@@ -656,7 +674,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     setShowPrevDays(false);
     infoCacheRef.current = {};
     setMaCache({});
-    setMinInfoScore(3);
+    setMinInfoScore(defaultInfoScoreRef.current);
     setLoadingResult(true);
     tradeIdeasApi.run(strategy.id)
       .then((r) => {
@@ -783,14 +801,19 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
           ) : strategies.length === 0 ? (
             <p className="text-sm text-slate-500 text-center py-10 px-4">No strategies configured.</p>
           ) : (
-            strategies.map((s) => (
-              <StrategyItem
-                key={s.id}
-                strategy={s}
-                active={activeStrategy?.id === s.id}
-                onClick={handleSelectStrategy}
-              />
-            ))
+            strategies
+              .filter(s => {
+                if (directionFilter === "both") return true;
+                return s.direction?.toLowerCase() === directionFilter;
+              })
+              .map((s) => (
+                <StrategyItem
+                  key={s.id}
+                  strategy={s}
+                  active={activeStrategy?.id === s.id}
+                  onClick={handleSelectStrategy}
+                />
+              ))
           )}
         </div>
       </aside>

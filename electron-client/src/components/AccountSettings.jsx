@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { authApi, alpacaApi, preferencesApi, tradeIdeasApi } from "../api/client";
 import {
-  User, Lock, TrendingUp, ShieldAlert, Zap, Radio,
+  User, Lock, TrendingUp, ShieldAlert, Zap, Radio, Lightbulb,
   CheckCircle, AlertCircle, Loader2, Save, RefreshCw, DollarSign, Wallet,
   AtSign, XCircle, Mail, Send, MapPin, Phone, Trash2, Volume2, VolumeX,
 } from "lucide-react";
@@ -1182,6 +1182,116 @@ function LiveStreamSettingsSection() {
   );
 }
 
+// ── Trade Ideas defaults section ──────────────────────────────────────────────
+function TradeIdeasSection() {
+  const [defaultInfo, setDefaultInfo] = useState(3);
+  const [direction,   setDirection]   = useState("both"); // "long" | "short" | "both"
+  const [loading,     setLoading]     = useState(true);
+  const [saving,      setSaving]      = useState(false);
+  const [status,      setStatus]      = useState(null);
+
+  useEffect(() => {
+    preferencesApi.get()
+      .then(r => {
+        const p = r.data.preferences ?? {};
+        if (p.tradeideas_default_info != null) setDefaultInfo(Number(p.tradeideas_default_info));
+        if (p.tradeideas_direction)            setDirection(p.tradeideas_direction);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      await preferencesApi.update({
+        tradeideas_default_info: String(defaultInfo),
+        tradeideas_direction:    direction,
+      });
+      setStatus({ type: "success", message: "Trade Ideas preferences saved." });
+    } catch {
+      setStatus({ type: "error", message: "Failed to save. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section icon={Lightbulb} title="Trade Ideas">
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="flex flex-col gap-6">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Set default filters applied each time you open a strategy on the Trade Ideas page.
+          </p>
+
+          {/* ── Default Info score ── */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-300">Default Info</span>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Minimum MA alignment score required to display a result (0 = show all).
+            </p>
+            <select
+              value={defaultInfo}
+              onChange={e => { setDefaultInfo(Number(e.target.value)); setStatus(null); }}
+              disabled={saving}
+              className="w-28 mt-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
+            >
+              {[0, 1, 2, 3, 4, 5].map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* ── Direction filter ── */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-300">Strategy Direction</span>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Filter which strategies appear in the Trade Ideas sidebar.
+            </p>
+            <div className="flex flex-col gap-2.5 mt-1">
+              {[
+                { value: "long",  label: "Show Long Strategies"         },
+                { value: "short", label: "Show Short Strategies"        },
+                { value: "both",  label: "Show Long & Short Strategies" },
+              ].map(opt => (
+                <label key={opt.value} className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="tradeideas_direction"
+                    value={opt.value}
+                    checked={direction === opt.value}
+                    onChange={() => { setDirection(opt.value); setStatus(null); }}
+                    disabled={saving}
+                    className="w-4 h-4 accent-brand-500 cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-300">{opt.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <StatusBanner status={status} />
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="self-start flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save
+          </button>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ── Danger zone section ───────────────────────────────────────────────────────
 function DangerZoneSection() {
   const [phase,   setPhase]   = useState("idle"); // idle | confirm | loading | done
@@ -1324,6 +1434,7 @@ export default function AccountSettings({ user, onUserUpdated }) {
         />
         <AutoCloseBeyondTpSection />
         <LiveStreamSettingsSection />
+        <TradeIdeasSection />
         <RiskManagementSection portfolioValue={account?.portfolio_value ?? null} />
         <DangerZoneSection />
       </div>
