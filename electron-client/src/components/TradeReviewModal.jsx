@@ -773,7 +773,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [error,     setError]     = useState(null);
   const [rr,        setRr]        = useState(null);
   const [liveQuote, setLiveQuote] = useState(null);
-  const [activeZoom, setActiveZoom] = useState("1D");
+  const [activeZoom, setActiveZoom] = useState("2W");
   const [chartH, setChartH] = useState(null);
 
   // Sanity check (closed trades only)
@@ -1143,19 +1143,8 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     const chart = chartRef.current?.chart;
     if (!chart || !bars.length) return;
     chart.reflow();
-    if (!order.is_open) {
-      // Closed trade: 1 day before entry → 1 day after entry
-      const DAY_MS = 24 * 60 * 60 * 1000;
-      if (order.entry_time) {
-        const fromT = Math.max(order.entry_time - DAY_MS, bars[0].t);
-        const toT   = Math.min(order.entry_time + DAY_MS, paddedLastT());
-        setActiveZoom("2D");
-        chart.xAxis[0].setExtremes(fromT, toT, true, false);
-      } else {
-        setActiveZoom("All");
-        chart.xAxis[0].setExtremes(bars[0].t, paddedLastT(), true, false);
-      }
-    } else {
+    {
+      // Both open and closed trades: default to 2W ending at the most recent bar
       const preset = ZOOM_PRESETS.find(p => p.label === activeZoom);
       const windowMs = preset?.days ? preset.days * 24 * 60 * 60 * 1000 : null;
       const lastT = bars[bars.length - 1].t;

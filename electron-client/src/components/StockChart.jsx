@@ -189,10 +189,10 @@ export default function StockChart({ ticker, defaultInterval, barTime, threshold
           }]);
         }
 
-        // Default zoom: last 3 calendar days ending at the most recent bar
+        // Default zoom: last 2 weeks ending at the most recent bar
         if (bars.length > 0) {
           const to   = bars[bars.length - 1].t / 1000;
-          const from = to - 3 * 24 * 60 * 60;
+          const from = to - 14 * 24 * 60 * 60;
           chart.timeScale().setVisibleRange({ from, to });
         } else {
           chart.timeScale().fitContent();

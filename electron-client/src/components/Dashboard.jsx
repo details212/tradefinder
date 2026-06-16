@@ -332,10 +332,14 @@ export default function Dashboard({ user, onLogout }) {
         if (dir === "long"  && !prefs.showLong)  return false;
         if (dir === "short" && !prefs.showShort) return false;
         if (prefs.hiddenStrategies.has(Number(item.strategy_id))) return false;
+        // MA alignment score only applies to long trades: short candidates are
+        // often near highs before breaking down so price is still above MAs,
+        // which gives them a misleadingly low "short" score and hides them.
+        if (dir === "short") return true;
         const maData = maByTicker[item.ticker];
         if (!maData) return true; // no cache entry yet — don't drop it
         const price = priceByTicker[item.ticker]?.price ?? item.close;
-        const score = _streamMaScore(maData, price, dir === "long");
+        const score = _streamMaScore(maData, price, true);
         return score == null || score >= LIVE_STREAM_MIN_INFO;
       });
 

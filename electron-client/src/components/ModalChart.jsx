@@ -743,7 +743,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,     setOrderResult]     = useState(null);  // { ok, message, orderId } | null
   const [liveQuote,       setLiveQuote]       = useState(null);  // null | { bid, ask, last, spread, updatedAt, fetching }
-  const [activeZoom,       setActiveZoom]       = useState("3D");
+  const [activeZoom,       setActiveZoom]       = useState("2W");
   const [showVBP,          setShowVBP]          = useState(true);
   const [useRRConstraint,  setUseRRConstraint]  = useState(true);
   const [rrFlash,          setRrFlash]          = useState(false);
@@ -835,31 +835,16 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
       .catch(() => {});
   }, []);
 
-  // ── Zoom to signal bar after data loads, within the active preset window ────
+  // ── Apply active zoom preset after data loads ────────────────────────────────
   useEffect(() => {
     const chart = chartRef.current?.chart;
     if (!chart || !bars.length) return;
     chart.reflow();
 
-    const signalMs  = etStringToUtcMs(barTime);
-    const lastT     = bars[bars.length - 1].t;
-    const preset    = ZOOM_PRESETS.find(p => p.label === activeZoom);
-    const windowMs  = preset?.days ? preset.days * 24 * 60 * 60 * 1000 : null;
+    const lastT       = bars[bars.length - 1].t;
+    const preset      = ZOOM_PRESETS.find(p => p.label === activeZoom);
+    const windowMs    = preset?.days ? preset.days * 24 * 60 * 60 * 1000 : null;
     const windowStart = windowMs ? lastT - windowMs : bars[0].t;
-
-    if (signalMs) {
-      const signalIdx = bars.findIndex(b => b.t >= signalMs);
-      if (signalIdx >= 0) {
-        // Centre on signal but clamp to the active zoom window
-        const half    = Math.round(78 * 1.5);
-        const fromIdx = Math.max(0, signalIdx - half);
-        const toIdx   = Math.min(bars.length - 1, signalIdx + half);
-        const from = Math.max(bars[fromIdx].t, windowStart);
-        chart.xAxis[0].setExtremes(from, paddedLastT(), true, false);
-        return;
-      }
-    }
-    // No signal — just apply the preset window
     chart.xAxis[0].setExtremes(windowStart, paddedLastT(), true, false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, barTime]);
@@ -1237,6 +1222,13 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                   className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-400 hover:text-yellow-300 border border-slate-700 hover:border-yellow-600/60 transition"
                 >
                   Fit R/R
+                </button>
+                <button
+                  onClick={() => handleDirectionChange(direction === "long" ? "short" : "long")}
+                  title="Flip R/R between long and short"
+                  className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-400 hover:text-cyan-300 border border-slate-700 hover:border-cyan-600/60 transition"
+                >
+                  ⇅ Flip
                 </button>
                 <button
                   onClick={() => { setRr(null); setQtyDerived(false); }}

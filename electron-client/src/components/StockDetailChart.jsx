@@ -623,7 +623,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,   setOrderResult]   = useState(null);
   const [liveQuote,     setLiveQuote]     = useState(null);
-  const [activeZoom,    setActiveZoom]    = useState("3D");
+  const [activeZoom,    setActiveZoom]    = useState("2W");
   const [riskPrefs,     setRiskPrefs]     = useState(null);
   const [portfolioValue, setPortfolioValue] = useState(null);
   const [qtyDerived,    setQtyDerived]    = useState(false);
