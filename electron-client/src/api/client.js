@@ -141,6 +141,9 @@ export const tradeIdeasApi = {
       stale_ok: opts.staleOk ?? false,
       queue_refresh: opts.queueRefresh !== false,
     }),
+  /** Lorentzian symbol stats + long/short trade allocation for Tradefinder AI tooltip. */
+  lorentzianStats: (tickers) =>
+    api.post("/api/tradeideas/lorentzian-stats", { tickers }),
 };
 
 // ── Snapshot cache (prices maintained server-side; client reads only) ─────────

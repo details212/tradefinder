@@ -6,6 +6,7 @@ import {
   Star, StarOff, X, Info,
 } from "lucide-react";
 import ModalChart from "./ModalChart";
+import LorentzianStatsPopover from "./LorentzianStatsPopover";
 import { fmtEtString } from "../utils/timeUtils";
 
 // ── Column display config ─────────────────────────────────────────────────────
@@ -63,15 +64,30 @@ const COL_META = {
   entry_price:           { label: "Entry Price",    fmt: "price"   },
   pts_above_resistance:  { label: "Pts Above Res",  fmt: "price"   },
   pct_above_resistance:  { label: "% Above Res",    fmt: "pct"     },
+  // strategy 7 — Tradefinder AI (lorentzian_daily)
+  signal_direction:      { label: "Direction",      fmt: "direction" },
+  prediction:            { label: "Prediction",     fmt: "num"     },
+  lorentzian_direction:  { label: "LC Direction",   fmt: "num"     },
+  f1_rsi:                { label: "RSI",            fmt: "num"     },
+  f2_wt:                 { label: "WT",             fmt: "num"     },
+  f3_cci:                { label: "CCI",            fmt: "num"     },
+  f4_adx:                { label: "ADX",            fmt: "num"     },
+  f5_rsi9:               { label: "RSI(9)",         fmt: "num"     },
+  kernel:                { label: "Kernel",         fmt: "num"     },
+  computed_at:           { label: "Computed",       fmt: "dt_dim"  },
+  open:                  { label: "Open",           fmt: "price"   },
+  high:                  { label: "High",           fmt: "price"   },
+  low:                   { label: "Low",            fmt: "price"   },
 };
 
 // Defines display order; shared cols (ticker, _live, bar_time…) appear once —
 // the ordering logic deduplicates before rendering.
 const PREFERRED_ORDER = [
   // shared / strategy 1
-  "ticker", "_live", "bar_time", "close",
+  "ticker", "_live", "signal_direction", "bar_time", "close",
   // strategy 6 aliases for bar_time / close
   "entry_time", "entry_price",
+  "computed_at",
   "pct_from_5d_low", "resistance",
   "pts_above_resistance", "pct_above_resistance",
   "prev_bar_close", "high_60min",
@@ -103,6 +119,21 @@ const HIDDEN_COLUMNS = new Set([
   "above_range_mid", "shares_traded_ok", "breakout", "market_flat", "trigger_fired",
 ]);
 
+/** Extra columns hidden per strategy (global HIDDEN_COLUMNS still apply). */
+const STRATEGY_HIDDEN_COLUMNS = {
+  7: new Set([
+    "bar_time", "close", "prediction",
+    "open", "high", "low",
+    "f1_rsi", "f2_wt", "f3_cci", "f4_adx", "f5_rsi9", "kernel",
+    "lorentzian_direction",
+  ]),
+};
+
+function isColumnHidden(col, strategyId) {
+  if (HIDDEN_COLUMNS.has(col)) return true;
+  return STRATEGY_HIDDEN_COLUMNS[strategyId]?.has(col) ?? false;
+}
+
 function fmtPrice(v)  { return v == null ? "—" : `$${Number(v).toFixed(2)}`; }
 function fmtPct(v)    { return v == null ? "—" : `${Number(v).toFixed(1)}%`; }
 function fmtDate(v)   {
@@ -112,6 +143,37 @@ function fmtDate(v)   {
 }
 function fmtDt(v) {
   return fmtEtString(v);
+}
+
+/** Returns true when the row (or strategy default) is a long bias. */
+function rowIsLong(row, strategy) {
+  const sig = row?.signal_direction?.toLowerCase();
+  if (sig === "long" || sig === "short") return sig === "long";
+  return strategy?.direction?.toLowerCase() === "long";
+}
+
+/** Returns true when the strategy emits both long and short signals. */
+function strategyIsMixed(strategy) {
+  return strategy?.direction?.toLowerCase() === "both";
+}
+
+/** Tradefinder AI — no MA Info score filter; Info column still shown. */
+function isTradefinderAi(strategy) {
+  return strategy?.id === 7;
+}
+
+const TRADEFINDER_AI_DESCRIPTION = "Today's buy (long) and sell (short) signals";
+
+/** Client-side description (avoids stale API text mentioning Lorentzian). */
+function strategyDisplayDescription(strategy) {
+  if (isTradefinderAi(strategy)) return TRADEFINDER_AI_DESCRIPTION;
+  return strategy?.description ?? "";
+}
+
+function normalizeStrategyList(list) {
+  return (list || []).map((s) =>
+    isTradefinderAi(s) ? { ...s, description: TRADEFINDER_AI_DESCRIPTION } : s,
+  );
 }
 
 /** Returns the best available date string from a result row for day-break grouping. */
@@ -124,7 +186,7 @@ function rowDateKey(row) {
 
 /** Returns the best threshold price for the watchlist from a result row. */
 function rowThreshold(row) {
-  return row.first_entry ?? null;
+  return row.first_entry ?? row.close ?? row.entry_price ?? null;
 }
 
 /** Returns the best bar-time for the watchlist signal marker from a result row. */
@@ -173,7 +235,9 @@ function Cell({ col, value, livePrice, dimmed, companyName }) {
     case "dt_dim":
       return <span className="text-slate-600 tabular-nums text-xs">{fmtDt(value)}</span>;
     case "num":
-      return <span className="text-slate-300 tabular-nums">{value ?? "—"}</span>;
+      return value == null
+        ? <span className="text-slate-600">—</span>
+        : <span className="text-slate-300 tabular-nums">{Number(value).toFixed(2)}</span>;
     case "vol":
       return <span className="text-slate-300 tabular-nums text-xs">
         {value == null ? "—" : Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })}
@@ -192,6 +256,16 @@ function Cell({ col, value, livePrice, dimmed, companyName }) {
       return value
         ? <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-400" title="Yes" />
         : <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-700"  title="No"  />;
+    case "direction": {
+      const isLong = String(value).toLowerCase() === "long";
+      return (
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+          isLong ? "bg-green-900/50 text-green-400" : "bg-red-900/50 text-red-400"
+        }`}>
+          {value ?? "—"}
+        </span>
+      );
+    }
     default:
       return <span className="text-slate-400 text-xs">{value ?? "—"}</span>;
   }
@@ -199,7 +273,10 @@ function Cell({ col, value, livePrice, dimmed, companyName }) {
 
 // ── Strategy sidebar item ─────────────────────────────────────────────────────
 function StrategyItem({ strategy, active, onClick }) {
-  const isLong = strategy.direction?.toLowerCase() === "long";
+  const dir = strategy.direction?.toLowerCase();
+  const isLong  = dir === "long";
+  const isMixed = dir === "both";
+  const desc    = strategyDisplayDescription(strategy);
   return (
     <button
       onClick={() => onClick(strategy)}
@@ -207,20 +284,24 @@ function StrategyItem({ strategy, active, onClick }) {
         active ? "bg-slate-800 border-l-2 border-brand-500 pl-3.5" : "hover:bg-slate-800/60 border-l-2 border-transparent"
       }`}
     >
-      <div className={`mt-0.5 p-1.5 rounded-lg shrink-0 ${isLong ? "bg-green-900/40" : "bg-red-900/40"}`}>
-        {isLong
-          ? <TrendingUp  className="w-3.5 h-3.5 text-green-400" />
-          : <TrendingDown className="w-3.5 h-3.5 text-red-400"  />}
+      <div className={`mt-0.5 p-1.5 rounded-lg shrink-0 ${
+        isMixed ? "bg-brand-900/40" : isLong ? "bg-green-900/40" : "bg-red-900/40"
+      }`}>
+        {isMixed
+          ? <Lightbulb className="w-3.5 h-3.5 text-brand-400" />
+          : isLong
+            ? <TrendingUp  className="w-3.5 h-3.5 text-green-400" />
+            : <TrendingDown className="w-3.5 h-3.5 text-red-400"  />}
       </div>
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-slate-200">{strategy.name}</span>
           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
-            isLong ? "bg-green-900/50 text-green-400" : "bg-red-900/50 text-red-400"
+            isMixed ? "bg-brand-900/50 text-brand-400" : isLong ? "bg-green-900/50 text-green-400" : "bg-red-900/50 text-red-400"
           }`}>{strategy.direction}</span>
         </div>
-        {strategy.description && (
-          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{strategy.description}</p>
+        {desc && (
+          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{desc}</p>
         )}
       </div>
       <ChevronRight className={`w-4 h-4 shrink-0 mt-1 transition ${active ? "text-brand-400" : "text-slate-700 group-hover:text-slate-500"}`} />
@@ -290,9 +371,10 @@ function ScoreDots({ score, total = 5 }) {
 }
 
 // ── MA info popover ───────────────────────────────────────────────────────────
-function InfoPopover({ popover, snapPrices, isLong, onMouseEnter, onMouseLeave }) {
+function InfoPopover({ popover, snapPrices, isLong: strategyIsLong, onMouseEnter, onMouseLeave }) {
   if (!popover) return null;
-  const { ticker, x, y, data, loading } = popover;
+  const { ticker, x, y, data, loading, isLong: rowIsLong } = popover;
+  const isLong = rowIsLong ?? strategyIsLong;
   const price = snapPrices[ticker] ?? null;
 
   const MAS = data ? [
@@ -358,6 +440,12 @@ function InfoPopover({ popover, snapPrices, isLong, onMouseEnter, onMouseLeave }
       {loading && !data && (
         <div className="flex items-center justify-center py-10">
           <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
+        </div>
+      )}
+
+      {!loading && !data && (
+        <div className="px-5 py-8 text-center text-sm text-slate-500">
+          MA data not available yet — try again in a moment.
         </div>
       )}
 
@@ -530,12 +618,14 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   /** Minimum MA alignment score (Info column) to show; 0 = no filter. Resets to user default when switching strategy. */
   const [minInfoScore,    setMinInfoScore]   = useState(3);
   const [infoPopover,    setInfoPopover]    = useState(null);
+  const [lorentzianPopover, setLorentzianPopover] = useState(null);
   const [maCache,        setMaCache]        = useState({});   // triggers re-render when MA data arrives
   const [tickerNames,    setTickerNames]    = useState({});   // ticker → company name for hover tooltip
   /** "long" | "short" | "both" — controls which strategies appear in the sidebar */
   const [directionFilter, setDirectionFilter] = useState("both");
   const defaultInfoScoreRef = useRef(3);      // kept in sync with user pref; used when switching strategies
   const infoCacheRef       = useRef({});
+  const lorentzianCacheRef = useRef({});
   const scheduledMaRef     = useRef(new Set()); // in-flight MA fetches (avoid duplicate requests)
   const hideTimerRef       = useRef(null);
   const tableContainerRef  = useRef(null);
@@ -598,24 +688,32 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     }
   }, [watchlist]);
 
-  const handleInfoEnter = useCallback((e, ticker) => {
+  const handleInfoEnter = useCallback((e, ticker, rowLong) => {
     clearTimeout(hideTimerRef.current);
+    setLorentzianPopover(null);
     const containerRect = tableContainerRef.current?.getBoundingClientRect();
     const cx = containerRect ? containerRect.left + containerRect.width  / 2 : window.innerWidth  / 2;
     const cy = containerRect ? containerRect.top  + containerRect.height / 2 : window.innerHeight / 2;
+    const hasCache = Object.prototype.hasOwnProperty.call(infoCacheRef.current, ticker);
     const cached = infoCacheRef.current[ticker];
-    setInfoPopover({ ticker, x: cx, y: cy, data: cached ?? null, loading: !cached });
-    if (!cached) {
+    setInfoPopover({
+      ticker,
+      x: cx,
+      y: cy,
+      data: cached ?? null,
+      loading: !hasCache,
+      isLong: rowLong,
+    });
+    if (!hasCache) {
       tradeIdeasApi.maCache([ticker], { staleOk: true, queueRefresh: true })
         .then(r => {
           const data = r.data.ma[ticker] ?? null;
-          if (data) {
-            infoCacheRef.current[ticker] = data;
-            setMaCache(prev => ({ ...prev, [ticker]: data }));
-          }
+          infoCacheRef.current[ticker] = data;
+          if (data) setMaCache(prev => ({ ...prev, [ticker]: data }));
           setInfoPopover(prev => prev?.ticker === ticker ? { ...prev, data, loading: false } : prev);
         }).catch(() => {
-          setInfoPopover(prev => prev?.ticker === ticker ? { ...prev, loading: false } : prev);
+          infoCacheRef.current[ticker] = null;
+          setInfoPopover(prev => prev?.ticker === ticker ? { ...prev, data: null, loading: false } : prev);
         });
     }
   }, []);
@@ -624,10 +722,55 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     hideTimerRef.current = setTimeout(() => setInfoPopover(null), 120);
   }, []);
 
+  const handleLorentzianEnter = useCallback((ticker, signalDirection) => {
+    clearTimeout(hideTimerRef.current);
+    setInfoPopover(null);
+    const containerRect = tableContainerRef.current?.getBoundingClientRect();
+    const cx = containerRect ? containerRect.left + containerRect.width  / 2 : window.innerWidth  / 2;
+    const cy = containerRect ? containerRect.top  + containerRect.height / 2 : window.innerHeight / 2;
+    const cached = lorentzianCacheRef.current[ticker];
+    const allocTotal = (cached?.allocation?.long ?? 0) + (cached?.allocation?.short ?? 0);
+    const staleTrades = !cached
+      || cached.trades === undefined
+      || (cached.trades.length === 0 && ((cached.stats?.total_trades ?? 0) > 0 || allocTotal > 0));
+    setLorentzianPopover({
+      ticker,
+      x: cx,
+      y: cy,
+      signalDirection: signalDirection ?? null,
+      stats: cached?.stats ?? null,
+      allocation: cached?.allocation ?? null,
+      trades: cached?.trades ?? [],
+      loading: !cached || staleTrades,
+    });
+    if (cached && !staleTrades) return;
+
+    tradeIdeasApi.lorentzianStats([ticker])
+      .then((r) => {
+        const stats = r.data.stats?.[ticker] ?? null;
+        const allocation = r.data.allocation?.[ticker] ?? { long: 0, short: 0 };
+        const trades = r.data.trades?.[ticker] ?? [];
+        lorentzianCacheRef.current[ticker] = { stats, allocation, trades };
+        setLorentzianPopover((prev) => prev?.ticker === ticker
+          ? { ...prev, stats, allocation, trades, loading: false }
+          : prev);
+      })
+      .catch(() => {
+        lorentzianCacheRef.current[ticker] = { stats: null, allocation: { long: 0, short: 0 }, trades: [] };
+        setLorentzianPopover((prev) => prev?.ticker === ticker
+          ? { ...prev, stats: null, allocation: { long: 0, short: 0 }, trades: [], loading: false }
+          : prev);
+      });
+  }, []);
+
+  const handleLorentzianLeave = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setLorentzianPopover(null), 120);
+  }, []);
+
   /** Load MA scores from DB immediately (stale_ok); Polygon refresh runs in background. */
   const requestMaForTickers = useCallback((tickers) => {
     const need = tickers.filter(
-      (t) => t && !infoCacheRef.current[t] && !scheduledMaRef.current.has(t),
+      (t) => t && !Object.prototype.hasOwnProperty.call(infoCacheRef.current, t) && !scheduledMaRef.current.has(t),
     );
     if (!need.length) return;
     need.forEach((t) => scheduledMaRef.current.add(t));
@@ -656,10 +799,13 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   useEffect(() => {
     tradeIdeasApi.list()
       .then((r) => {
-        setStrategies(r.data.strategies || []);
+        const list = normalizeStrategyList(
+          (r.data.strategies || []).slice().sort((a, b) => a.id - b.id),
+        );
+        setStrategies(list);
         // Auto-select the first strategy
-        if (r.data.strategies?.length) {
-          handleSelectStrategy(r.data.strategies[0]);
+        if (list.length) {
+          handleSelectStrategy(list[0]);
         }
       })
       .catch(() => setStrategies([]))
@@ -682,10 +828,13 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
         const ordered = [...new Set([
           ...PREFERRED_ORDER.filter((c) => raw.includes(c) || c === "_live"),
           ...raw.filter((c) => !PREFERRED_ORDER.includes(c)),
-        ])].filter((c) => !HIDDEN_COLUMNS.has(c));
+        ])].filter((c) => !isColumnHidden(c, strategy.id));
         setColumns(ordered);
-        // Sort: most-recent day first, then most-recent bar time within each day
+        // Sort: Tradefinder AI by ticker A→Z; others by day then bar time
         const rows = (r.data.results || []).slice().sort((a, b) => {
+          if (strategy.id === 7) {
+            return String(a.ticker ?? "").localeCompare(String(b.ticker ?? ""));
+          }
           const dayA = rowDateKey(a) ?? "";
           const dayB = rowDateKey(b) ?? "";
           if (dayB !== dayA) return dayB.localeCompare(dayA);          // day DESC
@@ -720,34 +869,67 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   }, []);
 
   const isLong = activeStrategy?.direction?.toLowerCase() === "long";
+  const isMixed = strategyIsMixed(activeStrategy);
+  const skipInfoFilter = isTradefinderAi(activeStrategy);
 
   // Filter to the latest trading day unless the user opts in to previous days
   const visibleResults = React.useMemo(() => {
     if (!results) return null;
-    if (showPrevDays) return results;
-    const latestDate = results.reduce((best, row) => {
+    let rows = results;
+    if (strategyIsMixed(activeStrategy) && directionFilter !== "both") {
+      const wantLong = directionFilter === "long";
+      rows = rows.filter((row) => rowIsLong(row, activeStrategy) === wantLong);
+    }
+    if (showPrevDays) return rows;
+    const latestDate = rows.reduce((best, row) => {
       const d = rowDateKey(row);
       return d && d > best ? d : best;
     }, "");
-    return latestDate ? results.filter((row) => rowDateKey(row) === latestDate) : results;
-  }, [results, showPrevDays]);
+    return latestDate ? rows.filter((row) => rowDateKey(row) === latestDate) : rows;
+  }, [results, showPrevDays, activeStrategy, directionFilter]);
 
   const filteredVisibleResults = React.useMemo(() => {
     if (!visibleResults) return null;
-    if (minInfoScore <= 0) return visibleResults;
+    if (skipInfoFilter || minInfoScore <= 0) return visibleResults;
     return visibleResults.filter((row) => {
       const maData = maCache[row.ticker];
       if (maData === undefined) return true;
       const price = snapPrices[row.ticker] ?? null;
-      const score = maScore(maData, price, isLong);
+      const score = maScore(maData, price, rowIsLong(row, activeStrategy));
       return score != null && score >= minInfoScore;
     });
-  }, [visibleResults, minInfoScore, maCache, snapPrices, isLong]);
+  }, [visibleResults, minInfoScore, maCache, snapPrices, activeStrategy, skipInfoFilter]);
 
   // Clear in-flight MA scheduling when switching strategies
   useEffect(() => {
     scheduledMaRef.current.clear();
+    lorentzianCacheRef.current = {};
+    setLorentzianPopover(null);
   }, [activeStrategy?.id]);
+
+  // Prefetch Lorentzian stats for visible Tradefinder AI rows
+  useEffect(() => {
+    if (!skipInfoFilter || !visibleResults?.length || loadingResult) return;
+    const tickers = [...new Set(
+      visibleResults.slice(0, 28).map((r) => r.ticker).filter(Boolean),
+    )].filter((t) => !Object.prototype.hasOwnProperty.call(lorentzianCacheRef.current, t));
+    if (!tickers.length) return;
+    tradeIdeasApi.lorentzianStats(tickers)
+      .then((r) => {
+        tickers.forEach((t) => {
+          lorentzianCacheRef.current[t] = {
+            stats: r.data.stats?.[t] ?? null,
+            allocation: r.data.allocation?.[t] ?? { long: 0, short: 0 },
+            trades: r.data.trades?.[t] ?? [],
+          };
+        });
+      })
+      .catch(() => {
+        tickers.forEach((t) => {
+          lorentzianCacheRef.current[t] = { stats: null, allocation: { long: 0, short: 0 }, trades: [] };
+        });
+      });
+  }, [visibleResults, loadingResult, skipInfoFilter]);
 
   // First screen of rows: prompt MA load (IntersectionObserver can miss first paint)
   useEffect(() => {
@@ -756,7 +938,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     requestMaForTickers(tickers);
   }, [visibleResults, loadingResult, activeStrategy?.id, requestMaForTickers]);
 
-  // Lazy-load MA for rows as they scroll into view (observe rendered / filtered rows)
+  // Lazy-load MA for rows as they scroll into view
   useEffect(() => {
     if (!filteredVisibleResults?.length || loadingResult) return;
     const root = tableContainerRef.current;
@@ -804,6 +986,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
             strategies
               .filter(s => {
                 if (directionFilter === "both") return true;
+                if (strategyIsMixed(s)) return true;
                 return s.direction?.toLowerCase() === directionFilter;
               })
               .map((s) => (
@@ -824,21 +1007,25 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
         {/* Results header */}
         {activeStrategy && (
           <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 bg-slate-900 shrink-0">
-            <div className={`p-1.5 rounded-lg ${isLong ? "bg-green-900/40" : "bg-red-900/40"}`}>
-              {isLong
-                ? <TrendingUp  className="w-4 h-4 text-green-400" />
-                : <TrendingDown className="w-4 h-4 text-red-400" />}
+            <div className={`p-1.5 rounded-lg ${
+              isMixed ? "bg-brand-900/40" : isLong ? "bg-green-900/40" : "bg-red-900/40"
+            }`}>
+              {isMixed
+                ? <Lightbulb className="w-4 h-4 text-brand-400" />
+                : isLong
+                  ? <TrendingUp  className="w-4 h-4 text-green-400" />
+                  : <TrendingDown className="w-4 h-4 text-red-400" />}
             </div>
             <div>
               <h3 className="text-sm font-semibold text-slate-200">{activeStrategy.name}</h3>
-              {activeStrategy.description && (
-                <p className="text-[11px] text-slate-500">{activeStrategy.description}</p>
+              {strategyDisplayDescription(activeStrategy) && (
+                <p className="text-[11px] text-slate-500">{strategyDisplayDescription(activeStrategy)}</p>
               )}
             </div>
             {filteredVisibleResults && visibleResults && (
               <span className="ml-2 text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full border border-slate-700">
                 {filteredVisibleResults.length}
-                {visibleResults.length !== filteredVisibleResults.length
+                {!skipInfoFilter && visibleResults.length !== filteredVisibleResults.length
                   ? ` / ${visibleResults.length}`
                   : ""}
                 {!showPrevDays && results?.length > visibleResults.length ? ` (${results.length} total)` : ""}
@@ -846,6 +1033,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                 result{filteredVisibleResults.length !== 1 ? "s" : ""}
               </span>
             )}
+            {!skipInfoFilter && (
             <label className="flex items-center gap-2 text-xs text-slate-400 ml-2 shrink-0">
               <span className="whitespace-nowrap">Info ≥</span>
               <select
@@ -861,6 +1049,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                 ))}
               </select>
             </label>
+            )}
             {results?.length > 0 && (
               <label className="ml-3 flex items-center gap-1.5 cursor-pointer select-none">
                 <input
@@ -918,7 +1107,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                 <p className="text-slate-400 text-sm font-medium">No signals at this time</p>
                 <p className="text-slate-600 text-xs mt-1">The strategy returned 0 rows</p>
               </div>
-            ) : filteredVisibleResults.length === 0 ? (
+            ) : !skipInfoFilter && filteredVisibleResults.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-4">
                 <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center mb-3 border border-slate-700">
                   <Info className="w-8 h-8 text-slate-600" />
@@ -980,6 +1169,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                             ticker:    row.ticker,
                             barTime:   rowBarTime(row),
                             threshold: rowThreshold(row),
+                            bias:      row.signal_direction?.toLowerCase() ?? null,
                           }) : undefined}
                         >
                           {inOpenTrade ? (
@@ -1006,7 +1196,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                       <td className="px-3 py-2">
                         <button
                           onClick={() => toggleWatchlist(row.ticker, {
-                            bias:      activeStrategy?.direction ?? null,
+                            bias:      row.signal_direction?.toLowerCase() ?? activeStrategy?.direction?.toLowerCase() ?? null,
                             threshold: rowThreshold(row),
                             bar_time:  barTimeForWatchlistApi(row),
                             source:    "tradeideas",
@@ -1022,29 +1212,37 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                       </td>
                       <td className="px-3 py-2">
                         {(() => {
-                          const maData = maCache[row.ticker];
-                          const price  = snapPrices[row.ticker] ?? null;
-                          const score  = maScore(maData, price, isLong);
-                          const canOpen = !openTickers.has(row.ticker);
+                          const rowLong  = rowIsLong(row, activeStrategy);
+                          const maData   = maCache[row.ticker];
+                          const price    = snapPrices[row.ticker] ?? null;
+                          const score    = maScore(maData, price, rowLong);
+                          const canOpen  = !openTickers.has(row.ticker);
                           const maPending = maData === undefined;
                           return (
                             <button
-                              onMouseEnter={(e) => handleInfoEnter(e, row.ticker)}
-                              onMouseLeave={handleInfoLeave}
+                              onMouseEnter={() => skipInfoFilter
+                                ? handleLorentzianEnter(row.ticker, row.signal_direction)
+                                : handleInfoEnter(null, row.ticker, rowLong)}
+                              onMouseLeave={skipInfoFilter ? handleLorentzianLeave : handleInfoLeave}
                               onClick={canOpen ? () => setChartModal({
                                 ticker:    row.ticker,
                                 barTime:   rowBarTime(row),
                                 threshold: rowThreshold(row),
+                                bias:      row.signal_direction?.toLowerCase() ?? null,
                               }) : undefined}
-                              className={`transition font-bold font-mono tabular-nums text-sm w-5 text-center${canOpen ? " cursor-pointer" : " cursor-not-allowed"}`}
-                              title="MA alignment score"
+                              className={`inline-flex items-center justify-center transition${canOpen ? " cursor-pointer" : " cursor-not-allowed"}`}
+                              title="MA alignment & momentum details"
                             >
                               {maPending ? (
-                                <Loader2 className="w-3 h-3 text-slate-700 animate-spin inline" />
+                                <Loader2 className="w-3.5 h-3.5 text-slate-600 animate-spin" />
+                              ) : skipInfoFilter ? (
+                                <Info className="w-4 h-4 text-slate-500 hover:text-brand-400" />
                               ) : score != null ? (
-                                <span className={scoreColor(score)}>{score}</span>
+                                <span className={`font-bold font-mono tabular-nums text-sm w-5 text-center ${scoreColor(score)}`}>
+                                  {score}
+                                </span>
                               ) : (
-                                <span className="text-slate-600">—</span>
+                                <Info className="w-4 h-4 text-slate-600 hover:text-brand-400" />
                               )}
                             </button>
                           );
@@ -1078,9 +1276,11 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
             <span className="text-lg font-bold text-brand-400">{chartModal.ticker}</span>
             {activeStrategy?.direction && (
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                isLong
-                  ? "bg-green-900/50 text-green-400 border border-green-800"
-                  : "bg-red-900/50 text-red-400 border border-red-800"
+                isMixed
+                  ? "bg-brand-900/50 text-brand-400 border border-brand-800"
+                  : isLong
+                    ? "bg-green-900/50 text-green-400 border border-green-800"
+                    : "bg-red-900/50 text-red-400 border border-red-800"
               }`}>
                 {activeStrategy.direction}
               </span>
@@ -1105,7 +1305,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
               barTime={chartModal.barTime}
               threshold={chartModal.threshold}
               height={chartHeight}
-              bias={activeStrategy?.direction?.toLowerCase() ?? null}
+              bias={chartModal.bias ?? (isMixed ? null : activeStrategy?.direction?.toLowerCase() ?? null)}
               onClose={() => {
                 setChartModal(null);
                 // Refresh so a newly opened trade is immediately struck through
@@ -1118,6 +1318,13 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
         </div>
       </div>
     )}
+
+    <LorentzianStatsPopover
+      popover={lorentzianPopover}
+      snapPrices={snapPrices}
+      onMouseEnter={() => clearTimeout(hideTimerRef.current)}
+      onMouseLeave={handleLorentzianLeave}
+    />
 
     <InfoPopover
       popover={infoPopover}

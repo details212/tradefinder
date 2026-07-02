@@ -1019,7 +1019,11 @@ function LiveStreamSettingsSection() {
           setHiddenStrategies(new Set(hidden.map(Number)));
         } catch { /* malformed JSON — keep default */ }
         setSoundEnabled(p.stream_sound_enabled === "true");
-        setStrategies(stratRes.data.strategies || []);
+        setStrategies((stratRes.data.strategies || []).map((s) =>
+          s.id === 7
+            ? { ...s, description: "Today's buy (long) and sell (short) signals" }
+            : s,
+        ));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -1057,9 +1061,11 @@ function LiveStreamSettingsSection() {
 
   const longs  = strategies.filter(s => s.direction?.toLowerCase() === "long");
   const shorts = strategies.filter(s => s.direction?.toLowerCase() === "short");
+  const mixed  = strategies.filter(s => s.direction?.toLowerCase() === "both");
   const groups = [
     { label: "Long strategies",  items: longs  },
     { label: "Short strategies", items: shorts },
+    { label: "Mixed strategies", items: mixed  },
   ].filter(g => g.items.length > 0);
 
   return (
@@ -1110,7 +1116,9 @@ function LiveStreamSettingsSection() {
                     <div className="rounded-xl border border-slate-700/60 overflow-hidden divide-y divide-slate-700/40">
                       {group.items.map(s => {
                         const visible = !hiddenStrategies.has(s.id);
-                        const isLong  = s.direction?.toLowerCase() === "long";
+                        const dir     = s.direction?.toLowerCase();
+                        const isLong  = dir === "long";
+                        const isMixed = dir === "both";
                         return (
                           <div
                             key={s.id}
@@ -1122,9 +1130,11 @@ function LiveStreamSettingsSection() {
                               <div className="flex items-center gap-2">
                                 <span className="text-sm text-slate-200 font-medium">{s.name}</span>
                                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 ${
-                                  isLong
-                                    ? "bg-green-900/50 text-green-400"
-                                    : "bg-red-900/50   text-red-400"
+                                  isMixed
+                                    ? "bg-brand-900/50 text-brand-400"
+                                    : isLong
+                                      ? "bg-green-900/50 text-green-400"
+                                      : "bg-red-900/50   text-red-400"
                                 }`}>
                                   {s.direction}
                                 </span>

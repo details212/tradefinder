@@ -51,3 +51,13 @@ export function fmtEtString(etStr) {
   const h12  = hh % 12 || 12;
   return `${String(mo).padStart(2, "0")}/${String(dy).padStart(2, "0")}, ${h12}:${String(mm).padStart(2, "0")} ${ampm}`;
 }
+
+/** Date-only (no time) from a naive ET datetime string. e.g. "2026-03-12 09:40:00" → "03/12/26" */
+export function fmtEtDate(etStr) {
+  if (!etStr) return "—";
+  const iso = String(etStr).replace(" ", "T").replace(/\.\d+$/, "");
+  const [datePart] = iso.split("T");
+  const [yr, mo, dy] = datePart.split("-").map(Number);
+  if (!yr || !mo || !dy) return "—";
+  return `${String(mo).padStart(2, "0")}/${String(dy).padStart(2, "0")}/${String(yr).slice(-2)}`;
+}
