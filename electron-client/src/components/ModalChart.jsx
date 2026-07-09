@@ -24,11 +24,68 @@ const RED_CANDLE   = "#ef4444";
 const GREEN_VOL    = "rgba(34,197,94,0.55)";
 const RED_VOL      = "rgba(239,68,68,0.55)";
 
+// Bar interval presets — controls which bars are downloaded from Polygon.
+// 4H requests native 1-hour bars (fast — precomputed by Polygon) and
+// aggregates them into 4-hour candles client-side. Requesting a custom
+// multiplier like "4 hour" directly from Polygon is computed on the fly for
+// non-standard granularities and can take a minute or more to respond over a
+// multi-month range, whereas 1-hour/1-day are served near-instantly.
+const BAR_INTERVALS = [
+  { label: "15m", multiplier: 15, timespan: "minute", days: 30,  limit: 3000, barMs: 15 * 60 * 1000 },
+  { label: "4H",  multiplier: 1,  timespan: "hour",   days: 183, limit: 3000, barMs: 4 * 60 * 60 * 1000, aggregate: 4 },
+  { label: "1D",  multiplier: 1,  timespan: "day",    days: 730, limit: 800,  barMs: 24 * 60 * 60 * 1000 },
+];
+
+function offsetDate(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function axisTimeFormat(barMs) {
+  return barMs >= 24 * 60 * 60 * 1000 ? "%b %e, %Y" : "%b %e %H:%M";
+}
+
+function tooltipTimeFormat(barMs) {
+  return barMs >= 24 * 60 * 60 * 1000 ? "%a %b %e, %Y ET" : "%a %b %e %H:%M ET";
+}
+
+// ET calendar-day key — used to avoid aggregated bars spanning across
+// separate trading sessions (e.g. last hour of one day merging into the
+// first hours of the next).
+function etDayKey(t) {
+  return new Date(t).toLocaleDateString("en-US", { timeZone: "America/New_York" });
+}
+
+// Groups consecutive same-day bars into chunks of `groupSize`, merging each
+// chunk's OHLCV into a single bar. Resets at each trading-day boundary so a
+// bucket never straddles two sessions.
+function aggregateBars(rawBars, groupSize) {
+  const out = [];
+  let i = 0;
+  while (i < rawBars.length) {
+    const key = etDayKey(rawBars[i].t);
+    let j = i;
+    while (j < rawBars.length && j - i < groupSize && etDayKey(rawBars[j].t) === key) j++;
+    const chunk = rawBars.slice(i, j);
+    out.push({
+      t: chunk[0].t,
+      o: chunk[0].o,
+      h: Math.max(...chunk.map(b => b.h)),
+      l: Math.min(...chunk.map(b => b.l)),
+      c: chunk[chunk.length - 1].c,
+      v: chunk.reduce((sum, b) => sum + (b.v || 0), 0),
+    });
+    i = j;
+  }
+  return out;
+}
+
 // ── Build Highcharts options ──────────────────────────────────────────────────
-function buildOptions(ticker, ohlcv, barTimeMs, threshold) {
-  // Append 30 empty 15-min slots after the last bar so ordinal axis shows
-  // whitespace to the right (needed for R/R drawing extensions to be visible).
-  const BAR_MS    = 15 * 60 * 1000;
+function buildOptions(ticker, ohlcv, barTimeMs, threshold, barMs) {
+  // Append empty slots after the last bar so ordinal axis shows whitespace to
+  // the right (needed for R/R drawing extensions to be visible).
+  const BAR_MS    = barMs;
   const PAD_BARS  = 30;
   const lastT     = ohlcv.length ? ohlcv[ohlcv.length - 1].t : 0;
   const padPoints = Array.from({ length: PAD_BARS }, (_, i) => lastT + BAR_MS * (i + 1));
@@ -82,7 +139,7 @@ function buildOptions(ticker, ohlcv, barTimeMs, threshold) {
       labels: {
         style: { color: "#94a3b8", fontSize: "10px", textOutline: "none" },
         formatter() {
-          return etTime.dateFormat("%b %e %H:%M", this.value);
+          return etTime.dateFormat(axisTimeFormat(BAR_MS), this.value);
         },
       },
       // Signal vertical line
@@ -101,8 +158,8 @@ function buildOptions(ticker, ohlcv, barTimeMs, threshold) {
       }] : [],
       // Faint highlight band around signal
       plotBands: barTimeMs ? [{
-        from:  barTimeMs - 15 * 60 * 1000,
-        to:    barTimeMs + 15 * 60 * 1000,
+        from:  barTimeMs - BAR_MS / 2,
+        to:    barTimeMs + BAR_MS / 2,
         color: "rgba(232,121,249,0.08)",
         zIndex: 4,
       }] : [],
@@ -174,7 +231,7 @@ function buildOptions(ticker, ohlcv, barTimeMs, threshold) {
         const vol    = this.points?.find(p => p.series.name === "Volume");
         if (!candle) return "";
 
-        const dt  = etTime.dateFormat("%a %b %e %H:%M ET", this.x);
+        const dt  = etTime.dateFormat(tooltipTimeFormat(BAR_MS), this.x);
         const chg = candle.point.close - candle.point.open;
         const pct = ((chg / candle.point.open) * 100).toFixed(2);
         const col = chg >= 0 ? GREEN_CANDLE : RED_CANDLE;
@@ -744,6 +801,11 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [orderResult,     setOrderResult]     = useState(null);  // { ok, message, orderId } | null
   const [liveQuote,       setLiveQuote]       = useState(null);  // null | { bid, ask, last, spread, updatedAt, fetching }
   const [activeZoom,       setActiveZoom]       = useState("2W");
+  const [barInterval,      setBarInterval]      = useState(BAR_INTERVALS[0]);
+  // Bar size actually reflected in `bars` right now — only updated once a
+  // refetch resolves, so the axis/padding never mismatch the loaded data
+  // while a bar-interval switch is still in flight.
+  const [loadedBarMs,      setLoadedBarMs]      = useState(BAR_INTERVALS[0].barMs);
   const [showVBP,          setShowVBP]          = useState(true);
   const [useRRConstraint,  setUseRRConstraint]  = useState(true);
   const [rrFlash,          setRrFlash]          = useState(false);
@@ -759,14 +821,19 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
     { label: "3D", days: 3   },
     { label: "1W", days: 7   },
     { label: "2W", days: 14  },
+    { label: "1M", days: 30  },
+    { label: "2M", days: 60  },
+    { label: "3M", days: 90  },
+    { label: "6M", days: 182 },
+    { label: "1Y", days: 365 },
     { label: "All", days: null },
   ];
 
-  // Last timestamp including the 30 null padding bars appended in buildOptions
+  // Last timestamp including the padding bars appended in buildOptions
   const paddedLastT = useCallback(() => {
     if (!bars.length) return 0;
-    return bars[bars.length - 1].t + 30 * 15 * 60 * 1000;
-  }, [bars]);
+    return bars[bars.length - 1].t + 30 * loadedBarMs;
+  }, [bars, loadedBarMs]);
 
   const applyZoom = useCallback((preset) => {
     const chart = chartRef.current?.chart;
@@ -803,21 +870,35 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
     setError(null);
 
     const today = new Date();
-    const from  = new Date(today);
-    from.setDate(from.getDate() - 28);
     const fmt = d => d.toISOString().slice(0, 10);
 
     stockApi.history(ticker, {
-      multiplier: 15, timespan: "minute",
-      from: fmt(from), to: fmt(today), limit: 3000,
+      multiplier: barInterval.multiplier,
+      timespan:   barInterval.timespan,
+      from:       offsetDate(barInterval.days),
+      to:         fmt(today),
+      limit:      barInterval.limit,
     })
       .then(r => {
-        const raw = (r.data.bars || []).sort((a, b) => a.t - b.t);
-        setBars(raw.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v })));
+        const raw = (r.data.bars || [])
+          .sort((a, b) => a.t - b.t)
+          .map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
+        setBars(barInterval.aggregate ? aggregateBars(raw, barInterval.aggregate) : raw);
+        setLoadedBarMs(barInterval.barMs);
       })
       .catch(() => setError("Failed to load chart data"))
       .finally(() => setLoading(false));
-  }, [ticker]);
+  }, [ticker, barInterval]);
+
+  const handleBarIntervalChange = useCallback((interval) => {
+    if (interval.label === barInterval.label) return;
+    setBarInterval(interval);
+    setRr(null);
+    setRrMode(false);
+    setQtyDerived(false);
+    setOrderType(null);
+    setOrderResult(null);
+  }, [barInterval.label]);
 
   useEffect(() => { fetchBars(); }, [fetchBars]);
 
@@ -846,6 +927,13 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
     const windowMs    = preset?.days ? preset.days * 24 * 60 * 60 * 1000 : null;
     const windowStart = windowMs ? lastT - windowMs : bars[0].t;
     chart.xAxis[0].setExtremes(windowStart, paddedLastT(), true, false);
+
+    // Explicitly redraw the volume profile against the freshly-set extremes.
+    // Relying solely on the "render" event here races with the VP effect's
+    // own (re)attachment below when `bars` changes (e.g. switching bar
+    // interval), which can leave the profile blank on the new dataset.
+    if (showVBPRef.current) drawVolumeProfile(chart, bars);
+    else                    clearVPElems();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, barTime]);
 
@@ -937,7 +1025,11 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
   // Derived values needed by effects below — must be declared before any useEffect that uses them
   const barTimeMs = etStringToUtcMs(barTime);
-  const ready     = !loading && !error && bars.length > 0 && height != null;
+  // Keep the existing chart mounted while a bar-interval/ticker switch is
+  // refetching — only the very first load (no bars yet) shows the full
+  // blocking spinner. This avoids the whole toolbar disappearing on every
+  // interval change, which made switching feel slow.
+  const ready     = !error && bars.length > 0 && height != null;
 
   // ── Keep rrRef / showVBPRef in sync with React state ────────────────────────
   useEffect(() => { rrRef.current = rr; }, [rr]);
@@ -1116,9 +1208,9 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
   // ── Memoised chart options (does NOT depend on rr — managed imperatively) ───
   const chartOptions = useMemo(
-    () => buildOptions(ticker, bars, barTimeMs, threshold),
+    () => buildOptions(ticker, bars, barTimeMs, threshold, loadedBarMs),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ticker, bars, barTimeMs, threshold]
+    [ticker, bars, barTimeMs, threshold, loadedBarMs]
   );
 
   // ── Derived R/R metrics for the input panel ──────────────────────────────────
@@ -1148,7 +1240,10 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   return (
     <div className="relative flex flex-col h-full w-full">
       {/* ── Loading / error states ── */}
-      {(loading || height == null) && !error && (
+      {/* Full blocking spinner only for the very first load (no bars yet) —
+          switching bar interval/ticker afterward keeps the old chart mounted
+          and shows a small inline indicator instead (see toolbar). */}
+      {(loading && bars.length === 0 || height == null) && !error && (
         <div className="flex-1 flex items-center justify-center gap-2 text-slate-400">
           <Loader2 className="w-5 h-5 animate-spin" />
           <span className="text-sm">Loading chart…</span>
@@ -1270,6 +1365,33 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                 </button>
               ))}
             </div>
+
+            {/* Bar interval — controls downloaded bar size / history window */}
+            <div className="flex items-center rounded overflow-hidden border border-slate-700 shrink-0 ml-2">
+              {BAR_INTERVALS.map((interval, i) => (
+                <button
+                  key={interval.label}
+                  onClick={() => handleBarIntervalChange(interval)}
+                  title={
+                    interval.label === "15m" ? "15-minute bars · 30 days"
+                    : interval.label === "4H" ? "4-hour bars · 6 months"
+                    : "Daily bars · 2 years"
+                  }
+                  className={`px-2.5 py-1 text-xs font-semibold transition ${
+                    i > 0 ? "border-l border-slate-700" : ""
+                  } ${
+                    barInterval.label === interval.label
+                      ? "bg-cyan-900/40 text-cyan-300"
+                      : "bg-slate-800 text-slate-500 hover:text-slate-200"
+                  }`}
+                >
+                  {interval.label}
+                </button>
+              ))}
+            </div>
+            {loading && bars.length > 0 && (
+              <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin shrink-0" />
+            )}
 
             {/* Order buttons — only when a drawing is placed */}
             {rr && (
