@@ -10,7 +10,7 @@ import {
   ArrowUpRight, ArrowDownRight, BarChart2,
   HardDrive, Wifi, Loader2,
   TrendingUp, TrendingDown, ShoppingBag, Search,
-  ShieldCheck, ShieldAlert,
+  ShieldCheck, ShieldAlert, ChevronDown,
 } from "lucide-react";
 
 // ── Server heartbeat card ─────────────────────────────────────────────────────
@@ -462,6 +462,7 @@ export default function AdminPanel({ user }) {
   const [detailOrder,   setDetailOrder]   = useState(null);  // { dbOrder, alpacaData } | null
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError,   setDetailError]   = useState(null);
+  const [dbCheckOpen,   setDbCheckOpen]   = useState(false);
 
   const openDetail = async (dbOrder) => {
     if (!dbOrder.alpaca_order_id) return;
@@ -704,8 +705,8 @@ export default function AdminPanel({ user }) {
               {ordersFilter === "open" ? (
                 <>
                   {/* ── Open trades headers ── */}
-                  <div className="grid grid-cols-[1.5fr_0.7fr_0.7fr_0.4fr_1fr_1fr_1fr_0.6fr_1fr_0.8fr_1.1fr_1.4fr] gap-3 px-5 py-2 border-b border-slate-800/40">
-                    {["Ticker", "Detail", "Chart", "Dir", "Fill / Entry", "Stop", "Target", "Qty", "Open P/L", "State", "Status", "Start Date"].map(h => (
+                  <div className="grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr] gap-3 px-5 py-2 border-b border-slate-800/40">
+                    {["Ticker", "Mode", "Source", "Detail", "Chart", "Dir", "Qty", "Open P/L", "State", "Status", "Start Date"].map(h => (
                       <span key={h} className={`text-[10px] font-semibold text-slate-500 uppercase tracking-wider${h === "Dir" ? " text-center" : ""}`}>{h}</span>
                     ))}
                   </div>
@@ -737,23 +738,24 @@ export default function AdminPanel({ user }) {
                         return (
                           <div
                             key={o.id}
-                            className={`grid grid-cols-[1.5fr_0.7fr_0.7fr_0.4fr_1fr_1fr_1fr_0.6fr_1fr_0.8fr_1.1fr_1.4fr] gap-3 px-5 py-3 transition items-center ${
+                            className={`grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr] gap-3 px-5 py-3 transition items-center ${
                               beyondTakeProfit ? "tp-row-flash" : "hover:bg-slate-800/30"
                             }`}
                           >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="font-bold text-slate-100 text-sm truncate">{o.ticker}</span>
-                              {isPaper && <span className="text-[9px] font-semibold text-blue-400 bg-blue-900/30 border border-blue-700/40 rounded px-1 py-0.5 shrink-0">PAPER</span>}
-                            </div>
+                            <span className="font-bold text-slate-100 text-sm truncate">{o.ticker}</span>
+                            {isPaper
+                              ? <span className="text-[9px] font-semibold text-blue-400 bg-blue-900/30 border border-blue-700/40 rounded px-1 py-0.5 w-fit">PAPER</span>
+                              : <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 rounded px-1 py-0.5 w-fit">LIVE</span>
+                            }
+                            <span className="text-[11px] text-slate-400 truncate" title={o.trade_idea_name ?? "Manual"}>
+                              {o.trade_idea_name ?? <span className="text-slate-600 italic">Manual</span>}
+                            </span>
                             <button onClick={() => openDetail(o)} disabled={!o.alpaca_order_id} title="View bracket details from Alpaca" className="text-slate-500 hover:text-brand-400 disabled:opacity-20 disabled:cursor-not-allowed transition"><Search className="w-3.5 h-3.5" /></button>
                             <button title="View trade chart" onClick={() => setReviewOrder(o)} className="text-slate-500 hover:text-emerald-400 transition"><BarChart2 className="w-3.5 h-3.5" /></button>
                             <div className="flex items-center justify-center gap-1">
                               {isLong ? <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> : <TrendingDown className="w-3.5 h-3.5 text-red-400" />}
                               <span className={`text-xs font-semibold ${isLong ? "text-emerald-400" : "text-red-400"}`}>{isLong ? "Long" : "Short"}</span>
                             </div>
-                            <span className="font-mono text-xs text-slate-200">{fillPrice != null ? `$${Number(fillPrice).toFixed(2)}` : "—"}</span>
-                            <span className="font-mono text-xs text-red-400">{o.stop_price != null ? `$${Number(o.stop_price).toFixed(2)}` : "—"}</span>
-                            <span className="font-mono text-xs text-emerald-400">{o.target_price != null ? `$${Number(o.target_price).toFixed(2)}` : "—"}</span>
                             <span className="font-mono text-xs text-slate-300">{o.qty}</span>
                             <span className={`font-mono text-xs font-semibold ${plColor}`}>{pl != null ? `${plPos ? "+" : ""}$${Math.abs(pl).toFixed(2)}` : "—"}</span>
                             {o.is_open ? <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-900/30 border border-emerald-700/40 rounded px-1 py-0.5 w-fit">Open</span> : <span className="text-[10px] font-semibold text-slate-400 bg-slate-800/60 border border-slate-700/40 rounded px-1 py-0.5 w-fit">Closed</span>}
@@ -1119,18 +1121,13 @@ export default function AdminPanel({ user }) {
       {/* ── Order detail modal ── */}
       {detailOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-[2px] p-4">
-          <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
 
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700 shrink-0">
-              <div>
-                <p className="text-white font-bold text-sm">
-                  Bracket Details — {detailOrder.dbOrder.ticker}
-                </p>
-                <p className="text-slate-400 text-[11px] mt-0.5 font-mono truncate">
-                  {detailOrder.dbOrder.alpaca_order_id}
-                </p>
-              </div>
+              <p className="text-white font-bold text-sm">
+                Bracket Details — {detailOrder.dbOrder.ticker}
+              </p>
               <button onClick={closeDetail} className="text-slate-400 hover:text-slate-300 transition">
                 <XCircle className="w-5 h-5" />
               </button>
@@ -1150,6 +1147,80 @@ export default function AdminPanel({ user }) {
                 </div>
               )}
 
+              {/* ── Fill / Entry summary ── */}
+              {(() => {
+                const db        = detailOrder.dbOrder;
+                const a         = detailOrder.alpacaData;  // may be null while loading
+                const isLong    = db.direction === "long";
+                const fillPrice = db.filled_avg_price ?? db.entry_price;
+                const entryLim  = db.entry_price      != null ? Number(db.entry_price)      : null;
+                const fillPx    = db.filled_avg_price != null ? Number(db.filled_avg_price) : null;
+                const stopPx    = db.stop_price       != null ? Number(db.stop_price)       : null;
+                const tgtPx     = db.target_price     != null ? Number(db.target_price)     : null;
+                const slip      = entryLim != null && fillPx != null ? fillPx - entryLim : null;
+                const slipBad   = slip != null && (isLong ? slip > 0.005 : slip < -0.005);
+                const slipGood  = slip != null && (isLong ? slip < -0.005 : slip > 0.005);
+                const slipColor = slipBad ? "text-red-400" : slipGood ? "text-emerald-400" : "text-slate-400";
+
+                // Alpaca bracket leg values for stop / target mismatch detection
+                const priceTol   = 0.01;
+                const legs       = a?.legs ?? [];
+                const stopLeg    = legs.find(l => l.type === "stop" || l.type === "stop_limit");
+                const profitLeg  = legs.find(l => l.type === "limit" && l !== stopLeg);
+                const aStopPx    = stopLeg?.stop_price   != null ? Number(stopLeg.stop_price)   : null;
+                const aTgtPx     = profitLeg?.limit_price != null ? Number(profitLeg.limit_price) : null;
+                const stopMatch  = stopPx != null && aStopPx != null ? Math.abs(stopPx - aStopPx) <= priceTol : null;
+                const tgtMatch   = tgtPx  != null && aTgtPx  != null ? Math.abs(tgtPx  - aTgtPx)  <= priceTol : null;
+
+                const PriceCell = ({ dbVal, aVal, match, className }) => (
+                  <span className="flex items-center gap-1">
+                    <span className={`font-mono ${className}`}>{dbVal}</span>
+                    {match === false && aVal != null && (
+                      <span className="text-[10px] text-slate-500">↔ <span className="font-mono text-amber-400">{aVal}</span></span>
+                    )}
+                  </span>
+                );
+
+                const rows = [
+                  ["Direction", <span className={`font-semibold ${isLong ? "text-emerald-400" : "text-red-400"}`}>{isLong ? "Long" : "Short"}</span>],
+                  ["Qty",       <span className="font-mono text-slate-200">{db.qty ?? "—"}</span>],
+                  ["Entry Limit", entryLim != null
+                    ? <span className="font-mono text-slate-300">${entryLim.toFixed(2)}</span>
+                    : <span className="text-slate-500">—</span>],
+                  ["Fill Price", fillPrice != null
+                    ? <span className="font-mono text-slate-200">${Number(fillPrice).toFixed(2)}</span>
+                    : <span className="text-slate-500">—</span>],
+                  ...(slip != null && Math.abs(slip) > 0.005 ? [
+                    ["Slippage", <span className={`font-mono ${slipColor}`}>{slip > 0 ? "+" : ""}{slip.toFixed(3)}</span>],
+                  ] : []),
+                  ["Stop", stopPx != null
+                    ? <PriceCell dbVal={`$${stopPx.toFixed(2)}`} aVal={aStopPx != null ? `$${aStopPx.toFixed(2)}` : null} match={stopMatch} className="text-red-400" />
+                    : <span className="text-slate-500">—</span>],
+                  ["Target", tgtPx != null
+                    ? <PriceCell dbVal={`$${tgtPx.toFixed(2)}`} aVal={aTgtPx != null ? `$${aTgtPx.toFixed(2)}` : null} match={tgtMatch} className="text-emerald-400" />
+                    : <span className="text-slate-500">—</span>],
+                ];
+
+                return (
+                  <div className="rounded-lg border border-slate-700 bg-slate-900/50">
+                    <div className="px-3 py-2 border-b border-slate-700 flex items-center gap-1.5">
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Fill / Entry</span>
+                      {db.paper_mode && (
+                        <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-900/40 text-violet-400 border border-violet-800/50">Paper</span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 px-3 py-3">
+                      {rows.map(([lbl, val]) => (
+                        <div key={lbl} className="flex justify-between gap-2">
+                          <span className="text-slate-400">{lbl}</span>
+                          {val}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* ── Sanity check: DB vs Alpaca ── */}
               {detailOrder.alpacaData && (() => {
                 const db  = detailOrder.dbOrder;
@@ -1168,8 +1239,6 @@ export default function AdminPanel({ user }) {
                   { label: "Fill Price",  db: db.filled_avg_price != null ? `$${Number(db.filled_avg_price).toFixed(2)}` : "—", alpaca: a.filled_avg_price != null ? `$${Number(a.filled_avg_price).toFixed(2)}` : "—", match: priceMatch(db.filled_avg_price, a.filled_avg_price) },
                   { label: "Status",      db: db.status ?? "—",                                       alpaca: a.status ?? "—",                                                  match: (db.status ?? "") === (a.status ?? "") },
                   { label: "Entry Limit", db: db.entry_price != null ? `$${Number(db.entry_price).toFixed(2)}` : "—",       alpaca: a.limit_price != null ? `$${Number(a.limit_price).toFixed(2)}` : "—",     match: priceMatch(db.entry_price, a.limit_price) },
-                  { label: "Stop",        db: db.stop_price != null ? `$${Number(db.stop_price).toFixed(2)}` : "—",         alpaca: stopLeg?.stop_price != null ? `$${Number(stopLeg.stop_price).toFixed(2)}` : "—",   match: priceMatch(db.stop_price, stopLeg?.stop_price) },
-                  { label: "Target",      db: db.target_price != null ? `$${Number(db.target_price).toFixed(2)}` : "—",     alpaca: profitLeg?.limit_price != null ? `$${Number(profitLeg.limit_price).toFixed(2)}` : "—", match: priceMatch(db.target_price, profitLeg?.limit_price) },
                 ];
 
                 const mismatches = checks.filter(c => c.match === false);
@@ -1177,33 +1246,39 @@ export default function AdminPanel({ user }) {
                 const allGood    = mismatches.length === 0;
 
                 return (
-                  <div className={`rounded-lg border px-3 py-2.5 ${allGood ? "border-emerald-800/50 bg-emerald-900/10" : "border-amber-700/50 bg-amber-900/10"}`}>
-                    <div className="flex items-center gap-1.5 mb-2">
+                  <div className={`rounded-lg border ${allGood ? "border-emerald-800/50 bg-emerald-900/10" : "border-amber-700/50 bg-amber-900/10"}`}>
+                    <button
+                      onClick={() => setDbCheckOpen(v => !v)}
+                      className="w-full flex items-center gap-1.5 px-3 py-2.5 text-left"
+                    >
                       {allGood
                         ? <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                         : <ShieldAlert  className="w-3.5 h-3.5 text-amber-400  shrink-0" />}
-                      <span className={`text-[11px] font-semibold ${allGood ? "text-emerald-400" : "text-amber-400"}`}>
+                      <span className={`text-[11px] font-semibold flex-1 ${allGood ? "text-emerald-400" : "text-amber-400"}`}>
                         {allGood ? "DB matches Alpaca" : `${mismatches.length} mismatch${mismatches.length !== 1 ? "es" : ""} detected`}
                       </span>
                       {unknowns.length > 0 && (
-                        <span className="text-[10px] text-slate-500 italic ml-1">({unknowns.length} unavailable)</span>
+                        <span className="text-[10px] text-slate-500 italic">({unknowns.length} unavailable)</span>
                       )}
-                    </div>
-                    <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-                      {checks.map(({ label, db: dv, alpaca: av, match }) => (
-                        <div key={label} className={`flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 border ${
-                          match === true  ? "bg-emerald-900/20 border-emerald-800/50 text-emerald-400" :
-                          match === false ? "bg-amber-900/30  border-amber-600/50  text-amber-300"     :
-                                            "bg-slate-800/60  border-slate-700      text-slate-500"
-                        }`}>
-                          <span className="text-slate-500 mr-0.5">{label}:</span>
-                          <span className="font-mono font-semibold">{dv}</span>
-                          {match === false && (
-                            <span className="ml-1 text-slate-500">↔ <span className="text-amber-400 font-mono">{av}</span></span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                      <ChevronDown className={`w-3.5 h-3.5 ml-1 shrink-0 transition-transform ${dbCheckOpen ? "rotate-180" : ""} ${allGood ? "text-emerald-600" : "text-amber-600"}`} />
+                    </button>
+                    {dbCheckOpen && (
+                      <div className="flex flex-wrap gap-x-3 gap-y-1.5 px-3 pb-2.5">
+                        {checks.map(({ label, db: dv, alpaca: av, match }) => (
+                          <div key={label} className={`flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 border ${
+                            match === true  ? "bg-emerald-900/20 border-emerald-800/50 text-emerald-400" :
+                            match === false ? "bg-amber-900/30  border-amber-600/50  text-amber-300"     :
+                                              "bg-slate-800/60  border-slate-700      text-slate-500"
+                          }`}>
+                            <span className="text-slate-500 mr-0.5">{label}:</span>
+                            <span className="font-mono font-semibold">{dv}</span>
+                            {match === false && (
+                              <span className="ml-1 text-slate-500">↔ <span className="text-amber-400 font-mono">{av}</span></span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -1216,7 +1291,7 @@ export default function AdminPanel({ user }) {
                 const fmtDate = (v) => v ? new Date(v).toLocaleString() : "—";
 
                 const OrderBlock = ({ label, data: o, accent }) => (
-                  <div className={`rounded-lg border ${accent} bg-slate-900/50 overflow-hidden`}>
+                  <div className={`rounded-lg border ${accent} bg-slate-900/50`}>
                     <div className={`px-3 py-2 border-b ${accent} flex items-center justify-between`}>
                       <span className="font-semibold text-slate-300">{label}</span>
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
@@ -1226,7 +1301,7 @@ export default function AdminPanel({ user }) {
                         "bg-slate-700/60 text-slate-400"
                       }`}>{o.status}</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 px-3 py-3">
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 px-3 pt-3 pb-4">
                       {[
                         ["Side",          o.side],
                         ["Type",          o.type],
@@ -1245,7 +1320,7 @@ export default function AdminPanel({ user }) {
                           <span className="font-mono text-slate-200 capitalize">{val}</span>
                         </div>
                       ))}
-                      <div className="col-span-2 mt-1 border-t border-slate-700/50 pt-1.5">
+                      <div className="col-span-2 mt-1 border-t border-slate-700/50 pt-2">
                         <span className="text-slate-500">ID </span>
                         <span className="font-mono text-slate-400 break-all">{o.id}</span>
                       </div>

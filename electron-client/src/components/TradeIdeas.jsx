@@ -1166,10 +1166,11 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                           key={col}
                           className={`px-3 py-2 whitespace-nowrap${isTickerCol && !inOpenTrade ? " cursor-pointer" : ""}${inOpenTrade ? " cursor-not-allowed opacity-50" : ""}`}
                           onClick={isTickerCol && !inOpenTrade ? () => setChartModal({
-                            ticker:    row.ticker,
-                            barTime:   rowBarTime(row),
-                            threshold: rowThreshold(row),
-                            bias:      row.signal_direction?.toLowerCase() ?? null,
+                            ticker:       row.ticker,
+                            barTime:      rowBarTime(row),
+                            threshold:    rowThreshold(row),
+                            bias:         row.signal_direction?.toLowerCase() ?? null,
+                            strategyName: activeStrategy?.name ?? null,
                           }) : undefined}
                         >
                           {inOpenTrade ? (
@@ -1225,10 +1226,11 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                                 : handleInfoEnter(null, row.ticker, rowLong)}
                               onMouseLeave={skipInfoFilter ? handleLorentzianLeave : handleInfoLeave}
                               onClick={canOpen ? () => setChartModal({
-                                ticker:    row.ticker,
-                                barTime:   rowBarTime(row),
-                                threshold: rowThreshold(row),
-                                bias:      row.signal_direction?.toLowerCase() ?? null,
+                                ticker:       row.ticker,
+                                barTime:      rowBarTime(row),
+                                threshold:    rowThreshold(row),
+                                bias:         row.signal_direction?.toLowerCase() ?? null,
+                                strategyName: activeStrategy?.name ?? null,
                               }) : undefined}
                               className={`inline-flex items-center justify-center transition${canOpen ? " cursor-pointer" : " cursor-not-allowed"}`}
                               title="MA alignment & momentum details"
@@ -1306,6 +1308,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
               threshold={chartModal.threshold}
               height={chartHeight}
               bias={chartModal.bias ?? (isMixed ? null : activeStrategy?.direction?.toLowerCase() ?? null)}
+              tradeIdeaName={chartModal.strategyName ?? null}
               onClose={() => {
                 setChartModal(null);
                 // Refresh so a newly opened trade is immediately struck through

@@ -789,7 +789,7 @@ function applyRR(chart, rr, showRLevels = true) {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function ModalChart({ ticker, barTime, threshold, height, bias, onClose }) {
+export default function ModalChart({ ticker, barTime, threshold, height, bias, onClose, tradeIdeaName }) {
   const [bars,    setBars]    = useState([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
@@ -1819,9 +1819,10 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                               reward_amt:         parseFloat((reward * rr.qty).toFixed(4)),
                               // chart reconstruction metadata
                               bias,
-                              bar_time:   barTime  ?? null,
-                              threshold:  threshold != null ? parseFloat(threshold) : null,
-                              entry_time: rr.entryTime ?? null,
+                              bar_time:        barTime  ?? null,
+                              threshold:       threshold != null ? parseFloat(threshold) : null,
+                              entry_time:      rr.entryTime ?? null,
+                              trade_idea_name: tradeIdeaName ?? null,
                             });
                             window.dispatchEvent(new CustomEvent("tf:trade-opened"));
                             setOrderResult({
