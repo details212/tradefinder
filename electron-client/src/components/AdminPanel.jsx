@@ -17,6 +17,25 @@ import {
 const PING_INTERVAL = 10000;
 const NUM_TICKS     = 80;
 
+// Count weekdays (Mon–Fri) between a start date and now, inclusive of the start day.
+function tradingDaysOpen(startDate) {
+  if (!startDate) return null;
+  const start = new Date(startDate);
+  if (Number.isNaN(start.getTime())) return null;
+  start.setHours(0, 0, 0, 0);
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  if (end < start) return 0;
+  let days = 0;
+  const cur = new Date(start);
+  while (cur <= end) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) days++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
 // Colour for a single ping result
 function tickColor(entry) {
   if (!entry)              return "#1e293b";          // empty slot
@@ -705,8 +724,8 @@ export default function AdminPanel({ user }) {
               {ordersFilter === "open" ? (
                 <>
                   {/* ── Open trades headers ── */}
-                  <div className="grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr] gap-3 px-5 py-2 border-b border-slate-800/40">
-                    {["Ticker", "Mode", "Source", "Detail", "Chart", "Dir", "Qty", "Open P/L", "State", "Status", "Start Date"].map(h => (
+                  <div className="grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr_0.5fr] gap-3 px-5 py-2 border-b border-slate-800/40">
+                    {["Ticker", "Mode", "Source", "Detail", "Chart", "Dir", "Qty", "Open P/L", "State", "Status", "Start Date", "Days"].map(h => (
                       <span key={h} className={`text-[10px] font-semibold text-slate-500 uppercase tracking-wider${h === "Dir" ? " text-center" : ""}`}>{h}</span>
                     ))}
                   </div>
@@ -735,10 +754,11 @@ export default function AdminPanel({ user }) {
                           livePx != null &&
                           targetPx != null &&
                           (isLong ? livePx >= targetPx : livePx <= targetPx);
+                        const daysOpen = tradingDaysOpen(o.created_at);
                         return (
                           <div
                             key={o.id}
-                            className={`grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr] gap-3 px-5 py-3 transition items-center ${
+                            className={`grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr_0.5fr] gap-3 px-5 py-3 transition items-center ${
                               beyondTakeProfit ? "tp-row-flash" : "hover:bg-slate-800/30"
                             }`}
                           >
@@ -761,6 +781,11 @@ export default function AdminPanel({ user }) {
                             {o.is_open ? <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-900/30 border border-emerald-700/40 rounded px-1 py-0.5 w-fit">Open</span> : <span className="text-[10px] font-semibold text-slate-400 bg-slate-800/60 border border-slate-700/40 rounded px-1 py-0.5 w-fit">Closed</span>}
                             <span className={`text-xs font-medium capitalize ${statusColor}`}>{o.status ?? "—"}</span>
                             <span className="text-[11px] text-slate-400">{placed}</span>
+                            <span className={`font-mono text-xs ${
+                              o.trade_idea_name === "Tradefinder AI" && daysOpen != null && daysOpen >= 4
+                                ? "text-yellow-400 animate-pulse font-semibold"
+                                : "text-slate-300"
+                            }`}>{daysOpen ?? "—"}</span>
                           </div>
                         );
                       })}
