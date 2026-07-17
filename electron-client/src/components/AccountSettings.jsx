@@ -830,6 +830,7 @@ function AutoCloseBeyondTpSection() {
 function RiskManagementSection({ portfolioValue }) {
   const [mode,    setMode]    = useState("dollar");   // "dollar" | "percent"
   const [value,   setValue]   = useState("");
+  const [rrRatio, setRrRatio] = useState("2");        // default R/R used to derive targets
   const [saving,  setSaving]  = useState(false);
   const [status,  setStatus]  = useState(null);
   const [loading, setLoading] = useState(true);
@@ -838,14 +839,16 @@ function RiskManagementSection({ portfolioValue }) {
     preferencesApi.get()
       .then(r => {
         const p = r.data.preferences ?? {};
-        if (p.risk_mode)  setMode(p.risk_mode);
-        if (p.risk_value) setValue(p.risk_value);
+        if (p.risk_mode)        setMode(p.risk_mode);
+        if (p.risk_value)       setValue(p.risk_value);
+        if (p.default_rr_ratio) setRrRatio(p.default_rr_ratio);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  const numVal = parseFloat(value) || 0;
+  const numVal   = parseFloat(value) || 0;
+  const rrNum    = parseFloat(rrRatio) || 0;
 
   const derivedDollar = (() => {
     if (mode !== "percent" || !numVal) return null;
@@ -868,9 +871,17 @@ function RiskManagementSection({ portfolioValue }) {
       setStatus({ type: "error", message: "Percent cannot exceed 100." });
       return;
     }
+    if (!rrNum || rrNum < 0.1) {
+      setStatus({ type: "error", message: "Default R/R ratio must be at least 0.1." });
+      return;
+    }
     setSaving(true);
     try {
-      await preferencesApi.update({ risk_mode: mode, risk_value: String(numVal) });
+      await preferencesApi.update({
+        risk_mode:       mode,
+        risk_value:      String(numVal),
+        default_rr_ratio: String(rrNum),
+      });
       setStatus({ type: "success", message: "Risk settings saved." });
     } catch {
       setStatus({ type: "error", message: "Failed to save. Please try again." });
@@ -977,6 +988,26 @@ function RiskManagementSection({ portfolioValue }) {
                 </div>
               </>
             )}
+          </div>
+
+          {/* ── Default R/R ratio ── */}
+          <div className="pt-1 border-t border-slate-700/40">
+            <label className="block text-xs text-slate-500 mb-1.5 mt-4">Default R/R ratio</label>
+            <div className="relative w-40">
+              <input
+                type="number"
+                min="0.1"
+                step="0.1"
+                value={rrRatio}
+                onChange={e => { setRrRatio(e.target.value); setStatus(null); }}
+                placeholder="2.0"
+                className={inputCls}
+              />
+            </div>
+            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+              The reward-to-risk multiple used to auto-place your take-profit from the stop
+              when you draw a trade. You can still adjust it per-trade on the chart.
+            </p>
           </div>
 
           <StatusBanner status={status} />

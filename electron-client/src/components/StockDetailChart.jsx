@@ -627,6 +627,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   const [riskPrefs,     setRiskPrefs]     = useState(null);
   const [portfolioValue, setPortfolioValue] = useState(null);
   const [qtyDerived,    setQtyDerived]    = useState(false);
+  const [defaultRrRatio, setDefaultRrRatio] = useState(2);   // default R/R from Risk Management settings
   const [showVBP,         setShowVBP]         = useState(true);
   const [useRRConstraint, setUseRRConstraint] = useState(true);
   const [rrFlash,         setRrFlash]         = useState(false);
@@ -743,6 +744,8 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
       .then(r => {
         const p = r.data.preferences ?? {};
         if (p.risk_mode && p.risk_value) setRiskPrefs(p);
+        const rr = parseFloat(p.default_rr_ratio);
+        if (rr && rr >= 0.1) setDefaultRrRatio(rr);
       })
       .catch(() => {});
     alpacaApi.test()
@@ -828,7 +831,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
         ? parseFloat((entry - stopDist).toFixed(2))   // long: stop below entry
         : parseFloat((entry + stopDist).toFixed(2));  // short: stop above entry
       setRr(prev => {
-        const rrRatio = prev?.rrRatio ?? 2;
+        const rrRatio = prev?.rrRatio ?? defaultRrRatio;
         const target  = parseFloat((entry + (entry - stop) * rrRatio).toFixed(2));
         const autoQty = deriveQty(entry, riskPrefs, portfolioValue);
         const qty     = autoQty ?? prev?.qty ?? 10;
@@ -842,7 +845,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
       chart.container.removeEventListener("click", handleClick);
       chart.container.style.cursor = "";
     };
-  }, [rrMode, bars]); // direction read via ref — no re-attach needed when direction changes
+  }, [rrMode, bars, defaultRrRatio]); // direction read via ref — no re-attach needed when direction changes
 
   const barTimeMs = etStringToUtcMs(barTime);
   const ready     = !loading && !error && bars.length > 0 && chartHeight != null;
@@ -1279,7 +1282,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                 <label className="flex items-center gap-1.5">
                   <span className="text-slate-400 font-medium">R/R</span>
                   <input
-                    type="number" step="1" min="1" value={rr.rrRatio}
+                    type="number" step="0.1" min="0.1" value={rr.rrRatio}
                     onChange={e => {
                       const val = e.target.value;
                       setRr(r => {
@@ -1392,9 +1395,26 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
             const rrRatio   = risk > 0 ? (reward / risk).toFixed(2) : "∞";
             const riskAmt   = (risk   * rr.qty).toFixed(2);
             const rewardAmt = (reward * rr.qty).toFixed(2);
-            const stopAboveEntry = isLong  && rr.stop >= entryPrice;
-            const stopBelowEntry = !isLong && rr.stop <= entryPrice;
-            const hasLevelError  = stopAboveEntry || stopBelowEntry;
+            // Validate both levels: the target can be dragged/typed to the wrong
+            // side of entry, which Alpaca rejects with "take_profit.limit_price
+            // must be <= base_price - 0.01". Enforce Alpaca's ≥ $0.01 margin.
+            const stopBadSide = isLong ? rr.stop >= entryPrice : rr.stop <= entryPrice;
+            const targetGap     = isLong ? rr.target - entryPrice : entryPrice - rr.target;
+            const targetBadSide = Number(targetGap.toFixed(2)) < 0.01;
+            const hasLevelError = stopBadSide || targetBadSide;
+
+            // "Nudge to valid levels" — force any offending level onto the correct
+            // side of entry, preserving its distance (min $0.01 to satisfy Alpaca).
+            // Only the invalid level(s) move; the user can still drag afterwards.
+            const forceSide = (val, wantAbove) => {
+              const dist = Math.max(0.01, Math.abs(val - entryPrice));
+              return parseFloat((wantAbove ? entryPrice + dist : entryPrice - dist).toFixed(2));
+            };
+            const nudgeToFix = () => setRr(r => r ? {
+              ...r,
+              stop:   stopBadSide   ? forceSide(r.stop,   !isLong) : r.stop,
+              target: targetBadSide ? forceSide(r.target,  isLong) : r.target,
+            } : r);
 
             const Row = ({ label, value, valueClass = "text-slate-200" }) => (
               <div className="flex justify-between items-center py-1.5 border-b border-slate-700/50 last:border-0">
@@ -1463,9 +1483,20 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
 
                   {hasLevelError && !orderResult && (
                     <div className="mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium bg-red-900/40 border border-red-500/40 text-red-300">
-                      <p className="font-bold mb-0.5">Invalid stop for {isLong ? "Long" : "Short"}</p>
-                      <p>· Stop loss must be {isLong ? "below" : "above"} the entry price.</p>
-                      <p className="mt-1 text-red-400/70">Drag the stop line on the chart to fix.</p>
+                      <p className="font-bold mb-0.5">Invalid levels for {isLong ? "Long" : "Short"}</p>
+                      {stopBadSide && (
+                        <p>· Stop loss must be {isLong ? "below" : "above"} the entry price.</p>
+                      )}
+                      {targetBadSide && (
+                        <p>· Take profit must be {isLong ? "above" : "below"} the entry price.</p>
+                      )}
+                      <button
+                        onClick={nudgeToFix}
+                        className="mt-2 w-full py-1.5 rounded-md text-[11px] font-semibold bg-red-500/25 hover:bg-red-500/40 border border-red-400/50 text-red-100 transition"
+                      >
+                        Nudge to valid levels
+                      </button>
+                      <p className="mt-1 text-red-400/60 text-[10px]">Flips the invalid {stopBadSide && targetBadSide ? "levels" : stopBadSide ? "stop" : "target"} to the correct side of entry. You can still drag to adjust.</p>
                     </div>
                   )}
 
@@ -1509,6 +1540,10 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                           }
                           if (!isLong && rr.stop <= entryPrice) {
                             setOrderResult({ ok: false, message: "Stop loss must be above the entry price for a Short trade." });
+                            return;
+                          }
+                          if (targetBadSide) {
+                            setOrderResult({ ok: false, message: `Take profit must be ${isLong ? "above" : "below"} the entry price for a ${isLong ? "Long" : "Short"} trade.` });
                             return;
                           }
                           setOrderSubmitting(true);
