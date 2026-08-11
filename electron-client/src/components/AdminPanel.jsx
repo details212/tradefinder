@@ -3,11 +3,11 @@ import api, { alpacaApi, authApi, resourcesApi, snapshotsApi } from "../api/clie
 import TradeReviewModal from "./TradeReviewModal";
 import AnalyticsPanel from "./AnalyticsPanel";
 import {
-  Activity, Database, Cpu,
+  Database, Cpu,
   Zap, Globe, RefreshCw, CheckCircle, AlertTriangle,
   XCircle, Clock, Server,
   Key, ChevronRight,
-  ArrowUpRight, ArrowDownRight, BarChart2,
+  BarChart2,
   HardDrive, Wifi, Loader2,
   TrendingUp, TrendingDown, ShoppingBag, Search,
   ShieldCheck, ShieldAlert, ChevronDown,
@@ -203,24 +203,6 @@ function ProgressBar({ value, max = 100, color = "brand" }) {
   );
 }
 
-// Sparkline using SVG path
-function Sparkline({ data, color = "#6366f1", height = 32 }) {
-  if (!data?.length) return null;
-  const w = 80, h = height;
-  const min = Math.min(...data), max = Math.max(...data);
-  const range = max - min || 1;
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - ((v - min) / range) * h;
-    return `${x},${y}`;
-  }).join(" ");
-  return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 // ── Section wrapper ───────────────────────────────────────────────────────────
 function Card({ children, className = "" }) {
   return (
@@ -242,33 +224,27 @@ function CardHeader({ icon: Icon, title, accent, action }) {
   );
 }
 
-// ── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, change, changeDir, sparkData, accent }) {
-  const accentMap = {
-    blue:   { bg: "bg-blue-500/10",   text: "text-blue-400",   border: "border-blue-500/30",  spark: "#60a5fa" },
-    purple: { bg: "bg-purple-500/10", text: "text-purple-400", border: "border-purple-500/30",spark: "#a78bfa" },
-    green:  { bg: "bg-emerald-500/10",text: "text-emerald-400",border: "border-emerald-500/30",spark: "#34d399" },
-    orange: { bg: "bg-orange-500/10", text: "text-orange-400", border: "border-orange-500/30",spark: "#fb923c" },
-  };
-  const a = accentMap[accent] ?? accentMap.blue;
+function AccordionCard({ icon: Icon, title, action, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <Card className="p-5 flex flex-col gap-3">
-      <div className="flex items-start justify-between">
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center border ${a.bg} ${a.border}`}>
-          <Icon className={`w-4 h-4 ${a.text}`} />
-        </div>
-        {sparkData && <Sparkline data={sparkData} color={a.spark} />}
+    <Card>
+      <div className={`flex items-center justify-between px-5 py-4 ${open ? "border-b border-slate-700/50" : ""}`}>
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          className="flex items-center gap-2.5 flex-1 min-w-0 text-left hover:opacity-80 transition"
+        >
+          {Icon && <Icon className="w-4 h-4 text-slate-400 shrink-0" />}
+          <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
+          <ChevronDown className={`w-4 h-4 text-slate-500 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+        {action && (
+          <div className="shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+            {action}
+          </div>
+        )}
       </div>
-      <div>
-        <p className="text-base font-bold text-slate-100 tabular-nums">{value}</p>
-        <p className="text-xs text-slate-400 mt-0.5">{label}</p>
-      </div>
-      {change && (
-        <div className={`flex items-center gap-1 text-xs font-medium ${changeDir === "up" ? "text-emerald-400" : "text-red-400"}`}>
-          {changeDir === "up" ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-          {change}
-        </div>
-      )}
+      {open && children}
     </Card>
   );
 }
@@ -559,41 +535,6 @@ export default function AdminPanel({ user }) {
     return () => clearInterval(id);
   }, [syncOrders]);
 
-  const sparkWeek   = [42, 49, 38, 55, 62, 58, 71];
-  const sparkCalls  = [120, 145, 130, 160, 175, 155, 190];
-  const sparkUptime = [99.9, 100, 99.8, 100, 100, 99.9, 100];
-  const sparkData   = [3.1, 3.4, 3.2, 3.8, 4.1, 3.9, 4.3];
-
-  const { wins, losses, winRate, dollarWin, dollarLoss, avgHoldTime } = useMemo(() => {
-    const closed = orders.filter(o => !o.is_open && o.unrealized_pl != null);
-    const w = closed.filter(o => o.unrealized_pl > 0).length;
-    const l = closed.filter(o => o.unrealized_pl < 0).length;
-    const dw = closed.reduce((sum, o) => o.unrealized_pl > 0 ? sum + Number(o.unrealized_pl) : sum, 0);
-    const dl = closed.reduce((sum, o) => o.unrealized_pl < 0 ? sum + Number(o.unrealized_pl) : sum, 0);
-
-    const withDuration = orders.filter(o => o.created_at && o.synced_at);
-    let avgHold = null;
-    if (withDuration.length) {
-      const totalMs = withDuration.reduce((sum, o) => {
-        const ms = new Date(o.synced_at) - new Date(o.created_at + (o.created_at.endsWith("Z") ? "" : "Z"));
-        return sum + (ms > 0 ? ms : 0);
-      }, 0);
-      const avgMs = totalMs / withDuration.length;
-      const totalMins = Math.round(avgMs / 60000);
-      if (totalMins < 60)        avgHold = `${totalMins}m`;
-      else if (totalMins < 1440) avgHold = `${Math.floor(totalMins / 60)}h ${totalMins % 60}m`;
-      else                       avgHold = `${Math.floor(totalMins / 1440)}d ${Math.floor((totalMins % 1440) / 60)}h`;
-    }
-
-    return {
-      wins: w, losses: l,
-      winRate: closed.length ? Math.round((w / closed.length) * 100) : null,
-      dollarWin: dw,
-      dollarLoss: dl,
-      avgHoldTime: avgHold,
-    };
-  }, [orders]);
-
   // Hide all permanently dead orders (canceled, expired, rejected, done_for_day).
   // These either never filled or are no longer relevant to the user's trade history.
   const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
@@ -617,9 +558,6 @@ export default function AdminPanel({ user }) {
             All systems operational
           </div>
         </div>
-
-        {/* ── Row 1: server heartbeat ── */}
-        <ServerHeartbeatCard />
 
         {/* ── My Orders ── */}
         <Card>
@@ -951,65 +889,24 @@ export default function AdminPanel({ user }) {
           )}
         </Card>
 
-        {/* ── Row 2: stat cards (4 equal) ── */}
-        <div className="grid grid-cols-4 gap-4">
-          <StatCard
-            icon={TrendingUp}
-            label="Total trades"
-            value={ordersLoading ? "…" : orders.length.toLocaleString()}
-            change={ordersLoading ? "" : `${orders.filter(o => o.is_open).length} open · ${orders.filter(o => !o.is_open).length} closed`}
-            changeDir="up"
-            sparkData={sparkWeek}
-            accent="blue"
-          />
-          <StatCard
-            icon={Activity}
-            label="Wins / Losses"
-            value={ordersLoading ? "…" : `${wins} / ${losses}`}
-            change={ordersLoading ? "" : winRate != null ? `${winRate}% win rate` : "No closed trades"}
-            changeDir={winRate != null && winRate >= 50 ? "up" : "down"}
-            sparkData={sparkCalls}
-            accent="purple"
-          />
-          <StatCard
-            icon={Zap}
-            label="$ Win / $ Loss"
-            value={ordersLoading ? "…" : `$${dollarWin.toFixed(2)} / $${Math.abs(dollarLoss).toFixed(2)}`}
-            change={ordersLoading ? "" : `Net $${(dollarWin + dollarLoss).toFixed(2)}`}
-            changeDir={dollarWin + dollarLoss >= 0 ? "up" : "down"}
-            sparkData={sparkUptime}
-            accent="green"
-          />
-          <StatCard
-            icon={Clock}
-            label="Avg Hold Time"
-            value={ordersLoading ? "…" : avgHoldTime ?? "—"}
-            change={ordersLoading ? "" : `across ${orders.filter(o => o.synced_at).length} trades`}
-            changeDir="up"
-            sparkData={sparkData}
-            accent="orange"
-          />
-        </div>
-
         {/* ── Analytics Dashboard ── */}
-        <AnalyticsPanel orders={orders} loading={ordersLoading} />
+        <AnalyticsPanel orders={orders} loading={ordersLoading} footer={<ServerHeartbeatCard />} />
 
         {/* ── Login History + Security (50/50) ── */}
         <div className="grid grid-cols-2 gap-4">
           {/* Login history */}
-          <Card>
-            <CardHeader
-              icon={Clock}
-              title="Login History"
-              action={
-                <button
-                  onClick={openLoginHistory}
-                  className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 transition"
-                >
-                  Show all <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              }
-            />
+          <AccordionCard
+            icon={Clock}
+            title="Login History"
+            action={
+              <button
+                onClick={openLoginHistory}
+                className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 transition"
+              >
+                Show all <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            }
+          >
             {loginEventsLoading ? (
               <div className="flex items-center justify-center py-10">
                 <Loader2 className="w-5 h-5 animate-spin text-slate-500" />
@@ -1065,30 +962,29 @@ export default function AdminPanel({ user }) {
                 })}
               </div>
             )}
-          </Card>
+          </AccordionCard>
 
           {/* Resources */}
-          <Card>
-            <CardHeader
-              icon={Globe}
-              title="Resources"
-              action={
-                <div className="flex items-center gap-2">
-                  {resourcesLastAt && (
-                    <span className="text-[10px] text-slate-500 tabular-nums">
-                      {new Date(resourcesLastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                    </span>
-                  )}
-                  <button
-                    onClick={fetchResources}
-                    title="Refresh now"
-                    className="text-slate-500 hover:text-slate-300 transition"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              }
-            />
+          <AccordionCard
+            icon={Globe}
+            title="Resources"
+            action={
+              <div className="flex items-center gap-2">
+                {resourcesLastAt && (
+                  <span className="text-[10px] text-slate-500 tabular-nums">
+                    {new Date(resourcesLastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </span>
+                )}
+                <button
+                  onClick={fetchResources}
+                  title="Refresh now"
+                  className="text-slate-500 hover:text-slate-300 transition"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            }
+          >
             <div className="flex flex-col divide-y divide-slate-800/60">
               {resourcesLoading && !resources ? (
                 <div className="flex items-center justify-center gap-2 py-8 text-slate-500 text-xs">
@@ -1138,7 +1034,7 @@ export default function AdminPanel({ user }) {
                 })
               )}
             </div>
-          </Card>
+          </AccordionCard>
         </div>
 
       </div>
