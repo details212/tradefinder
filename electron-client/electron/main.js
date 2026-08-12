@@ -1,5 +1,7 @@
 const { app, BrowserWindow, shell, Menu, ipcMain } = require("electron");
 const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 const { exec } = require("child_process");
 
 const isDev = !app.isPackaged;
@@ -77,6 +79,28 @@ ipcMain.handle("ping", (_event, host) => {
     });
   });
 });
+
+// ── IPC: stable device id (persisted in userData — one per app install) ───────
+function getDeviceIdPath() {
+  return path.join(app.getPath("userData"), "device-id");
+}
+
+function getOrCreateDeviceId() {
+  const filePath = getDeviceIdPath();
+  try {
+    if (fs.existsSync(filePath)) {
+      const id = fs.readFileSync(filePath, "utf8").trim();
+      if (id) return id;
+    }
+  } catch {
+    /* fall through to create */
+  }
+  const id = crypto.randomUUID();
+  fs.writeFileSync(filePath, id, "utf8");
+  return id;
+}
+
+ipcMain.handle("getDeviceId", () => getOrCreateDeviceId());
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);

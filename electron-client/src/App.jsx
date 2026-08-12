@@ -4,7 +4,7 @@ import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
 import UpdateModal from "./components/UpdateModal";
 import TradeAutomationDisclosureModal from "./components/TradeAutomationDisclosureModal";
-import { preferencesApi } from "./api/client";
+import { authApi, preferencesApi } from "./api/client";
 
 /** Compare two semver strings. Returns true if `a` is strictly older than `b`. */
 function isOutdated(a, b) {
@@ -20,7 +20,7 @@ function isOutdated(a, b) {
   return false;
 }
 
-const SESSION_MS = 12 * 60 * 60 * 1000; // 12 hours
+const SESSION_MS = 12 * 60 * 60 * 1000; // 12 hours — non-remember sessions only
 
 function App() {
   const [token,    setToken]    = useState(null);
@@ -39,11 +39,40 @@ function App() {
 
   const navigate = useNavigate();
 
-  // Clear any saved session on every app launch — always require login
+  // Restore remember-me session on launch; otherwise require fresh login
   useEffect(() => {
-    localStorage.removeItem("tf_token");
-    localStorage.removeItem("tf_user");
-    setChecking(false);
+    async function restoreSession() {
+      const remember = localStorage.getItem("tf_remember_me") === "true";
+      const storedToken = localStorage.getItem("tf_token");
+
+      if (!remember) {
+        localStorage.removeItem("tf_token");
+        localStorage.removeItem("tf_user");
+        localStorage.removeItem("tf_remember_me");
+        setChecking(false);
+        return;
+      }
+
+      if (!storedToken) {
+        localStorage.removeItem("tf_remember_me");
+        setChecking(false);
+        return;
+      }
+
+      try {
+        const res = await authApi.me();
+        setToken(storedToken);
+        setUser(res.data.user);
+      } catch {
+        localStorage.removeItem("tf_token");
+        localStorage.removeItem("tf_user");
+        localStorage.removeItem("tf_remember_me");
+      } finally {
+        setChecking(false);
+      }
+    }
+
+    restoreSession();
   }, []);
 
   /**
@@ -51,7 +80,7 @@ function App() {
    * The backend now includes `required_version` and `download_url` in the
    * login/register response so we can gate access before storing the token.
    */
-  const handleLogin = async (newToken, newUser, requiredVersion, dlUrl) => {
+  const handleLogin = async (newToken, newUser, requiredVersion, dlUrl, rememberMe = false) => {
     const client = window.APP_VERSION || "0.0.0";
 
     if (requiredVersion && isOutdated(client, requiredVersion)) {
@@ -65,6 +94,7 @@ function App() {
 
     localStorage.setItem("tf_token", newToken);
     localStorage.setItem("tf_user", JSON.stringify(newUser));
+    localStorage.setItem("tf_remember_me", rememberMe ? "true" : "false");
     setToken(newToken);
     setUser(newUser);
 
@@ -85,10 +115,18 @@ function App() {
     navigate("/dashboard");
   };
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
     clearTimeout(logoutTimerRef.current);
+    try {
+      if (localStorage.getItem("tf_token")) {
+        await authApi.logout();
+      }
+    } catch {
+      // Ignore — still clear local session
+    }
     localStorage.removeItem("tf_token");
     localStorage.removeItem("tf_user");
+    localStorage.removeItem("tf_remember_me");
     setToken(null);
     setUser(null);
     navigate("/login");
@@ -101,9 +139,10 @@ function App() {
     return () => window.removeEventListener("tf:unauthorized", onUnauthorized);
   }, [handleLogout]);
 
-  // Force logout after 12 hours — fires even if no API call is made
+  // Force logout after 12 hours for non-remember sessions
   useEffect(() => {
     if (!token) return;
+    if (localStorage.getItem("tf_remember_me") === "true") return;
     logoutTimerRef.current = setTimeout(handleLogout, SESSION_MS);
     return () => clearTimeout(logoutTimerRef.current);
   }, [token, handleLogout]);

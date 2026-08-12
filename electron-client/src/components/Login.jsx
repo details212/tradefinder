@@ -583,19 +583,21 @@ export default function Login({ onLogin }) {
   const [username,      setUsername]      = useState("");
   const [password,      setPassword]      = useState("");
   const [showPassword,  setShowPassword]  = useState(false);
+  const [rememberMe,      setRememberMe]      = useState(false);
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState("");
   // Subscription payment state (shown when login returns 402)
   const [subStripePromise, setSubStripePromise] = useState(null);
   const [subClientSecret,  setSubClientSecret]  = useState(null);
 
-  const handleLogin = async (e) => {
+  async function handleLogin(e, rememberOverride) {
     if (e) e.preventDefault();
+    const useRemember = rememberOverride ?? rememberMe;
     setError(""); setSubStripePromise(null); setSubClientSecret(null);
     setLoading(true);
     try {
-      const res = await authApi.login(username, password);
-      onLogin(res.data.token, res.data.user, res.data.required_version, res.data.download_url);
+      const res = await authApi.login(username, password, useRemember);
+      onLogin(res.data.token, res.data.user, res.data.required_version, res.data.download_url, useRemember);
     } catch (err) {
       if (err.response?.status === 402) {
         const { client_secret, publishable_key, message } = err.response.data || {};
@@ -610,14 +612,14 @@ export default function Login({ onLogin }) {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   async function handleSubscriptionSuccess() {
     setSubStripePromise(null);
     setSubClientSecret(null);
     setError("");
     // Re-attempt login now that subscription is active
-    await handleLogin(null);
+    await handleLogin(null, rememberMe);
   }
 
   // Expand card for register / forgot flows
@@ -733,6 +735,16 @@ export default function Login({ onLogin }) {
                     </button>
                   </div>
                 </div>
+
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={e => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-900 text-brand-500 focus:ring-brand-500 focus:ring-offset-0 focus:ring-1"
+                  />
+                  <span className="text-sm text-slate-300">Remember me for 7 days</span>
+                </label>
 
                 <button type="submit" disabled={loading}
                   className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-xl transition-colors mt-2 flex items-center justify-center gap-2 text-sm">

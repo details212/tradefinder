@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * Returns: { ok: boolean, host: string, latency: number|null, error?: string }
    */
   ping: (host) => ipcRenderer.invoke("ping", host),
+  getDeviceId: () => ipcRenderer.invoke("getDeviceId"),
 });

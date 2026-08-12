@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getDeviceId } from "../deviceId";
 
 const BASE_URL = window.TRADEFINDER_API_URL || "http://localhost:5000";
 
@@ -8,11 +9,19 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// Attach JWT token from localStorage to every request
-api.interceptors.request.use((config) => {
+// Attach JWT token and device id to every request
+api.interceptors.request.use(async (config) => {
   const token = localStorage.getItem("tf_token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  try {
+    const deviceId = await getDeviceId();
+    if (deviceId) {
+      config.headers["X-Device-Id"] = deviceId;
+    }
+  } catch {
+    /* non-fatal */
   }
   return config;
 });
@@ -36,6 +45,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem("tf_token");
       localStorage.removeItem("tf_user");
+      localStorage.removeItem("tf_remember_me");
       window.dispatchEvent(new CustomEvent("tf:unauthorized"));
     }
     return Promise.reject(error);
@@ -44,8 +54,11 @@ api.interceptors.response.use(
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const authApi = {
-  login: (username, password) =>
-    api.post("/api/auth/login", { username, password }),
+  login: async (username, password, rememberMe = false) => {
+    const device_id = await getDeviceId();
+    return api.post("/api/auth/login", { username, password, remember_me: rememberMe, device_id });
+  },
+  logout: () => api.post("/api/auth/logout"),
   sendRegistrationCode: (email) =>
     api.post("/api/auth/send-registration-code", { email }),
   confirmRegistrationCode: (email, code) =>
