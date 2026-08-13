@@ -12,6 +12,7 @@ import LeaderBoard from "./LeaderBoard";
 import SubscriptionPanel from "./SubscriptionPanel";
 import SupportPanel from "./SupportPanel";
 import DataDownload from "./DataDownload";
+import SystemPanel from "./SystemPanel";
 import logo from "../assets/logo.png";
 import {
   LogOut,
@@ -20,7 +21,9 @@ import {
   RefreshCw,
   User,
   ChevronRight,
+  ChevronLeft,
   Loader2,
+  Server,
   Lightbulb,
   Home,
   Settings,
@@ -113,121 +116,9 @@ function WatchlistTile({ ticker, bias, threshold, barTime, source, liveData, onC
   );
 }
 
-// ── Symbols panel ─────────────────────────────────────────────────────────────
-function SymbolsPanel({ watchlist, selectedTicker, onSelect, onClose }) {
-  const [query, setQuery]       = useState("");
-  const [allSymbols, setAll]    = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const inputRef = useRef(null);
-
-  // Load full list once when panel mounts
-  useEffect(() => {
-    inputRef.current?.focus();
-    stockApi.search("", { params: { limit: 200 } })   // empty q → top 200 by volume
-      .then((res) => setAll(res.data.results || []))
-      .catch(() => setAll([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  // Client-side filter as user types
-  const q = query.toLowerCase();
-  const displayed = q
-    ? allSymbols.filter(
-        (r) =>
-          r.ticker.toLowerCase().includes(q) ||
-          (r.name || "").toLowerCase().includes(q) ||
-          (r.sector || "").toLowerCase().includes(q)
-      )
-    : allSymbols;
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
-        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-          <LayoutList className="w-4 h-4 text-brand-400" />
-          Symbols
-        </h2>
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition">
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Filter input */}
-      <div className="px-4 py-3 border-b border-slate-700 shrink-0">
-        <div className="relative">
-          {loading
-            ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin" />
-            : <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          }
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by ticker, name or sector…"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-9 pr-8 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
-          />
-          {query && (
-            <button onClick={() => setQuery("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        <p className="text-[11px] text-slate-600 mt-1.5">
-          {loading ? "Loading…" : `${displayed.length} of ${allSymbols.length} symbol${allSymbols.length !== 1 ? "s" : ""}`}
-        </p>
-      </div>
-
-      {/* Column headers */}
-      <div className="grid grid-cols-[2fr_3fr_1fr_1fr] gap-2 px-4 py-2 border-b border-slate-800 shrink-0">
-        {["Symbol", "Name / Sector", "Price", "Exchange"].map((h) => (
-          <span key={h} className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{h}</span>
-        ))}
-      </div>
-
-      {/* Rows */}
-      <div className="flex-1 overflow-y-auto">
-        {!loading && displayed.length === 0 && (
-          <p className="text-sm text-slate-500 text-center py-10">No symbols match "{query}"</p>
-        )}
-        {displayed.map((r) => {
-          const isActive = r.ticker === selectedTicker;
-          const isWl     = watchlist.includes(r.ticker);
-          return (
-            <button
-              key={r.ticker}
-              onClick={() => { onSelect(r.ticker); onClose(); }}
-              className={`w-full grid grid-cols-[2fr_3fr_1fr_1fr] gap-2 items-center px-4 py-2.5 text-left border-b border-slate-800/50 transition hover:bg-slate-800 ${
-                isActive ? "bg-slate-800 border-l-2 border-brand-500 pl-3.5" : "border-l-2 border-transparent"
-              }`}
-            >
-              <div className="flex items-center gap-1.5 min-w-0">
-                {isWl && <Star className="w-3 h-3 text-yellow-400 fill-current shrink-0" />}
-                <span className="text-sm font-bold text-brand-400 truncate">{r.ticker}</span>
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs text-slate-300 truncate">{r.name || "—"}</p>
-                {r.sector && <p className="text-[10px] text-slate-500 truncate">{r.sector}</p>}
-              </div>
-              <div className="text-right">
-                {r.last_day_close != null
-                  ? <span className="text-xs text-slate-300">${Number(r.last_day_close).toFixed(2)}</span>
-                  : <span className="text-xs text-slate-600">—</span>}
-              </div>
-              <div className="text-right">
-                <span className="text-[10px] text-slate-500">{r.primary_exchange || r.market || "—"}</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-const WATCHLIST_POLL_MS    = 60_000;
-const LIVE_STREAM_POLL_MS  = 60_000;
+const WATCHLIST_POLL_MS         = 60_000;
+const LIVE_STREAM_POLL_MS       = 60_000;
+const EXIT_METHOD_BACKFILL_MS   = 5 * 60_000;
 const LIVE_STREAM_MINUTES  = 15;
 const LIVE_STREAM_MIN_INFO = 3;
 const STREAM_NEW_FLASH_MS  = 60_000;
@@ -279,6 +170,7 @@ export default function Dashboard({ user, onLogout }) {
   const [tradeIdeasOpenChart, setTradeIdeasOpenChart] = useState(null);
   /** Sidebar → Pattern Analysis chart modal */
   const [patternOpenChart, setPatternOpenChart] = useState(null);
+  const [rightFlyoutOpen, setRightFlyoutOpen]   = useState(false);
   const pollRef              = useRef(null);
   const wlRefreshDebounceRef = useRef(null);
 
@@ -290,6 +182,7 @@ export default function Dashboard({ user, onLogout }) {
   const streamSeenRef   = useRef(new Set());
   const streamFirstPoll = useRef(true);
   const streamPollRef   = useRef(null);
+  const backfillRunningRef = useRef(false);
 
   // Live stream user preferences — kept in a ref so pollLiveStream can always
   // read the latest value without being recreated on every preference change.
@@ -425,6 +318,25 @@ export default function Dashboard({ user, onLogout }) {
     alpacaApi.test()
       .then(r => setBrokerStatus({ ok: r.data.ok, paper: r.data.paper }))
       .catch(() => setBrokerStatus({ ok: false, paper: null }));
+  }, []);
+
+  // Auto-run "Fix Unknown Exits" every 5 minutes while logged in
+  useEffect(() => {
+    const runBackfill = async () => {
+      if (backfillRunningRef.current) return;
+      backfillRunningRef.current = true;
+      try {
+        const res = await alpacaApi.backfillExitMethods();
+        if (res.data?.updated > 0) {
+          window.dispatchEvent(new CustomEvent("tf:exit-methods-backfilled", { detail: res.data }));
+        }
+      } catch { /* non-fatal — retry on next interval */ }
+      finally { backfillRunningRef.current = false; }
+    };
+
+    runBackfill();
+    const id = setInterval(runBackfill, EXIT_METHOD_BACKFILL_MS);
+    return () => clearInterval(id);
   }, []);
 
   const handleSelectTicker = useCallback((ticker, opts = {}) => {
@@ -773,9 +685,9 @@ export default function Dashboard({ user, onLogout }) {
       {/* Main content */}
       <main className="flex-1 flex flex-col overflow-hidden">
 
-        {/* Content row */}
-        <div className="flex flex-1 overflow-hidden">
-          <div className="flex-1 overflow-hidden">
+        {/* Content row + right flyout */}
+        <div className="flex flex-1 overflow-hidden min-w-0">
+          <div className="flex-1 overflow-hidden min-w-0">
             {activeView === "support" ? (
               <SupportPanel user={user} />
             ) : activeView === "subscription" ? (
@@ -817,6 +729,38 @@ export default function Dashboard({ user, onLogout }) {
             )}
           </div>
 
+          {/* Right flyout — tab toggles panel open/closed */}
+          <div className="flex shrink-0 h-full">
+            <button
+              type="button"
+              onClick={() => setRightFlyoutOpen((open) => !open)}
+              title={rightFlyoutOpen ? "Hide system panel" : "Show system panel"}
+              aria-expanded={rightFlyoutOpen}
+              className={`no-drag shrink-0 w-9 flex flex-col items-center justify-center gap-2 border-l border-slate-800 transition ${
+                rightFlyoutOpen
+                  ? "bg-brand-600/15 text-brand-400 hover:bg-brand-600/25"
+                  : "bg-slate-900 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+              }`}
+            >
+              {rightFlyoutOpen
+                ? <ChevronRight className="w-4 h-4 shrink-0" />
+                : <ChevronLeft className="w-4 h-4 shrink-0" />}
+              <Server className="w-4 h-4 shrink-0" />
+              <span className="text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 select-none">
+                System
+              </span>
+            </button>
+
+            <div
+              className={`overflow-hidden transition-[width] duration-300 ease-in-out border-l border-slate-800 bg-slate-900 ${
+                rightFlyoutOpen ? "w-80" : "w-0"
+              }`}
+            >
+              <div className="w-80 h-full">
+                <SystemPanel onClose={() => setRightFlyoutOpen(false)} />
+              </div>
+            </div>
+          </div>
         </div>
       </main>
       </div>{/* end body */}

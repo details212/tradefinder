@@ -2,7 +2,7 @@
  * AnalyticsPanel — trading performance analytics dashboard.
  * Receives `orders` (already synced) and `loading` from AdminPanel.
  */
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useEffect, useState } from "react";
 import Highcharts from "highcharts";
 import HighchartsReact from "highcharts-react-official";
 import { BarChart2 } from "lucide-react";
@@ -63,17 +63,29 @@ function SectionHeader({ title, sub }) {
   );
 }
 
-function ChartBox({ title, children, className = "" }) {
+function ChartBox({ title, children, className = "", fill = false, containerRef }) {
   return (
-    <div className={`bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 flex flex-col ${className}`}>
+    <div className={`bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 flex flex-col ${fill ? "flex-1 min-h-0" : ""} ${className}`}>
       {title && <p className="text-xs font-semibold text-slate-400 mb-2 shrink-0">{title}</p>}
-      <div className="min-h-[185px] flex flex-col justify-center flex-1">{children}</div>
+      <div
+        ref={containerRef}
+        className={fill ? "flex-1 min-h-[200px]" : "min-h-[185px] flex flex-col justify-center flex-1"}
+      >
+        {children}
+      </div>
     </div>
   );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function AnalyticsPanel({ orders, loading, footer }) {
+export default function AnalyticsPanel({ orders, loading, section = "all", footer }) {
+
+  const showPnl = section === "all" || section === "pnl";
+  const showDistribution = section === "all" || section === "distribution";
+  const pnlFill = section === "pnl";
+
+  const pnlChartRef = useRef(null);
+  const [pnlChartHeight, setPnlChartHeight] = useState(null);
 
   const closed = useMemo(() =>
     orders
@@ -81,6 +93,21 @@ export default function AnalyticsPanel({ orders, loading, footer }) {
       .sort((a, b) => new Date(a.synced_at) - new Date(b.synced_at)),
     [orders]
   );
+
+  useEffect(() => {
+    if (!pnlFill) {
+      setPnlChartHeight(null);
+      return;
+    }
+    const el = pnlChartRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect.height;
+      if (h > 0) setPnlChartHeight(Math.floor(h));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pnlFill, loading, closed.length]);
 
   // ── Cumulative P&L + drawdown chart ─────────────────────────────────────────
   const cumulativeOpts = useMemo(() => {
@@ -94,7 +121,11 @@ export default function AnalyticsPanel({ orders, loading, footer }) {
       ddData.push([i, parseFloat((cum - peak).toFixed(2))]);
     });
     return {
-      chart:  { height: 220, type: "line", marginTop: 10 },
+      chart:  {
+        height: pnlFill && pnlChartHeight ? pnlChartHeight : 220,
+        type: "line",
+        marginTop: 10,
+      },
       xAxis:  { visible: false },
       yAxis: [
         { title: { text: null }, labels: { formatter() { return fmt$(this.value, 0); } } },
@@ -112,7 +143,7 @@ export default function AnalyticsPanel({ orders, loading, footer }) {
         },
       },
     };
-  }, [closed]);
+  }, [closed, pnlFill, pnlChartHeight]);
 
   // ── P&L distribution histogram ────────────────────────────────────────────────
   const plHistOpts = useMemo(() => {
@@ -192,21 +223,36 @@ export default function AnalyticsPanel({ orders, loading, footer }) {
   const netPL = closed.reduce((s, o) => s + Number(o.unrealized_pl), 0);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className={`flex flex-col gap-6 ${pnlFill ? "flex-1 min-h-0 h-full" : ""}`}>
 
-      {/* ══ P&L Analysis ════════════════════════════════════════════════════════ */}
-      <div className="flex flex-col gap-4">
+      {showPnl && (
+      <div className={`flex flex-col gap-4 ${pnlFill ? "flex-1 min-h-0" : ""}`}>
         <SectionHeader
           title="P&L Analysis"
           sub={`${closed.length} closed trade${closed.length !== 1 ? "s" : ""} · Net ${fmt$(netPL)}`}
         />
 
-        <ChartBox title="Cumulative P&L + Drawdown Overlay">
-          {cumulativeOpts && <HighchartsReact highcharts={Highcharts} options={cumulativeOpts} />}
+        <ChartBox
+          title="Cumulative P&L + Drawdown Overlay"
+          fill={pnlFill}
+          containerRef={pnlFill ? pnlChartRef : undefined}
+        >
+          {cumulativeOpts && (!pnlFill || pnlChartHeight != null) && (
+            <HighchartsReact
+              highcharts={Highcharts}
+              options={cumulativeOpts}
+              containerProps={
+                pnlFill && pnlChartHeight
+                  ? { style: { height: `${pnlChartHeight}px`, width: "100%" } }
+                  : undefined
+              }
+            />
+          )}
         </ChartBox>
       </div>
+      )}
 
-      {/* ══ Distribution Analysis ════════════════════════════════════════════════ */}
+      {showDistribution && (
       <div className="flex flex-col gap-4">
         <SectionHeader title="Distribution Analysis" />
 
@@ -226,9 +272,10 @@ export default function AnalyticsPanel({ orders, loading, footer }) {
               : <p className="text-slate-500 text-xs text-center">No duration data</p>
             }
           </ChartBox>
-          {footer && <div className="col-span-2">{footer}</div>}
+          {footer && section === "all" && <div className="col-span-2">{footer}</div>}
         </div>
       </div>
+      )}
 
     </div>
   );

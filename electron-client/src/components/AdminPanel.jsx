@@ -1,21 +1,19 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import api, { alpacaApi, authApi, resourcesApi, snapshotsApi } from "../api/client";
+import { alpacaApi, snapshotsApi } from "../api/client";
 import TradeReviewModal from "./TradeReviewModal";
 import AnalyticsPanel from "./AnalyticsPanel";
+import StrategyPerformancePanel from "./StrategyPerformancePanel";
+import ManualTradesPanel from "./ManualTradesPanel";
 import {
   Database, Cpu,
   Zap, Globe, RefreshCw, CheckCircle, AlertTriangle,
-  XCircle, Clock, Server,
-  Key, ChevronRight,
+  XCircle, Server,
+  Key,
   BarChart2,
   HardDrive, Wifi, Loader2,
-  TrendingUp, TrendingDown, ShoppingBag, Search,
+  TrendingUp, TrendingDown, Search,
   ShieldCheck, ShieldAlert, ChevronDown,
 } from "lucide-react";
-
-// ── Server heartbeat card ─────────────────────────────────────────────────────
-const PING_INTERVAL = 10000;
-const NUM_TICKS     = 80;
 
 // Count weekdays (Mon–Fri) between a start date and now, inclusive of the start day.
 function tradingDaysOpen(startDate) {
@@ -34,108 +32,6 @@ function tradingDaysOpen(startDate) {
     cur.setDate(cur.getDate() + 1);
   }
   return days;
-}
-
-// Colour for a single ping result
-function tickColor(entry) {
-  if (!entry)              return "#1e293b";          // empty slot
-  if (entry.q === "red")   return "#f87171";
-  if (entry.q === "yellow")return "#fbbf24";
-  return "#22c55e";
-}
-
-function ServerHeartbeatCard() {
-  const [history,  setHistory]  = useState([]);        // [{ms, q}] oldest → newest
-  const [latency,  setLatency]  = useState(null);
-  const [quality,  setQuality]  = useState("connecting");
-  const [nextIn,   setNextIn]   = useState(PING_INTERVAL / 1000);
-  const lastPingRef = useRef(null);
-
-  // Countdown timer
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (lastPingRef.current == null) return;
-      const secs = Math.max(0, Math.ceil((PING_INTERVAL - (Date.now() - lastPingRef.current)) / 1000));
-      setNextIn(secs);
-    }, 500);
-    return () => clearInterval(id);
-  }, []);
-
-  const doPing = useCallback(async () => {
-    const t0 = Date.now();
-    try {
-      await api.get("/api/health", { timeout: 3000 });
-      const ms = Date.now() - t0;
-      const q  = ms < 70 ? "green" : ms < 200 ? "yellow" : "red";
-      setLatency(ms);
-      setQuality(q);
-      setHistory(h => [...h.slice(-(NUM_TICKS - 1)), { ms, q }]);
-    } catch {
-      setLatency(null);
-      setQuality("offline");
-      setHistory(h => [...h.slice(-(NUM_TICKS - 1)), { ms: null, q: "offline" }]);
-    }
-    lastPingRef.current = Date.now();
-    setNextIn(PING_INTERVAL / 1000);
-  }, []);
-
-  useEffect(() => {
-    doPing();
-    const id = setInterval(doPing, PING_INTERVAL);
-    return () => clearInterval(id);
-  }, [doPing]);
-
-  const labelCls = {
-    green: "text-emerald-400", yellow: "text-yellow-400",
-    red: "text-red-400", offline: "text-red-400", connecting: "text-slate-400",
-  }[quality] ?? "text-slate-400";
-
-  const statusLabel = {
-    green: "Healthy", yellow: "Degraded", red: "Poor",
-    offline: "Offline", connecting: "Connecting…",
-  }[quality] ?? "—";
-
-  // Build display array: history slots on left, empty slots on right
-  const slots = Array.from({ length: NUM_TICKS }, (_, i) => {
-    const offset = NUM_TICKS - history.length;
-    return i >= offset ? history[i - offset] : null;
-  });
-
-  return (
-    <div className="bg-slate-800/60 border border-slate-700/60 rounded-2xl overflow-hidden">
-      {/* Tick histogram */}
-      <div className="flex items-stretch gap-px px-3 pt-3 pb-2" style={{ height: 52 }}>
-        {/* Latest ms label */}
-        <span className={`text-xs font-bold font-mono tabular-nums self-center pr-3 shrink-0 w-16 ${labelCls}`}>
-          {quality === "connecting" ? "…"
-           : latency != null        ? `${latency}ms`
-           : "offline"}
-        </span>
-
-        {/* One tick per slot */}
-        {slots.map((entry, i) => (
-          <div
-            key={i}
-            className="flex-1 rounded-sm"
-            style={{ backgroundColor: tickColor(entry) }}
-            title={entry ? `${entry.ms ?? "—"}ms` : ""}
-          />
-        ))}
-      </div>
-
-      {/* Footer */}
-      <div className="flex items-center justify-between px-4 pb-3">
-        <div className="flex items-center gap-2">
-          <span className="block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tickColor(history[history.length - 1]) }} />
-          <span className="text-xs font-medium text-slate-400">Your Connection to TradeFinder</span>
-          <span className={`text-xs font-medium ${labelCls}`}>{statusLabel}</span>
-        </div>
-        <span className="text-[11px] text-slate-500 font-mono tabular-nums">
-          next echo in {nextIn}s
-        </span>
-      </div>
-    </div>
-  );
 }
 
 // ── Tiny reusable atoms ───────────────────────────────────────────────────────
@@ -215,37 +111,16 @@ function Card({ children, className = "" }) {
 function CardHeader({ icon: Icon, title, accent, action }) {
   return (
     <div className={`flex items-center justify-between px-5 py-4 border-b border-slate-700/50 ${accent ? `border-l-2 ${accent}` : ""}`}>
-      <div className="flex items-center gap-2.5">
-        {Icon && <Icon className="w-4 h-4 text-slate-400" />}
-        <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
-      </div>
+      {title ? (
+        <div className="flex items-center gap-2.5">
+          {Icon && <Icon className="w-4 h-4 text-slate-400" />}
+          <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
+        </div>
+      ) : (
+        <span className="sr-only">My Trades</span>
+      )}
       {action}
     </div>
-  );
-}
-
-function AccordionCard({ icon: Icon, title, action, defaultOpen = false, children }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <Card>
-      <div className={`flex items-center justify-between px-5 py-4 ${open ? "border-b border-slate-700/50" : ""}`}>
-        <button
-          type="button"
-          onClick={() => setOpen(v => !v)}
-          className="flex items-center gap-2.5 flex-1 min-w-0 text-left hover:opacity-80 transition"
-        >
-          {Icon && <Icon className="w-4 h-4 text-slate-400 shrink-0" />}
-          <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
-          <ChevronDown className={`w-4 h-4 text-slate-500 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-        </button>
-        {action && (
-          <div className="shrink-0 ml-2" onClick={e => e.stopPropagation()}>
-            {action}
-          </div>
-        )}
-      </div>
-      {open && children}
-    </Card>
   );
 }
 
@@ -404,55 +279,6 @@ function NetworkCard() {
 
 // ── Main AdminPanel ───────────────────────────────────────────────────────────
 export default function AdminPanel({ user }) {
-  // ── Login events (card — last 10) ────────────────────────────────────────
-  const [loginEvents,        setLoginEvents]        = useState([]);
-  const [loginEventsLoading, setLoginEventsLoading] = useState(true);
-
-  useEffect(() => {
-    authApi.loginEvents(3)
-      .then(r => setLoginEvents(r.data.events ?? []))
-      .catch(() => {})
-      .finally(() => setLoginEventsLoading(false));
-  }, []);
-
-  // ── Resource status (polled every 30 s) ──────────────────────────────────
-  const RESOURCE_POLL_MS = 30_000;
-  const [resources,        setResources]        = useState(null);  // { flask, polygon, alpaca, yahoo }
-  const [resourcesLoading, setResourcesLoading] = useState(true);
-  const [resourcesLastAt,  setResourcesLastAt]  = useState(null);
-
-  const fetchResources = useCallback(() => {
-    resourcesApi.status()
-      .then(r => { setResources(r.data.resources); setResourcesLastAt(Date.now()); })
-      .catch(() => {})
-      .finally(() => setResourcesLoading(false));
-  }, []);
-
-  useEffect(() => {
-    fetchResources();
-    const id = setInterval(fetchResources, RESOURCE_POLL_MS);
-    return () => clearInterval(id);
-  }, [fetchResources]);
-
-  // ── Login history modal ───────────────────────────────────────────────────
-  const LOGIN_HISTORY_PAGE_SIZE = 15;
-  const [loginHistoryOpen,    setLoginHistoryOpen]    = useState(false);
-  const [loginHistoryAll,     setLoginHistoryAll]     = useState([]);
-  const [loginHistoryLoading, setLoginHistoryLoading] = useState(false);
-  const [loginHistoryPage,    setLoginHistoryPage]    = useState(0);
-
-  const openLoginHistory = useCallback(async () => {
-    setLoginHistoryOpen(true);
-    setLoginHistoryPage(0);
-    if (loginHistoryAll.length) return; // already fetched
-    setLoginHistoryLoading(true);
-    try {
-      const r = await authApi.loginEvents(100);
-      setLoginHistoryAll(r.data.events ?? []);
-    } catch { /* non-fatal */ }
-    finally { setLoginHistoryLoading(false); }
-  }, [loginHistoryAll.length]);
-
   // ── Order detail modal ────────────────────────────────────────────────────
   const [detailOrder,   setDetailOrder]   = useState(null);  // { dbOrder, alpacaData } | null
   const [detailLoading, setDetailLoading] = useState(false);
@@ -535,6 +361,12 @@ export default function AdminPanel({ user }) {
     return () => clearInterval(id);
   }, [syncOrders]);
 
+  useEffect(() => {
+    const onBackfilled = () => syncOrders(true);
+    window.addEventListener("tf:exit-methods-backfilled", onBackfilled);
+    return () => window.removeEventListener("tf:exit-methods-backfilled", onBackfilled);
+  }, [syncOrders]);
+
   // Hide all permanently dead orders (canceled, expired, rejected, done_for_day).
   // These either never filled or are no longer relevant to the user's trade history.
   const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
@@ -543,9 +375,19 @@ export default function AdminPanel({ user }) {
     [orders]
   );
 
+  const [activeTab, setActiveTab] = useState("trades");
+
+  const PANEL_TABS = [
+    { id: "trades",        label: "My Trades" },
+    { id: "pnl",           label: "P&L Analysis" },
+    { id: "distribution",  label: "Distribution Analysis" },
+    { id: "strategies",    label: "Trade Ideas" },
+    { id: "manual",        label: "Manual" },
+  ];
+
   return (
-    <div className="h-full overflow-y-auto bg-slate-900">
-      <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6">
+    <div className={`h-full bg-slate-900 ${activeTab === "pnl" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
+      <div className={`max-w-6xl mx-auto px-6 py-8 flex flex-col gap-6 w-full ${activeTab === "pnl" ? "flex-1 min-h-0" : ""}`}>
 
         {/* ── Page header ── */}
         <div className="flex items-start justify-between">
@@ -559,11 +401,27 @@ export default function AdminPanel({ user }) {
           </div>
         </div>
 
-        {/* ── My Orders ── */}
+        {/* ── Panel tabs ── */}
+        <div className="flex items-center gap-1 border-b border-slate-800">
+          {PANEL_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
+                activeTab === tab.id
+                  ? "border-brand-500 text-brand-400"
+                  : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "trades" && (
         <Card>
           <CardHeader
-            icon={ShoppingBag}
-            title="My Trades"
             action={
               <span className="flex items-center gap-3 text-[11px] text-slate-400">
                 {/* Open / Closed filter toggle */}
@@ -888,154 +746,25 @@ export default function AdminPanel({ user }) {
             </>
           )}
         </Card>
+        )}
 
-        {/* ── Analytics Dashboard ── */}
-        <AnalyticsPanel orders={orders} loading={ordersLoading} footer={<ServerHeartbeatCard />} />
+        {activeTab === "pnl" && (
+          <div className="flex-1 min-h-0 flex flex-col">
+            <AnalyticsPanel orders={orders} loading={ordersLoading} section="pnl" />
+          </div>
+        )}
 
-        {/* ── Login History + Security (50/50) ── */}
-        <div className="grid grid-cols-2 gap-4">
-          {/* Login history */}
-          <AccordionCard
-            icon={Clock}
-            title="Login History"
-            action={
-              <button
-                onClick={openLoginHistory}
-                className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 transition"
-              >
-                Show all <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            }
-          >
-            {loginEventsLoading ? (
-              <div className="flex items-center justify-center py-10">
-                <Loader2 className="w-5 h-5 animate-spin text-slate-500" />
-              </div>
-            ) : loginEvents.length === 0 ? (
-              <p className="px-5 py-6 text-xs text-slate-500 text-center">No login history yet.</p>
-            ) : (
-              <div className="flex flex-col divide-y divide-slate-800/60">
-                {loginEvents.map((ev, i) => {
-                  const dt    = new Date(ev.logged_in_at + (ev.logged_in_at.endsWith("Z") ? "" : "Z"));
-                  const date  = dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-                  const time  = dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-                  const isLatest = i === 0;
-                  const netPl = ev.net_pl ?? 0;
-                  return (
-                    <div key={ev.id} className={`px-5 py-3 hover:bg-slate-800/30 transition ${isLatest ? "bg-slate-800/20" : ""}`}>
-                      {/* Row 1: date/time + platform + "current" badge */}
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-slate-200">{date}</span>
-                          <span className="text-[11px] text-slate-400">{time}</span>
-                          {isLatest && (
-                            <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                              Current
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[11px] text-slate-400 truncate max-w-[130px]">{ev.platform ?? "Unknown"}</span>
-                      </div>
-                      {/* Row 2: account snapshot pills */}
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <span className="text-[10px] text-slate-400">
-                          Open <span className="font-semibold text-slate-300">{ev.open_trades ?? 0}</span>
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          Total <span className="font-semibold text-slate-300">{ev.total_trades ?? 0}</span>
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          W/L <span className="font-semibold text-emerald-400">{ev.win_count ?? 0}</span>
-                          <span className="text-slate-500"> / </span>
-                          <span className="font-semibold text-red-400">{ev.loss_count ?? 0}</span>
-                        </span>
-                        <span className={`text-[10px] font-semibold font-mono ml-auto ${netPl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                          {netPl >= 0 ? "+" : ""}${netPl.toFixed(2)}
-                        </span>
-                      </div>
-                      {/* Row 3: IP address */}
-                      {ev.ip_address && (
-                        <p className="text-[10px] text-slate-500 mt-1 font-mono">{ev.ip_address}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </AccordionCard>
+        {activeTab === "distribution" && (
+          <AnalyticsPanel orders={orders} loading={ordersLoading} section="distribution" />
+        )}
 
-          {/* Resources */}
-          <AccordionCard
-            icon={Globe}
-            title="Resources"
-            action={
-              <div className="flex items-center gap-2">
-                {resourcesLastAt && (
-                  <span className="text-[10px] text-slate-500 tabular-nums">
-                    {new Date(resourcesLastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                  </span>
-                )}
-                <button
-                  onClick={fetchResources}
-                  title="Refresh now"
-                  className="text-slate-500 hover:text-slate-300 transition"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            }
-          >
-            <div className="flex flex-col divide-y divide-slate-800/60">
-              {resourcesLoading && !resources ? (
-                <div className="flex items-center justify-center gap-2 py-8 text-slate-500 text-xs">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Probing…
-                </div>
-              ) : (
-                [
-                  { key: "flask",   label: "Tradefinder Data Center", icon: Server  },
-                  { key: "polygon", label: "Tick Data Farm",       icon: BarChart2 },
-                  { key: "alpaca",  label: "Exchange Connection",    icon: TrendingUp },
-                  { key: "yahoo",   label: "Yahoo Finance",         icon: Globe   },
-                ].map(({ key, label, icon: Icon }) => {
-                  const r      = resources?.[key];
-                  const ok     = r?.ok;
-                  const status = ok === undefined ? "unknown" : ok ? "online" : "offline";
-                  const dotColor = status === "online"  ? "bg-emerald-400"
-                                 : status === "offline" ? "bg-red-400"
-                                 : "bg-slate-600";
-                  const ringColor = status === "online"  ? "ring-emerald-400/30"
-                                  : status === "offline" ? "ring-red-400/30"
-                                  : "ring-slate-600/30";
-                  return (
-                    <div key={key} className="flex items-center gap-3 px-5 py-3.5 hover:bg-slate-800/30 transition">
-                      {/* Animated dot */}
-                      <span className="relative flex h-2.5 w-2.5 shrink-0">
-                        {status === "online" && (
-                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${dotColor} opacity-60`} />
-                        )}
-                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${dotColor} ring-2 ${ringColor}`} />
-                      </span>
-                      <Icon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-slate-300 font-medium">{label}</p>
-                        <p className="text-[11px] text-slate-500 truncate">{r?.detail ?? "—"}</p>
-                      </div>
-                      {r?.latency_ms != null && (
-                        <span className={`text-[11px] font-mono tabular-nums shrink-0 ${
-                          r.latency_ms < 70  ? "text-emerald-500"
-                          : r.latency_ms < 200 ? "text-yellow-500"
-                          : "text-red-500"
-                        }`}>
-                          {r.latency_ms}ms
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </AccordionCard>
-        </div>
+        {activeTab === "strategies" && (
+          <StrategyPerformancePanel orders={orders} loading={ordersLoading} />
+        )}
+
+        {activeTab === "manual" && (
+          <ManualTradesPanel orders={orders} loading={ordersLoading} />
+        )}
 
       </div>
 
@@ -1276,134 +1005,6 @@ export default function AdminPanel({ user }) {
         />
       )}
 
-      {/* ── Login History Modal ── */}
-      {loginHistoryOpen && (() => {
-        const totalPages = Math.ceil(loginHistoryAll.length / LOGIN_HISTORY_PAGE_SIZE);
-        const pageItems  = loginHistoryAll.slice(
-          loginHistoryPage * LOGIN_HISTORY_PAGE_SIZE,
-          (loginHistoryPage + 1) * LOGIN_HISTORY_PAGE_SIZE,
-        );
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-[2px] p-4">
-            <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]">
-
-              {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700 shrink-0">
-                <div className="flex items-center gap-2.5">
-                  <Clock className="w-4 h-4 text-slate-400" />
-                  <h3 className="text-sm font-semibold text-slate-200">Login History</h3>
-                  {!loginHistoryLoading && (
-                    <span className="text-xs text-slate-400">{loginHistoryAll.length} event{loginHistoryAll.length !== 1 ? "s" : ""}</span>
-                  )}
-                </div>
-                <button
-                  onClick={() => setLoginHistoryOpen(false)}
-                  className="text-slate-400 hover:text-slate-300 transition"
-                >
-                  <XCircle className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Column headers */}
-              {!loginHistoryLoading && loginHistoryAll.length > 0 && (
-                <div className="grid grid-cols-[1fr_1fr_auto_auto_auto_auto] gap-x-4 px-5 py-2 border-b border-slate-800/60 shrink-0">
-                  {["Date / Time", "Platform", "Open", "W / L", "Net P&L", "IP"].map(h => (
-                    <span key={h} className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{h}</span>
-                  ))}
-                </div>
-              )}
-
-              {/* Body */}
-              <div className="overflow-y-auto flex-1">
-                {loginHistoryLoading ? (
-                  <div className="flex items-center justify-center gap-2 py-12 text-slate-400 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-                  </div>
-                ) : loginHistoryAll.length === 0 ? (
-                  <p className="text-xs text-slate-500 text-center py-10">No login history found.</p>
-                ) : (
-                  pageItems.map((ev, i) => {
-                    const globalIdx = loginHistoryPage * LOGIN_HISTORY_PAGE_SIZE + i;
-                    const dt     = new Date(ev.logged_in_at + (ev.logged_in_at.endsWith("Z") ? "" : "Z"));
-                    const date   = dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-                    const time   = dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-                    const netPl  = ev.net_pl ?? 0;
-                    const isLatest = globalIdx === 0;
-                    return (
-                      <div
-                        key={ev.id}
-                        className={`grid grid-cols-[1fr_1fr_auto_auto_auto_auto] gap-x-4 items-center px-5 py-3 border-b border-slate-800/40 last:border-0 hover:bg-slate-800/30 transition ${isLatest ? "bg-slate-800/20" : ""}`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-xs text-slate-200 whitespace-nowrap">{date}</span>
-                          <span className="text-[11px] text-slate-400 whitespace-nowrap">{time}</span>
-                          {isLatest && (
-                            <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
-                              Current
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[11px] text-slate-400 truncate">{ev.platform ?? "Unknown"}</span>
-                        <span className="text-xs text-center font-semibold text-slate-300 tabular-nums">{ev.open_trades ?? 0}</span>
-                        <span className="text-xs text-center tabular-nums whitespace-nowrap">
-                          <span className="text-emerald-400 font-semibold">{ev.win_count ?? 0}</span>
-                          <span className="text-slate-500"> / </span>
-                          <span className="text-red-400 font-semibold">{ev.loss_count ?? 0}</span>
-                        </span>
-                        <span className={`text-xs font-semibold font-mono tabular-nums whitespace-nowrap ${netPl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                          {netPl >= 0 ? "+" : ""}${netPl.toFixed(2)}
-                        </span>
-                        <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap">{ev.ip_address ?? "—"}</span>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Pagination footer */}
-              {!loginHistoryLoading && totalPages > 1 && (
-                <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700/60 shrink-0">
-                  <span className="text-xs text-slate-400">
-                    Page {loginHistoryPage + 1} of {totalPages}
-                    <span className="ml-2 text-slate-500">
-                      ({loginHistoryPage * LOGIN_HISTORY_PAGE_SIZE + 1}–{Math.min((loginHistoryPage + 1) * LOGIN_HISTORY_PAGE_SIZE, loginHistoryAll.length)} of {loginHistoryAll.length})
-                    </span>
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setLoginHistoryPage(0)}
-                      disabled={loginHistoryPage === 0}
-                      className="px-2 py-1 rounded text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                    >«</button>
-                    <button
-                      onClick={() => setLoginHistoryPage(p => p - 1)}
-                      disabled={loginHistoryPage === 0}
-                      className="px-2.5 py-1 rounded text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                    >‹ Prev</button>
-                    {Array.from({ length: totalPages }, (_, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => setLoginHistoryPage(idx)}
-                        className={`w-7 h-7 rounded text-xs font-medium transition ${loginHistoryPage === idx ? "bg-brand-500/20 text-brand-400 border border-brand-500/40" : "text-slate-400 hover:text-slate-300 hover:bg-slate-700"}`}
-                      >{idx + 1}</button>
-                    ))}
-                    <button
-                      onClick={() => setLoginHistoryPage(p => p + 1)}
-                      disabled={loginHistoryPage >= totalPages - 1}
-                      className="px-2.5 py-1 rounded text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                    >Next ›</button>
-                    <button
-                      onClick={() => setLoginHistoryPage(totalPages - 1)}
-                      disabled={loginHistoryPage >= totalPages - 1}
-                      className="px-2 py-1 rounded text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                    >»</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }
