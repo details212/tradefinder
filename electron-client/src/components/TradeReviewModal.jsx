@@ -8,7 +8,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
 import { stockApi, alpacaApi, aiApi } from "../api/client";
-import { Loader2, AlertCircle, AlertTriangle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check, ClipboardList, Sparkles, Volume2, VolumeX, Square } from "lucide-react";
+import { Loader2, AlertCircle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check, ClipboardList, Sparkles, Volume2, VolumeX, Square } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
@@ -783,7 +783,6 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [closeConfirm, setCloseConfirm] = useState(false); // show confirm prompt
   const [closeLoading, setCloseLoading] = useState(false);
   const [closeError,   setCloseError]   = useState(null);
-  const [dayTradeWarn, setDayTradeWarn] = useState(false); // day-trade warning interstitial
 
   // Edit-levels flow
   const [editLevels,      setEditLevels]      = useState(false);
@@ -806,18 +805,6 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   // TTS audio playback
   const [audioState, setAudioState] = useState(null); // null | {loading} | {playing, url} | {error}
   const audioRef = useRef(null);
-
-  // True when the order was opened (created_at) on today's Eastern-Time date.
-  const isDayTrade = useMemo(() => {
-    if (!order?.created_at) return false;
-    const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-    const etOpen = new Date(new Date(order.created_at + "Z").toLocaleString("en-US", { timeZone: "America/New_York" }));
-    return (
-      etNow.getFullYear() === etOpen.getFullYear() &&
-      etNow.getMonth()    === etOpen.getMonth()    &&
-      etNow.getDate()     === etOpen.getDate()
-    );
-  }, [order?.created_at]);
 
   // ── Sanity check: fetch Alpaca order and compare to DB (closed trades only) ──
   useEffect(() => {
@@ -1634,7 +1621,7 @@ Trade closed: ${fmtTs(order.synced_at)}
           </div>
 
           {/* ── Edit Levels + Close Trade buttons ── */}
-          {order.is_open && !dayTradeWarn && !closeConfirm && !editLevels && (
+          {order.is_open && !closeConfirm && !editLevels && (
             <div className="ml-auto flex items-center gap-2">
               <button
                 onClick={openEditLevels}
@@ -1647,8 +1634,7 @@ Trade closed: ${fmtTs(order.synced_at)}
               <button
                 onClick={() => {
                   setCloseError(null);
-                  if (isDayTrade) { setDayTradeWarn(true); }
-                  else            { setCloseConfirm(true); }
+                  setCloseConfirm(true);
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/40 transition"
               >
@@ -1703,29 +1689,6 @@ Trade closed: ${fmtTs(order.synced_at)}
                 className="text-slate-500 hover:text-slate-300 transition"
               >
                 <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-
-          {/* ── Day-trade warning interstitial ── */}
-          {dayTradeWarn && !closeConfirm && (
-            <div className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded border border-amber-500/50 bg-amber-500/10">
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span className="text-xs text-amber-300 font-semibold">
-                Day Trade Warning — this position was opened today.
-                Closing it counts as a Day Trade (PDT rule applies).
-              </span>
-              <button
-                onClick={() => { setDayTradeWarn(false); setCloseConfirm(true); }}
-                className="px-3 py-1 rounded text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/50 transition whitespace-nowrap"
-              >
-                Understood, continue
-              </button>
-              <button
-                onClick={() => setDayTradeWarn(false)}
-                className="px-2.5 py-1 rounded text-xs text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 transition"
-              >
-                Cancel
               </button>
             </div>
           )}

@@ -799,6 +799,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [orderType,      setOrderType]      = useState(null);   // null | "market" | "limit"
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,     setOrderResult]     = useState(null);  // { ok, message, orderId } | null
+  const [closeCountdown,  setCloseCountdown]  = useState(null);  // seconds left before auto-close, or null
   const [liveQuote,       setLiveQuote]       = useState(null);  // null | { bid, ask, last, spread, updatedAt, fetching }
   const [activeZoom,       setActiveZoom]       = useState("2W");
   const [barInterval,      setBarInterval]      = useState(BAR_INTERVALS[0]);
@@ -816,6 +817,23 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const chartRef = useRef(null);
   const rrRef    = useRef(null);                          // live mirror of rr (used in drag handlers)
   const showVBPRef = useRef(showVBP); // live mirror of showVBP (used in render events)
+
+  // Start a 3-second countdown once an order is successfully placed
+  useEffect(() => {
+    if (!orderResult?.ok) return;
+    setCloseCountdown(3);
+  }, [orderResult?.ok]);
+
+  // Tick the countdown down every second, then auto-close the chart
+  useEffect(() => {
+    if (closeCountdown == null) return;
+    if (closeCountdown <= 0) {
+      onClose?.();
+      return;
+    }
+    const t = setTimeout(() => setCloseCountdown((c) => (c == null ? null : c - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [closeCountdown, onClose]);
 
   const ZOOM_PRESETS = [
     { label: "1D", days: 1   },
@@ -1793,6 +1811,11 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                               ID: {orderResult.orderId}
                             </span>
                           )}
+                          {closeCountdown != null && (
+                            <span className="block text-[11px] text-emerald-400/70 mt-0.5">
+                              Closing in {closeCountdown} second{closeCountdown === 1 ? "" : "s"}…
+                            </span>
+                          )}
                         </>
                       ) : (
                         <span>{orderResult.message}</span>
@@ -1806,6 +1829,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                       disabled={orderSubmitting}
                       onClick={() => {
                         if (orderResult?.ok) {
+                          setCloseCountdown(null);
                           setOrderType(null);
                           setOrderResult(null);
                           onClose?.();
@@ -1816,7 +1840,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                       }}
                       className="flex-1 py-2 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 transition disabled:opacity-40"
                     >
-                      {orderResult?.ok ? "Close" : "Cancel"}
+                      {orderResult?.ok ? "Close now" : "Cancel"}
                     </button>
                     {!orderResult?.ok && (
                       <button

@@ -4,6 +4,7 @@ import TradeReviewModal from "./TradeReviewModal";
 import AnalyticsPanel from "./AnalyticsPanel";
 import StrategyPerformancePanel from "./StrategyPerformancePanel";
 import ManualTradesPanel from "./ManualTradesPanel";
+import PerformancePanel from "./PerformancePanel";
 import {
   Database, Cpu,
   Zap, Globe, RefreshCw, CheckCircle, AlertTriangle,
@@ -379,6 +380,7 @@ export default function AdminPanel({ user }) {
 
   const PANEL_TABS = [
     { id: "trades",        label: "My Trades" },
+    { id: "performance",   label: "Performance" },
     { id: "pnl",           label: "P&L Analysis" },
     { id: "distribution",  label: "Distribution Analysis" },
     { id: "strategies",    label: "Trade Ideas" },
@@ -746,6 +748,10 @@ export default function AdminPanel({ user }) {
             </>
           )}
         </Card>
+        )}
+
+        {activeTab === "performance" && (
+          <PerformancePanel orders={orders} loading={ordersLoading} />
         )}
 
         {activeTab === "pnl" && (
