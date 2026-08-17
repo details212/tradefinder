@@ -61,6 +61,19 @@ function App() {
 
       try {
         const res = await authApi.me();
+        const client = window.APP_VERSION || "0.0.0";
+        const required = res.data.required_version;
+
+        if (required && isOutdated(client, required)) {
+          // Block access until the user downloads the new build — don't
+          // restore the session so a stale client can't slip past the gate.
+          setClientVersion(client);
+          setReqVersion(required);
+          setDownloadUrl(res.data.download_url || "");
+          setUpdateNeeded(true);
+          return;
+        }
+
         setToken(storedToken);
         setUser(res.data.user);
       } catch {
