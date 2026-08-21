@@ -12,7 +12,7 @@ import {
   Key,
   BarChart2,
   HardDrive, Wifi, Loader2,
-  TrendingUp, TrendingDown, Search,
+  TrendingUp, TrendingDown, Search, X,
   ShieldCheck, ShieldAlert, ChevronDown,
 } from "lucide-react";
 
@@ -311,6 +311,7 @@ export default function AdminPanel({ user }) {
   const [lastSyncedAt,  setLastSyncedAt]  = useState(null);
   const [ordersPage,    setOrdersPage]    = useState(0);
   const [ordersFilter,  setOrdersFilter]  = useState("open"); // "open" | "closed"
+  const [closedSymbolQuery, setClosedSymbolQuery] = useState("");
   const [backfilling,   setBackfilling]   = useState(false);
   const [backfillResult, setBackfillResult] = useState(null); // null | { updated, skipped, errors }
   const [reviewOrder,   setReviewOrder]   = useState(null);
@@ -368,13 +369,29 @@ export default function AdminPanel({ user }) {
     return () => window.removeEventListener("tf:exit-methods-backfilled", onBackfilled);
   }, [syncOrders]);
 
-  // Hide all permanently dead orders (canceled, expired, rejected, done_for_day).
-  // These either never filled or are no longer relevant to the user's trade history.
+  // Hide unfilled dead orders (canceled/expired/rejected before entry).
+  // Filled entries closed via auto-close/manual were incorrectly tagged canceled —
+  // keep those visible when exit_method, closed_at, or a fill price is present.
   const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
+  const isDeadOrder = (o) => {
+    if (!DEAD_STATUSES.has(o.status)) return false;
+    if (o.exit_method || o.closed_at || o.filled_avg_price != null) return false;
+    return true;
+  };
   const visibleOrders = useMemo(
-    () => orders.filter(o => !DEAD_STATUSES.has(o.status)),
+    () => orders.filter(o => !isDeadOrder(o)),
     [orders]
   );
+
+  const tabOrders = useMemo(() => {
+    const isOpenTab = ordersFilter === "open";
+    let list = visibleOrders.filter(o => isOpenTab ? o.is_open : !o.is_open);
+    const needle = closedSymbolQuery.trim().toUpperCase();
+    if (!isOpenTab && needle) {
+      list = list.filter(o => String(o.ticker || "").toUpperCase().includes(needle));
+    }
+    return list;
+  }, [visibleOrders, ordersFilter, closedSymbolQuery]);
 
   const [activeTab, setActiveTab] = useState("trades");
 
@@ -502,6 +519,37 @@ export default function AdminPanel({ user }) {
             }
           />
 
+          {ordersFilter === "closed" && (
+            <div className="px-5 py-2.5 border-b border-slate-800/40">
+              <div className="relative max-w-xs">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                <input
+                  type="text"
+                  value={closedSymbolQuery}
+                  onChange={(e) => {
+                    setClosedSymbolQuery(e.target.value.toUpperCase());
+                    setOrdersPage(0);
+                  }}
+                  placeholder="Search symbol…"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-600 rounded-lg pl-8 pr-8 py-1.5 text-xs font-mono uppercase focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30"
+                />
+                {closedSymbolQuery && (
+                  <button
+                    type="button"
+                    onClick={() => { setClosedSymbolQuery(""); setOrdersPage(0); }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
+                    title="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {ordersLoading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-slate-400 text-sm">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -513,9 +561,11 @@ export default function AdminPanel({ user }) {
             <div className="px-5 py-10 text-center text-slate-500 text-sm">
               No orders placed yet. Open the chart and place a bracket order to get started.
             </div>
-          ) : visibleOrders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length === 0 ? (
+          ) : tabOrders.length === 0 ? (
             <div className="px-5 py-10 text-center text-slate-500 text-sm">
-              No {ordersFilter} trades.
+              {ordersFilter === "closed" && closedSymbolQuery.trim()
+                ? `No closed trades matching "${closedSymbolQuery.trim().toUpperCase()}".`
+                : `No ${ordersFilter} trades.`}
             </div>
           ) : (
             <>
@@ -530,8 +580,7 @@ export default function AdminPanel({ user }) {
 
                   {/* ── Open trades rows ── */}
                   <div className="divide-y divide-slate-800/40">
-                    {visibleOrders
-                      .filter(o => o.is_open)
+                    {tabOrders
                       .slice().sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
                       .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE)
                       .map(o => {
@@ -605,8 +654,7 @@ export default function AdminPanel({ user }) {
 
                   {/* ── Closed trades rows ── */}
                   <div className="divide-y divide-slate-800/40">
-                    {visibleOrders
-                      .filter(o => !o.is_open)
+                    {tabOrders
                       .slice().sort((a, b) => new Date(b.closed_at ?? b.synced_at ?? b.created_at ?? 0) - new Date(a.closed_at ?? a.synced_at ?? a.created_at ?? 0))
                       .slice(ordersPage * CLOSED_ORDERS_PER_PAGE, (ordersPage + 1) * CLOSED_ORDERS_PER_PAGE)
                       .map(o => {
@@ -700,8 +748,8 @@ export default function AdminPanel({ user }) {
               )}
 
               {/* Pagination controls */}
-              {visibleOrders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length > (ordersFilter === "open" ? OPEN_ORDERS_PER_PAGE : CLOSED_ORDERS_PER_PAGE) && (() => {
-                const filteredCount = visibleOrders.filter(o => ordersFilter === "open" ? o.is_open : !o.is_open).length;
+              {tabOrders.length > (ordersFilter === "open" ? OPEN_ORDERS_PER_PAGE : CLOSED_ORDERS_PER_PAGE) && (() => {
+                const filteredCount = tabOrders.length;
                 const perPage = ordersFilter === "open" ? OPEN_ORDERS_PER_PAGE : CLOSED_ORDERS_PER_PAGE;
                 const totalPages = Math.ceil(filteredCount / perPage);
                 return (
