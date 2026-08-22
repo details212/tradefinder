@@ -13,6 +13,7 @@ import SubscriptionPanel from "./SubscriptionPanel";
 import SupportPanel from "./SupportPanel";
 import DataDownload from "./DataDownload";
 import SystemPanel from "./SystemPanel";
+import ClosedTradesPanel from "./ClosedTradesPanel";
 import logo from "../assets/logo.png";
 import {
   LogOut,
@@ -34,6 +35,7 @@ import {
   CreditCard,
   LifeBuoy,
   FileDown,
+  Scale,
 } from "lucide-react";
 
 function WatchlistTile({ ticker, bias, threshold, barTime, source, liveData, onClick, onRemove }) {
@@ -170,7 +172,7 @@ export default function Dashboard({ user, onLogout }) {
   const [tradeIdeasOpenChart, setTradeIdeasOpenChart] = useState(null);
   /** Sidebar → Pattern Analysis chart modal */
   const [patternOpenChart, setPatternOpenChart] = useState(null);
-  const [rightFlyoutOpen, setRightFlyoutOpen]   = useState(false);
+  const [rightFlyout, setRightFlyout] = useState(null); // null | "system" | "closed"
   const pollRef              = useRef(null);
   const wlRefreshDebounceRef = useRef(null);
 
@@ -729,35 +731,65 @@ export default function Dashboard({ user, onLogout }) {
             )}
           </div>
 
-          {/* Right flyout — tab toggles panel open/closed */}
+          {/* Right flyouts — Closed audit + System, mutually exclusive */}
           <div className="flex shrink-0 h-full">
-            <button
-              type="button"
-              onClick={() => setRightFlyoutOpen((open) => !open)}
-              title={rightFlyoutOpen ? "Hide system panel" : "Show system panel"}
-              aria-expanded={rightFlyoutOpen}
-              className={`no-drag shrink-0 w-9 flex flex-col items-center justify-center gap-2 border-l border-slate-800 transition ${
-                rightFlyoutOpen
-                  ? "bg-brand-600/15 text-brand-400 hover:bg-brand-600/25"
-                  : "bg-slate-900 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
-              }`}
-            >
-              {rightFlyoutOpen
-                ? <ChevronRight className="w-4 h-4 shrink-0" />
-                : <ChevronLeft className="w-4 h-4 shrink-0" />}
-              <Server className="w-4 h-4 shrink-0" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 select-none">
-                System
-              </span>
-            </button>
+            <div className="flex flex-col shrink-0 border-l border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRightFlyout((cur) => (cur === "closed" ? null : "closed"))}
+                title={rightFlyout === "closed" ? "Hide closed-trade audit" : "Closed-trade fill & close audit"}
+                aria-expanded={rightFlyout === "closed"}
+                className={`no-drag flex-1 w-9 flex flex-col items-center justify-center gap-2 transition ${
+                  rightFlyout === "closed"
+                    ? "bg-brand-600/15 text-brand-400 hover:bg-brand-600/25"
+                    : "bg-slate-900 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+                }`}
+              >
+                {rightFlyout === "closed"
+                  ? <ChevronRight className="w-4 h-4 shrink-0" />
+                  : <ChevronLeft className="w-4 h-4 shrink-0" />}
+                <Scale className="w-4 h-4 shrink-0" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 select-none">
+                  Closed
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRightFlyout((cur) => (cur === "system" ? null : "system"))}
+                title={rightFlyout === "system" ? "Hide system panel" : "Show system panel"}
+                aria-expanded={rightFlyout === "system"}
+                className={`no-drag flex-1 w-9 flex flex-col items-center justify-center gap-2 border-t border-slate-800 transition ${
+                  rightFlyout === "system"
+                    ? "bg-brand-600/15 text-brand-400 hover:bg-brand-600/25"
+                    : "bg-slate-900 text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+                }`}
+              >
+                {rightFlyout === "system"
+                  ? <ChevronRight className="w-4 h-4 shrink-0" />
+                  : <ChevronLeft className="w-4 h-4 shrink-0" />}
+                <Server className="w-4 h-4 shrink-0" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider [writing-mode:vertical-rl] rotate-180 select-none">
+                  System
+                </span>
+              </button>
+            </div>
 
             <div
               className={`overflow-hidden transition-[width] duration-300 ease-in-out border-l border-slate-800 bg-slate-900 ${
-                rightFlyoutOpen ? "w-80" : "w-0"
+                rightFlyout === "system"
+                  ? "w-80"
+                  : rightFlyout === "closed"
+                    ? "w-[min(56rem,calc(100vw-20rem))]"
+                    : "w-0"
               }`}
             >
-              <div className="w-80 h-full">
-                <SystemPanel onClose={() => setRightFlyoutOpen(false)} />
+              <div className={`h-full ${rightFlyout === "closed" ? "w-[min(56rem,calc(100vw-20rem))]" : "w-80"}`}>
+                {rightFlyout === "system" && (
+                  <SystemPanel onClose={() => setRightFlyout(null)} />
+                )}
+                {rightFlyout === "closed" && (
+                  <ClosedTradesPanel onClose={() => setRightFlyout(null)} />
+                )}
               </div>
             </div>
           </div>
