@@ -51,7 +51,12 @@ function RegisterFlow({ onSuccess, onBack }) {
     try {
       const meRes = await authApi.me();
       const storedToken = localStorage.getItem("tf_token");
-      onSuccess(storedToken, meRes.data.user, null, null);
+      onSuccess(
+        storedToken,
+        meRes.data.user,
+        meRes.data.required_version,
+        meRes.data.download_url,
+      );
     } catch {
       onSuccess(localStorage.getItem("tf_token"), null, null, null);
     }

@@ -21,6 +21,7 @@ function isOutdated(a, b) {
 }
 
 const SESSION_MS = 12 * 60 * 60 * 1000; // 12 hours — non-remember sessions only
+const VERSION_POLL_MS = 5 * 60 * 1000;  // re-check while the app stays open
 
 function App() {
   const [token,    setToken]    = useState(null);
@@ -39,9 +40,40 @@ function App() {
 
   const navigate = useNavigate();
 
-  // Restore remember-me session on launch; otherwise require fresh login
+  const applyRequiredVersion = useCallback((required, dlUrl) => {
+    const client = window.APP_VERSION || "0.0.0";
+    if (required && isOutdated(client, required)) {
+      setClientVersion(client);
+      setReqVersion(required);
+      setDownloadUrl(dlUrl || "");
+      setUpdateNeeded(true);
+      return true;
+    }
+    return false;
+  }, []);
+
+  /** Public version check — does not depend on login or remember-me. */
+  const checkForUpdate = useCallback(async () => {
+    try {
+      const res = await authApi.clientVersion();
+      return applyRequiredVersion(res.data.required_version, res.data.download_url);
+    } catch {
+      return false;
+    }
+  }, [applyRequiredVersion]);
+
+  // Always check version on launch, then restore remember-me if still allowed
   useEffect(() => {
-    async function restoreSession() {
+    let cancelled = false;
+
+    async function boot() {
+      const blocked = await checkForUpdate();
+      if (cancelled) return;
+      if (blocked) {
+        setChecking(false);
+        return;
+      }
+
       const remember = localStorage.getItem("tf_remember_me") === "true";
       const storedToken = localStorage.getItem("tf_token");
 
@@ -61,32 +93,52 @@ function App() {
 
       try {
         const res = await authApi.me();
-        const client = window.APP_VERSION || "0.0.0";
-        const required = res.data.required_version;
-
-        if (required && isOutdated(client, required)) {
-          // Block access until the user downloads the new build — don't
-          // restore the session so a stale client can't slip past the gate.
-          setClientVersion(client);
-          setReqVersion(required);
-          setDownloadUrl(res.data.download_url || "");
-          setUpdateNeeded(true);
+        if (cancelled) return;
+        if (applyRequiredVersion(res.data.required_version, res.data.download_url)) {
           return;
         }
-
         setToken(storedToken);
         setUser(res.data.user);
-      } catch {
+      } catch (err) {
+        if (err.response?.status === 426) {
+          applyRequiredVersion(
+            err.response.data?.required_version,
+            err.response.data?.download_url,
+          );
+          return;
+        }
         localStorage.removeItem("tf_token");
         localStorage.removeItem("tf_user");
         localStorage.removeItem("tf_remember_me");
       } finally {
-        setChecking(false);
+        if (!cancelled) setChecking(false);
       }
     }
 
-    restoreSession();
-  }, []);
+    boot();
+    return () => { cancelled = true; };
+  }, [checkForUpdate, applyRequiredVersion]);
+
+  // Keep checking while the app is open (remember-me sessions can last 7 days)
+  useEffect(() => {
+    const id = setInterval(checkForUpdate, VERSION_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkForUpdate();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [checkForUpdate]);
+
+  useEffect(() => {
+    const onRequired = (e) => {
+      applyRequiredVersion(e.detail?.required_version, e.detail?.download_url);
+    };
+    window.addEventListener("tf:update-required", onRequired);
+    return () => window.removeEventListener("tf:update-required", onRequired);
+  }, [applyRequiredVersion]);
 
   /**
    * Called by Login (and RegisterFlow) after a successful auth response.
@@ -94,14 +146,7 @@ function App() {
    * login/register response so we can gate access before storing the token.
    */
   const handleLogin = async (newToken, newUser, requiredVersion, dlUrl, rememberMe = false) => {
-    const client = window.APP_VERSION || "0.0.0";
-
-    if (requiredVersion && isOutdated(client, requiredVersion)) {
-      // Block access until the user downloads the new build
-      setClientVersion(client);
-      setReqVersion(requiredVersion);
-      setDownloadUrl(dlUrl || "");
-      setUpdateNeeded(true);
+    if (applyRequiredVersion(requiredVersion, dlUrl)) {
       return;
     }
 

@@ -9,11 +9,15 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// Attach JWT token and device id to every request
+// Attach JWT token, client version, and device id to every request
 api.interceptors.request.use(async (config) => {
   const token = localStorage.getItem("tf_token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  const clientVersion = window.APP_VERSION;
+  if (clientVersion) {
+    config.headers["X-Client-Version"] = clientVersion;
   }
   try {
     const deviceId = await getDeviceId();
@@ -42,6 +46,12 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
+    if (error.response?.status === 426) {
+      window.dispatchEvent(new CustomEvent("tf:update-required", {
+        detail: error.response.data || {},
+      }));
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401) {
       localStorage.removeItem("tf_token");
       localStorage.removeItem("tf_user");
@@ -66,6 +76,8 @@ export const authApi = {
   register: (data) =>
     api.post("/api/auth/register", data),
   me: () => api.get("/api/auth/me"),
+  /** Public — no auth. Used on every launch, including remember-me restores. */
+  clientVersion: () => api.get("/api/auth/client-version"),
   requestPasswordChange: (old_password, new_password) =>
     api.post("/api/auth/request-password-change", { old_password, new_password }),
   verifyPasswordChange: (code) =>
