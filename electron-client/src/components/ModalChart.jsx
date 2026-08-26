@@ -221,6 +221,8 @@ function buildOptions(ticker, ohlcv, barTimeMs, threshold, barMs) {
       split:           false,
       shared:          true,
       useHTML:         true,
+      outside:         false,
+      zIndex:          2,
       backgroundColor: "#0f172a",
       borderColor:     "#334155",
       borderRadius:    8,
@@ -303,6 +305,125 @@ function calcATR(bars, idx, period = 14) {
     trSum += Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC));
   }
   return trSum / (slice.length - 1);
+}
+
+const QUOTE_POLL_MS = 5_000;
+
+function fmtQuotePx(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return Math.abs(n) >= 0.01 ? n.toFixed(2) : n.toFixed(4);
+}
+
+function alpacaMarkPrice(quote) {
+  if (quote?.last != null) return quote.last;
+  if (quote?.bid != null && quote?.ask != null) return (quote.bid + quote.ask) / 2;
+  return null;
+}
+
+function roundLimitPx(px) {
+  if (px == null || Number.isNaN(px)) return px;
+  return parseFloat(px >= 1 ? px.toFixed(2) : px.toFixed(4));
+}
+
+/** Limit/entry price inside the live Alpaca spread. Uses last if it sits in the spread, otherwise mid. */
+function entryInsideAlpacaSpread(quote, fallback) {
+  const bid = Number(quote?.bid);
+  const ask = Number(quote?.ask);
+  if (!(bid > 0) || !(ask > 0)) return fallback;
+  const lo = Math.min(bid, ask);
+  const hi = Math.max(bid, ask);
+  const last = Number(quote?.last);
+  let px = last > 0 && last >= lo && last <= hi ? last : (lo + hi) / 2;
+  px = Math.min(hi, Math.max(lo, px));
+  return roundLimitPx(px);
+}
+
+function fmtDelta(d) {
+  if (d == null || Number.isNaN(d)) return "—";
+  const sign = d > 0 ? "+" : d < 0 ? "−" : "";
+  return `${sign}$${fmtQuotePx(Math.abs(d))}`;
+}
+
+function AlpacaSpreadOverlay({ quote }) {
+  const fetching = !quote || (quote.fetching && !quote.updatedAt);
+  const error    = quote?.error;
+  const hasQuote = quote && (quote.bid != null || quote.ask != null || quote.spread != null || quote.last != null);
+  const polyClose = quote?.polygonClose ?? null;
+  const alpacaPx  = alpacaMarkPrice(quote);
+  const delta     = alpacaPx != null && polyClose != null ? alpacaPx - polyClose : null;
+  const deltaCls  = delta == null ? "text-slate-500"
+    : delta > 0 ? "text-emerald-400"
+    : delta < 0 ? "text-red-400"
+    : "text-slate-300";
+
+  return (
+    <div className="flex items-center gap-3 shrink-0 rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1">
+      <span className="flex items-center gap-1.5">
+        <span className={`w-1.5 h-1.5 rounded-full ${
+          fetching ? "bg-slate-500 animate-pulse"
+          : error && !hasQuote ? "bg-red-500"
+          : "bg-emerald-400 animate-pulse"
+        }`} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Alpaca
+        </span>
+      </span>
+
+      {fetching && (
+        <span className="text-[11px] text-slate-500">Fetching quote…</span>
+      )}
+
+      {error && !hasQuote && !fetching && (
+        <span className="text-[11px] text-slate-500 max-w-[180px] truncate" title={error}>
+          {error}
+        </span>
+      )}
+
+      {hasQuote && (
+        <>
+          <span className="flex items-baseline gap-1">
+            <span className="text-[10px] text-slate-500">Bid</span>
+            <span className="font-mono text-xs font-semibold text-emerald-400">
+              {quote.bid != null ? `$${fmtQuotePx(quote.bid)}` : "—"}
+            </span>
+          </span>
+          <span className="flex items-baseline gap-1">
+            <span className="text-[10px] text-slate-500">Ask</span>
+            <span className="font-mono text-xs font-semibold text-red-400">
+              {quote.ask != null ? `$${fmtQuotePx(quote.ask)}` : "—"}
+            </span>
+          </span>
+          <span className="flex items-baseline gap-1">
+            <span className="text-[10px] text-slate-500">Spread</span>
+            <span className="font-mono text-xs font-bold text-yellow-400">
+              {quote.spread != null ? `$${fmtQuotePx(quote.spread)}` : "—"}
+            </span>
+          </span>
+        </>
+      )}
+
+      {(hasQuote || polyClose != null) && (
+        <>
+          <span className="w-px h-3.5 bg-slate-700 shrink-0" />
+          <span className="flex items-baseline gap-1" title="Polygon last trade / session close">
+            <span className="text-[10px] text-slate-500">Poly Close</span>
+            <span className="font-mono text-xs font-semibold text-sky-300">
+              {polyClose != null ? `$${fmtQuotePx(polyClose)}` : "—"}
+            </span>
+          </span>
+          <span
+            className="flex items-baseline gap-1"
+            title="Alpaca last (or bid/ask mid) minus Polygon close"
+          >
+            <span className="text-[10px] text-slate-500">Δ</span>
+            <span className={`font-mono text-xs font-bold ${deltaCls}`}>
+              {fmtDelta(delta)}
+            </span>
+          </span>
+        </>
+      )}
+    </div>
+  );
 }
 
 // ── Derive share qty from risk management settings ────────────────────────────
@@ -816,6 +937,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [defaultRrRatio, setDefaultRrRatio] = useState(2);      // default R/R from Risk Management settings
   const chartRef = useRef(null);
   const rrRef    = useRef(null);                          // live mirror of rr (used in drag handlers)
+  const liveQuoteRef = useRef(null);
   const showVBPRef = useRef(showVBP); // live mirror of showVBP (used in render events)
 
   // Start a 3-second countdown once an order is successfully placed
@@ -958,43 +1080,67 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, barTime]);
 
-  // ── Live bid/ask polling — active only while a drawing is placed ─────────────
-  const hasDrawing = rr !== null;
+  // ── Live bid/ask polling — starts as soon as the trade-idea chart opens ────
   useEffect(() => {
-    if (!hasDrawing) {
-      setLiveQuote(null);
-      return;
-    }
+    if (!ticker) return;
 
     let cancelled = false;
+    setLiveQuote({ fetching: true });
 
     const fetchQuote = async () => {
       setLiveQuote(prev => prev ? { ...prev, fetching: true } : { fetching: true });
-      try {
-        const res = await alpacaApi.quote(ticker);
-        if (cancelled) return;
-        const d = res.data;
-        // Alpaca returns: bid, ask, bid_size, ask_size, spread, last, timestamp
-        setLiveQuote({
-          bid:      d.bid  > 0 ? d.bid  : null,
-          ask:      d.ask  > 0 ? d.ask  : null,
-          bidSize:  d.bid_size || null,
-          askSize:  d.ask_size || null,
-          spread:   d.spread > 0 ? d.spread : null,
-          last:     d.last  > 0 ? d.last  : null,
-          updatedAt: Date.now(),
-          fetching:  false,
-        });
-      } catch {
-        if (cancelled) return;
-        setLiveQuote(prev => prev ? { ...prev, fetching: false } : null);
+      const [alpacaRes, polyRes] = await Promise.allSettled([
+        alpacaApi.quote(ticker),
+        stockApi.quote(ticker),
+      ]);
+      if (cancelled) return;
+
+      let alpacaFields = null;
+      let alpacaError = null;
+      if (alpacaRes.status === "fulfilled") {
+        const d = alpacaRes.value.data;
+        const bid = d.bid > 0 ? d.bid : null;
+        const ask = d.ask > 0 ? d.ask : null;
+        const spread = (d.spread != null && Number.isFinite(Number(d.spread)))
+          ? Number(d.spread)
+          : (bid != null && ask != null ? Number((ask - bid).toFixed(4)) : null);
+        alpacaFields = {
+          bid,
+          ask,
+          bidSize: d.bid_size || null,
+          askSize: d.ask_size || null,
+          spread,
+          last:    d.last > 0 ? d.last : null,
+          error:   null,
+        };
+      } else {
+        alpacaError = alpacaRes.reason?.response?.data?.error || "Quote unavailable";
       }
+
+      let polygonClose = null;
+      if (polyRes.status === "fulfilled") {
+        const p = polyRes.value.data || {};
+        const n = Number(p.last_trade_price ?? p.close ?? p.minute_close);
+        polygonClose = n > 0 ? n : null;
+      }
+
+      setLiveQuote(prev => {
+        const keepAlpaca = !alpacaFields && prev?.bid != null;
+        return {
+          ...(keepAlpaca ? prev : {}),
+          ...(alpacaFields || {}),
+          fetching:     false,
+          updatedAt:    Date.now(),
+          error:        alpacaFields || keepAlpaca ? null : alpacaError,
+          polygonClose: polygonClose ?? prev?.polygonClose ?? null,
+        };
+      });
     };
 
     fetchQuote();
-    const id = setInterval(fetchQuote, 30_000);
+    const id = setInterval(fetchQuote, QUOTE_POLL_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, [hasDrawing, ticker]);
+  }, [ticker]);
 
   // ── Click-to-place entry (rrMode) ───────────────────────────────────────────
   useEffect(() => {
@@ -1010,13 +1156,15 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
       if (norm.chartY < chart.plotTop ||
           norm.chartY > chart.plotTop + chart.plotHeight * 0.80) return;
 
-      // Snap to closest bar's close price
-      const xVal      = chart.xAxis[0].toValue(norm.chartX);
+      // Horizontal placement follows the clicked bar; the entry *price* is
+      // forced inside the live Alpaca bid/ask — never the candle close.
+      const xVal       = chart.xAxis[0].toValue(norm.chartX);
       const nearestIdx = bars.reduce((bestIdx, b, i) =>
         Math.abs(b.t - xVal) < Math.abs(bars[bestIdx].t - xVal) ? i : bestIdx, 0
       );
-      const nearest = bars[nearestIdx];
-      const entry   = parseFloat(nearest.c.toFixed(2));
+      const nearest  = bars[nearestIdx];
+      const barClose = parseFloat(nearest.c.toFixed(2));
+      const entry    = entryInsideAlpacaSpread(liveQuoteRef.current, barClose);
 
       // ATR-based stop: 1.5× ATR so the stop hugs recent price action
       const atr      = calcATR(bars, nearestIdx) ?? entry * 0.02;
@@ -1054,6 +1202,15 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
   // ── Keep rrRef / showVBPRef in sync with React state ────────────────────────
   useEffect(() => { rrRef.current = rr; }, [rr]);
+  useEffect(() => { liveQuoteRef.current = liveQuote; }, [liveQuote]);
+
+  // Keep the drawn entry inside the live Alpaca spread as quotes refresh
+  useEffect(() => {
+    if (!rrRef.current) return;
+    const next = entryInsideAlpacaSpread(liveQuote, null);
+    if (next == null) return;
+    setRr(r => (r && r.entry !== next ? { ...r, entry: next } : r));
+  }, [liveQuote?.bid, liveQuote?.ask, liveQuote?.last]);
 
   // ── Flash the effective R/R value when a new entry is placed ─────────────────
   useEffect(() => {
@@ -1319,7 +1476,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
             <button
               onClick={() => { setRrMode(m => !m); if (rrMode) setRr(null); }}
-              title="Click a bar on the chart to set the entry price"
+              title="Click a bar to place the drawing. Entry uses the live Alpaca bid/ask, not the candle close."
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium border transition ${
                 rrMode
                   ? "bg-brand-600/20 border-brand-500 text-brand-300 animate-pulse"
@@ -1414,17 +1571,25 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
               <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin shrink-0" />
             )}
 
-            {/* Order buttons — only when a drawing is placed */}
-            {rr && (
-              <div className="ml-auto flex items-center gap-2 shrink-0">
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+              {!orderType && <AlpacaSpreadOverlay quote={liveQuote} />}
+              {rr && (
                 <button
-                  onClick={() => { setOrderType("limit"); setOrderResult(null); }}
+                  onClick={() => {
+                    setRr(r => {
+                      if (!r) return r;
+                      const next = entryInsideAlpacaSpread(liveQuote, r.entry);
+                      return next != null && next !== r.entry ? { ...r, entry: next } : r;
+                    });
+                    setOrderType("limit");
+                    setOrderResult(null);
+                  }}
                   className="px-3 py-1.5 rounded text-xs font-semibold bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 transition shadow-sm animate-pulse"
                 >
                   Open Limit Order
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* ── Live quote strip — visible while a drawing is active ── */}
@@ -1482,7 +1647,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                         {new Date(liveQuote.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                       </span>
                     )}
-                    <span className="text-slate-700">· 30s refresh</span>
+                    <span className="text-slate-700">· 5s refresh</span>
                   </span>
                 </>
               ) : (
@@ -1501,6 +1666,9 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
               <div className="flex items-center gap-1.5">
                 <span className="text-slate-500">Entry</span>
                 <span className="font-mono font-bold text-slate-200">${rr.entry.toFixed(2)}</span>
+                {liveQuote?.bid > 0 && liveQuote?.ask > 0 && (
+                  <span className="text-[10px] text-slate-500">Alpaca bid/ask</span>
+                )}
               </div>
 
               {/* Stop — conditionally re-derives target from R/R ratio */}
@@ -1631,31 +1799,17 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
             const dirColor  = isLong ? "text-emerald-400" : "text-red-400";
             const dirLabel  = isLong ? "▲ Long" : "▼ Short";
 
-            // Smart entry: use live Alpaca quote for a slightly-better fill price.
-            // Long  → ask + $0.01   (join the ask side, improves fill odds)
-            // Short → bid − $0.01   (join the bid side, improves fill odds)
+            // Limit entry is forced inside the live Alpaca bid/ask — never the
+            // candle close, and never outside the spread (ask+0.01 / bid−0.01).
             const liveAsk  = liveQuote?.ask  > 0 ? liveQuote.ask  : null;
             const liveBid  = liveQuote?.bid  > 0 ? liveQuote.bid  : null;
-            const liveLast = liveQuote?.last > 0 ? liveQuote.last : null;
 
-            const smartEntry = isMarket ? null : (() => {
-              if (isLong) {
-                const base = liveAsk ?? liveLast ?? rr.entry;
-                return parseFloat((base + 0.01).toFixed(2));
-              }
-              const base = liveBid ?? liveLast ?? rr.entry;
-              return parseFloat((base - 0.01).toFixed(2));
-            })();
-            const entrySource = isMarket ? null : (() => {
-              if (isLong) {
-                if (liveAsk  != null) return "ask + $0.01";
-                if (liveLast != null) return "last trade";
-                return "chart level";
-              }
-              if (liveBid  != null) return "bid − $0.01";
-              if (liveLast != null) return "last trade";
-              return "chart level";
-            })();
+            const smartEntry = isMarket ? null : entryInsideAlpacaSpread(liveQuote, rr.entry);
+            const entrySource = isMarket ? null : (
+              liveBid != null && liveAsk != null
+                ? `inside Alpaca spread $${fmtQuotePx(liveBid)}–$${fmtQuotePx(liveAsk)}`
+                : "chart level"
+            );
 
             // Effective entry price for this submission
             const entryPrice = smartEntry ?? rr.entry;
@@ -1921,13 +2075,15 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
           })()}
 
           {/* ── Chart ── */}
-          <HighchartsReact
-            ref={chartRef}
-            highcharts={Highcharts}
-            constructorType="stockChart"
-            options={chartOptions}
-            containerProps={{ style: { height: `${height}px`, width: "100%" } }}
-          />
+          <div className="relative">
+            <HighchartsReact
+              ref={chartRef}
+              highcharts={Highcharts}
+              constructorType="stockChart"
+              options={chartOptions}
+              containerProps={{ style: { height: `${height}px`, width: "100%" } }}
+            />
+          </div>
         </>
       )}
     </div>
