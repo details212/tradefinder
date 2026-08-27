@@ -20,6 +20,7 @@ import Highcharts from "highcharts/highstock";
 import "highcharts/highcharts-more";
 import HighchartsReact from "highcharts-react-official";
 import { chartApi, alpacaApi, preferencesApi, boxApi, stockApi } from "../api/client";
+import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
 import {
   Loader2, AlertCircle, Target, X, RefreshCw,
   ChevronLeft, ChevronRight, Square,
@@ -746,7 +747,6 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
   // ── R/R drawing ───────────────────────────────────────────────────────────
   const [rrMode,          setRrMode]          = useState(false);
   const [rr,              setRr]              = useState(null);
-  const [liveQuote,       setLiveQuote]       = useState(null);
   const [orderType,       setOrderType]       = useState(null);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,     setOrderResult]     = useState(null);
@@ -878,26 +878,9 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
   _onDeleteBox.current = handleDeleteBox;
   _onWLBox.current     = handleBoxToWatchlist;
 
-  // ── Live quote while drawing ──────────────────────────────────────────────
+  // ── Live quote while drawing — fresh fetch when drawing starts (no polling) ─
   const hasDrawing = rr !== null;
-  useEffect(() => {
-    if (!hasDrawing) { setLiveQuote(null); return; }
-    let cancelled = false;
-    const go = async () => {
-      try {
-        const res = await alpacaApi.quote(ticker);
-        if (!cancelled) {
-          const d = res.data;
-          setLiveQuote({ bid: d.bid>0?d.bid:null, ask: d.ask>0?d.ask:null,
-            bidSize: d.bid_size||null, askSize: d.ask_size||null,
-            spread: d.spread>0?d.spread:null, last: d.last>0?d.last:null,
-            updatedAt: Date.now() });
-        }
-      } catch {}
-    };
-    go(); const id = setInterval(go, 30_000);
-    return () => { cancelled=true; clearInterval(id); };
-  }, [hasDrawing, ticker]);
+  const { quote: liveQuote, refetch: refetchQuote } = useFreshAlpacaQuote(ticker, hasDrawing);
 
   // ── Determine active OHLCV/studies (replay vs full) ───────────────────────
   const activeOhlcv   = useMemo(() => {
@@ -1493,7 +1476,10 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                     {liveQuote.ask != null && <span className="flex items-center gap-1"><span className="text-slate-500">Ask</span><span className="font-mono font-semibold text-red-400">${liveQuote.ask.toFixed(2)}</span></span>}
                     {liveQuote.spread != null && <span className="flex items-center gap-1"><span className="text-slate-500">Spread</span><span className="font-mono text-yellow-400">${liveQuote.spread.toFixed(2)}</span></span>}
                     {liveQuote.last != null && <span className="flex items-center gap-1"><span className="text-slate-500">Last</span><span className="font-mono text-slate-300">${liveQuote.last.toFixed(2)}</span></span>}
-                    <span className="ml-auto text-slate-600 text-[10px]">{liveQuote.updatedAt && new Date(liveQuote.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · 30s</span>
+                    <span className="ml-auto text-slate-600 text-[10px] flex items-center gap-2">
+                      {liveQuote.updatedAt && new Date(liveQuote.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      <button type="button" onClick={() => refetchQuote()} className="text-brand-400 hover:text-brand-300">Refresh</button>
+                    </span>
                   </>
                 ) : <span className="text-slate-600 flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse"/>Fetching quote…</span>}
               </div>
@@ -1795,6 +1781,7 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                   <button disabled={orderSubmitting || hasErr}
                     onClick={async () => {
                       setOrderResult(null); setOrderSubmitting(true);
+                      await refetchQuote();
                       const risk2   = Math.abs(smartEntry - rr.stop);
                       const reward2 = Math.abs(safeTarget  - smartEntry);
                       try {

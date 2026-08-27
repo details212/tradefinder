@@ -2,12 +2,13 @@
  * TradeReviewModal — read-only chart modal opened from My Trades.
  * Loads the candlestick chart for a saved order and reconstructs the
  * R/R drawing (entry, stop, target, R-level lines) from the stored data.
- * Shows a live P/L strip polled from Alpaca every 30 s.
+ * Shows live P/L from a fresh Alpaca quote fetched when the modal opens.
  */
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
 import { stockApi, alpacaApi, aiApi } from "../api/client";
+import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
 import { Loader2, AlertCircle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check, ClipboardList, Sparkles, Volume2, VolumeX, Square } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 
@@ -772,7 +773,6 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState(null);
   const [rr,        setRr]        = useState(null);
-  const [liveQuote, setLiveQuote] = useState(null);
   const [activeZoom, setActiveZoom] = useState("2W");
   const [chartH, setChartH] = useState(null);
 
@@ -885,6 +885,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const containerRef = useRef(null);
 
   const ticker    = order.ticker;
+  const { quote: liveQuote, fetching: quoteFetching, refetch: refetchQuote } = useFreshAlpacaQuote(ticker, !!ticker);
   const barTimeMs = etStringToUtcMs(order.bar_time);
   const isLong    = order.direction === "long";
   const fillPrice = order.filled_avg_price ?? order.entry_price;
@@ -1014,23 +1015,6 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   }, [ticker, order.is_open, order.created_at, order.synced_at]);
 
   useEffect(() => { fetchBars(); }, [fetchBars]);
-
-  // Live quote polling
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      setLiveQuote(prev => prev ? { ...prev, fetching: true } : { fetching: true });
-      try {
-        const res = await alpacaApi.quote(ticker);
-        if (cancelled) return;
-        const d = res.data;
-        setLiveQuote({ bid: d.bid > 0 ? d.bid : null, ask: d.ask > 0 ? d.ask : null, last: d.last > 0 ? d.last : null, updatedAt: Date.now(), fetching: false });
-      } catch { if (!cancelled) setLiveQuote(prev => prev ? { ...prev, fetching: false } : null); }
-    };
-    poll();
-    const id = setInterval(poll, 30_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [ticker]);
 
   // Zoom to signal bar after bars load
   const paddedLastT = useCallback(() => bars.length ? bars[bars.length - 1].t + 30 * 5 * 60 * 1000 : 0, [bars]);
@@ -1184,6 +1168,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
 
   // ── P/L calculations ──────────────────────────────────────────────────────
   const currentPrice = liveQuote?.last ?? liveQuote?.bid ?? null;
+  const quoteBusy = quoteFetching || liveQuote?.fetching;
   const livePl = currentPrice != null && fillPrice != null
     ? (isLong ? 1 : -1) * (currentPrice - Number(fillPrice)) * (order.qty ?? 0)
     : null;

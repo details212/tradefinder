@@ -112,7 +112,7 @@ export const stockApi = {
   // Sector / industry lists
   sectors:       ()       => api.get("/api/stocks/sectors"),
   industries:    (sector) => api.get("/api/stocks/industries", { params: sector ? { sector } : {} }),
-  sectorHeatmap: ()       => api.get("/api/stocks/sector-heatmap"),
+  sectorHeatmap: ()       => api.get("/api/stocks/sector-heatmap", { timeout: 150_000 }),
 
   // Quote & price
   quote: (ticker) => api.get(`/api/stocks/${ticker}/quote`),
@@ -148,9 +148,6 @@ export const stockApi = {
   getWatchlist: () => api.get("/api/stocks/watchlist"),
   addToWatchlist: (ticker, data = {}) => api.post(`/api/stocks/watchlist/${ticker}`, data),
   removeFromWatchlist: (ticker) => api.delete(`/api/stocks/watchlist/${ticker}`),
-
-  // Batch live prices — reads from server-side cache (non-blocking)
-  snapshots: (tickers) => api.get("/api/snapshots/prices", { params: { tickers } }),
 };
 
 // ── Trade Ideas ───────────────────────────────────────────────────────────────
@@ -169,11 +166,6 @@ export const tradeIdeasApi = {
   /** Lorentzian symbol stats + long/short trade allocation for Tradefinder AI tooltip. */
   lorentzianStats: (tickers) =>
     api.post("/api/tradeideas/lorentzian-stats", { tickers }),
-};
-
-// ── Snapshot cache (prices maintained server-side; client reads only) ─────────
-export const snapshotsApi = {
-  prices: (tickers) => api.get("/api/snapshots/prices", { params: { tickers } }),
 };
 
 // ── Leaderboard (system performance settings + per-user closed-trade stats) ───
@@ -199,6 +191,9 @@ export const alpacaApi = {
   save:       (data)        => api.put("/api/broker/alpaca", data),
   test:       ()            => api.get("/api/broker/alpaca/test"),
   quote:      (ticker)      => api.get(`/api/broker/alpaca/quote/${ticker}`),
+  quotes:     (tickers)     => api.get("/api/broker/alpaca/quotes", {
+    params: { tickers: Array.isArray(tickers) ? tickers.join(",") : tickers },
+  }),
   placeOrder:      (data)        => api.post("/api/broker/alpaca/order", data),
   closeTrade:      (dbOrderId)   => api.post(`/api/broker/alpaca/order/${dbOrderId}/close`),
   patchLevels:     (dbOrderId, data) => api.patch(`/api/broker/alpaca/order/${dbOrderId}/levels`, data),

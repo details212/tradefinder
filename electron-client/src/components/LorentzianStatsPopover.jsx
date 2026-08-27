@@ -1,4 +1,5 @@
-import React, { useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { fetchAlpacaQuote } from "../utils/fetchAlpacaQuote";
 import { Loader2 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { fmtEtDate } from "../utils/timeUtils";
@@ -225,12 +226,23 @@ function TradesColumn({ trades }) {
 
 export default function LorentzianStatsPopover({
   popover,
-  snapPrices,
   onMouseEnter,
   onMouseLeave,
 }) {
   const { ticker, x, y, stats, allocation, trades, signalDirection, loading } = popover ?? {};
-  const price = snapPrices?.[ticker] ?? null;
+  const [price, setPrice] = useState(null);
+
+  useEffect(() => {
+    if (!ticker) {
+      setPrice(null);
+      return;
+    }
+    let cancelled = false;
+    fetchAlpacaQuote(ticker)
+      .then((q) => { if (!cancelled) setPrice(q?.price ?? null); })
+      .catch(() => { if (!cancelled) setPrice(null); });
+    return () => { cancelled = true; };
+  }, [ticker]);
 
   const winLossData = useMemo(() => {
     const wins   = stats?.wins   ?? 0;

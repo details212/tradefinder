@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { alpacaApi, snapshotsApi } from "../api/client";
+import { alpacaApi } from "../api/client";
+import { exitPrice } from "../utils/alpacaPrices";
+import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
 import TradeReviewModal from "./TradeReviewModal";
 import AnalyticsPanel from "./AnalyticsPanel";
 import StrategyPerformancePanel from "./StrategyPerformancePanel";
@@ -315,10 +317,8 @@ export default function AdminPanel({ user }) {
   const [backfilling,   setBackfilling]   = useState(false);
   const [backfillResult, setBackfillResult] = useState(null); // null | { updated, skipped, errors }
   const [reviewOrder,   setReviewOrder]   = useState(null);
-  const [snapshotPrices, setSnapshotPrices] = useState({}); // ticker → { price, change_pct } from /api/snapshots/prices
   const OPEN_ORDERS_PER_PAGE   = 40;
   const CLOSED_ORDERS_PER_PAGE = 20;
-  const OPEN_TRADES_SNAPSHOT_POLL_MS = 60_000;
 
   const openOrderTickers = useMemo(() => {
     const s = new Set(
@@ -327,22 +327,10 @@ export default function AdminPanel({ user }) {
     return [...s].sort();
   }, [orders]);
 
-  const pollOpenTradeSnapshots = useCallback(() => {
-    if (!openOrderTickers.length) {
-      setSnapshotPrices({});
-      return;
-    }
-    snapshotsApi
-      .prices(openOrderTickers.join(","))
-      .then((r) => setSnapshotPrices(r.data.prices || {}))
-      .catch(() => {});
-  }, [openOrderTickers]);
-
-  useEffect(() => {
-    pollOpenTradeSnapshots();
-    const id = setInterval(pollOpenTradeSnapshots, OPEN_TRADES_SNAPSHOT_POLL_MS);
-    return () => clearInterval(id);
-  }, [pollOpenTradeSnapshots]);
+  const { quotes: liveQuotes, refetch: refetchOpenQuotes } = useFreshAlpacaQuotes(
+    openOrderTickers,
+    ordersFilter === "open" && openOrderTickers.length > 0,
+  );
 
   const syncOrders = useCallback((isBackground = false) => {
     if (!isBackground) setOrdersLoading(true);
@@ -352,10 +340,11 @@ export default function AdminPanel({ user }) {
         setSyncedCount(r.data.synced ?? 0);
         setLastSyncedAt(Date.now());
         setOrdersError(null);
+        refetchOpenQuotes();
       })
       .catch(() => setOrdersError("Could not load or sync orders."))
       .finally(() => setOrdersLoading(false));
-  }, []);
+  }, [refetchOpenQuotes]);
 
   useEffect(() => {
     syncOrders();
@@ -594,8 +583,10 @@ export default function AdminPanel({ user }) {
                         const plColor   = plPos ? "text-emerald-400" : plNeg ? "text-red-400" : "text-slate-400";
                         const fillPrice = o.filled_avg_price ?? o.entry_price;
                         const tUpper = o.ticker ? String(o.ticker).trim().toUpperCase() : "";
-                        const snap = tUpper ? snapshotPrices[tUpper] : null;
-                        const livePx = snap?.price != null ? Number(snap.price) : null;
+                        const quote = tUpper ? liveQuotes[tUpper] : null;
+                        const livePx =
+                          exitPrice(o.direction, quote) ??
+                          (o.current_price != null ? Number(o.current_price) : null);
                         const targetPx = o.target_price != null ? Number(o.target_price) : null;
                         const beyondTakeProfit =
                           livePx != null &&

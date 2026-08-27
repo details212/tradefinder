@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { stockApi, snapshotsApi, alpacaApi, tradeIdeasApi, preferencesApi } from "../api/client";
+import { stockApi, alpacaApi, tradeIdeasApi, preferencesApi } from "../api/client";
+import { fetchAlpacaQuotes, fetchAlpacaQuote } from "../utils/fetchAlpacaQuote";
 import LiveStreamBar from "./LiveStreamBar";
 import StockDetail from "./StockDetail";
 import TradeIdeas from "./TradeIdeas";
@@ -38,12 +39,27 @@ import {
   Scale,
 } from "lucide-react";
 
-function WatchlistTile({ ticker, bias, threshold, barTime, source, liveData, onClick, onRemove }) {
-  const price     = liveData?.price     ?? null;
-  const changePct = liveData?.change_pct ?? null;
-  const isUp      = changePct == null ? null : changePct >= 0;
+function WatchlistTile({ ticker, bias, threshold, barTime, source, onClick, onRemove }) {
+  const [price, setPrice] = useState(null);
+  const [loadingPrice, setLoadingPrice] = useState(!!ticker);
   const isLong    = bias?.toLowerCase() === "long";
   const isShort   = bias?.toLowerCase() === "short";
+
+  useEffect(() => {
+    if (!ticker) {
+      setPrice(null);
+      setLoadingPrice(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingPrice(true);
+    fetchAlpacaQuote(ticker)
+      .then((q) => { if (!cancelled) setPrice(q?.price ?? null); })
+      .catch(() => { if (!cancelled) setPrice(null); })
+      .finally(() => { if (!cancelled) setLoadingPrice(false); });
+    return () => { cancelled = true; };
+  }, [ticker]);
+
   const aboveThreshold = threshold != null && price != null && Number(price) > Number(threshold);
 
   return (
@@ -74,19 +90,14 @@ function WatchlistTile({ ticker, bias, threshold, barTime, source, liveData, onC
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          {price != null ? (
+          {loadingPrice ? (
+            <span className="text-xs text-slate-600 animate-pulse">…</span>
+          ) : price != null ? (
             <span className="text-sm font-semibold text-slate-200 tabular-nums">
               ${Number(price).toFixed(2)}
             </span>
           ) : (
             <span className="text-xs text-slate-600">—</span>
-          )}
-          {changePct != null && (
-            <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums ${
-              isUp ? "bg-green-900/40 text-green-400" : "bg-red-900/40 text-red-400"
-            }`}>
-              {isUp ? "+" : ""}{Number(changePct).toFixed(2)}%
-            </span>
           )}
           <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-slate-400 transition" />
         </div>
@@ -118,7 +129,6 @@ function WatchlistTile({ ticker, bias, threshold, barTime, source, liveData, onC
   );
 }
 
-const WATCHLIST_POLL_MS         = 60_000;
 const LIVE_STREAM_POLL_MS       = 60_000;
 const EXIT_METHOD_BACKFILL_MS   = 5 * 60_000;
 const LIVE_STREAM_MINUTES  = 15;
@@ -163,7 +173,6 @@ export default function Dashboard({ user, onLogout }) {
   const [chartThreshold,   setChartThreshold]   = useState(null);
   const [watchlist,        setWatchlist]         = useState([]);      // ticker strings
   const [watchlistItems,   setWatchlistItems]    = useState([]);      // full objects
-  const [watchlistPrices,  setWatchlistPrices]   = useState({});      // { AAPL: { price, change_pct } }
   const [loadingWatchlist, setLoadingWatchlist]  = useState(true);
   const [activeView,             setActiveView]             = useState("stocks");
   const [brokerStatus,           setBrokerStatus]           = useState(null); // null | { ok, paper }
@@ -173,7 +182,6 @@ export default function Dashboard({ user, onLogout }) {
   /** Sidebar → Pattern Analysis chart modal */
   const [patternOpenChart, setPatternOpenChart] = useState(null);
   const [rightFlyout, setRightFlyout] = useState(null); // null | "system" | "closed"
-  const pollRef              = useRef(null);
   const wlRefreshDebounceRef = useRef(null);
 
   // ── Live Stream state ──────────────────────────────────────────────────────
@@ -200,21 +208,23 @@ export default function Dashboard({ user, onLogout }) {
       const r = await tradeIdeasApi.recent(LIVE_STREAM_MINUTES);
       const items = r.data.recent || [];
 
-      // Fetch MA cache, snapshot prices, and open tickers in parallel
+      // Fresh Alpaca prices each poll (no client price cache)
       const tickers = [...new Set(items.map(i => i.ticker))];
       let maByTicker    = {};
       let priceByTicker = {};
       let openTickerSet = new Set();
       if (tickers.length > 0) {
         try {
-          const [maRes, priceRes, openRes] = await Promise.all([
+          const [maRes, quotes, openRes] = await Promise.allSettled([
             tradeIdeasApi.maCache(tickers, { staleOk: true }),
-            snapshotsApi.prices(tickers.join(",")),
+            fetchAlpacaQuotes(tickers),
             alpacaApi.openTickers(),
           ]);
-          maByTicker    = maRes.data.ma       || {};
-          priceByTicker = priceRes.data.prices || {};
-          openTickerSet = new Set(openRes.data.tickers ?? []);
+          maByTicker = maRes.status === "fulfilled" ? (maRes.value.data.ma || {}) : {};
+          priceByTicker = quotes.status === "fulfilled" ? (quotes.value || {}) : {};
+          openTickerSet = openRes.status === "fulfilled"
+            ? new Set(openRes.value.data.tickers ?? [])
+            : new Set();
         } catch { /* keep empty lookups — show items unfiltered if secondary calls fail */ }
       }
 
@@ -410,23 +420,6 @@ export default function Dashboard({ user, onLogout }) {
     } catch { /* ignore */ }
   }, []);
 
-  // ── Centralised 60-second live price polling (reads from server-side cache) ─
-  const pollPrices = useCallback(() => {
-    if (!watchlist.length) return;
-    snapshotsApi.prices(watchlist.join(","))
-      .then((r) => setWatchlistPrices(r.data.prices || {}))
-      .catch(() => {});
-  }, [watchlist]);
-
-  useEffect(() => {
-    clearInterval(pollRef.current);
-    if (watchlist.length > 0) {
-      pollPrices();                                             // immediate fetch
-      pollRef.current = setInterval(pollPrices, WATCHLIST_POLL_MS);
-    }
-    return () => clearInterval(pollRef.current);
-  }, [watchlist, pollPrices]);
-
   useEffect(() => {
     fetchWatchlist();
   }, [fetchWatchlist]);
@@ -547,7 +540,6 @@ export default function Dashboard({ user, onLogout }) {
                   threshold={item.threshold}
                   barTime={item.bar_time ?? null}
                   source={item.source ?? null}
-                  liveData={watchlistPrices[item.ticker] ?? null}
                   onRemove={handleRemoveFromWatchlist}
                   onClick={handleWatchlistItemClick}
                 />

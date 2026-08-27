@@ -789,8 +789,9 @@ function AutoCloseBeyondTpSection() {
       ) : (
         <div className="flex flex-col gap-4">
           <p className="text-xs text-slate-500 leading-relaxed">
-            When the last traded price moves past your take-profit <em>or</em> stop-loss level while
-            the position is still open, automatically cancel the bracket legs and send a
+            When the actionable Alpaca price (bid for longs, ask for shorts) moves past your
+            take-profit <em>or</em> stop-loss level while the position is still open, automatically
+            cancel the bracket legs and send a
             <span className="text-slate-400"> market </span>
             order to flatten all shares—same behavior as closing a trade manually from My Trades.
             Prices are fetched directly from Alpaca every minute. The check runs about once per
@@ -816,8 +817,9 @@ function AutoCloseBeyondTpSection() {
             </button>
           </div>
           <p className="text-[11px] text-slate-600 leading-relaxed">
-            Snapshots are not tick-perfect. Review live and paper behavior before relying on this for real
-            money. Requires Alpaca credentials and an open trade recorded in TradeFinder.
+            Checks use Alpaca bid/ask, not delayed snapshot feeds. Review live and paper behavior
+            before relying on this for real money. Requires Alpaca credentials and an open trade
+            recorded in TradeFinder.
           </p>
           <StatusBanner status={status} />
         </div>

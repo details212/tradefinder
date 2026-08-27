@@ -8,6 +8,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
 import { stockApi, alpacaApi, preferencesApi } from "../api/client";
+import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
 import { Loader2, AlertCircle, Target, X } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 
@@ -306,8 +307,6 @@ function calcATR(bars, idx, period = 14) {
   }
   return trSum / (slice.length - 1);
 }
-
-const QUOTE_POLL_MS = 5_000;
 
 function fmtQuotePx(n) {
   if (n == null || Number.isNaN(n)) return "—";
@@ -921,7 +920,8 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,     setOrderResult]     = useState(null);  // { ok, message, orderId } | null
   const [closeCountdown,  setCloseCountdown]  = useState(null);  // seconds left before auto-close, or null
-  const [liveQuote,       setLiveQuote]       = useState(null);  // null | { bid, ask, last, spread, updatedAt, fetching }
+  const { quote: liveQuote, fetching: quoteFetching, refetch: refetchQuote } = useFreshAlpacaQuote(ticker);
+  const [polygonClose, setPolygonClose] = useState(null);
   const [activeZoom,       setActiveZoom]       = useState("2W");
   const [barInterval,      setBarInterval]      = useState(BAR_INTERVALS[0]);
   // Bar size actually reflected in `bars` right now — only updated once a
@@ -939,6 +939,9 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   const rrRef    = useRef(null);                          // live mirror of rr (used in drag handlers)
   const liveQuoteRef = useRef(null);
   const showVBPRef = useRef(showVBP); // live mirror of showVBP (used in render events)
+  const displayQuote = liveQuote
+    ? { ...liveQuote, polygonClose, fetching: quoteFetching }
+    : (quoteFetching ? { fetching: true } : null);
 
   // Start a 3-second countdown once an order is successfully placed
   useEffect(() => {
@@ -1080,66 +1083,22 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, barTime]);
 
-  // ── Live bid/ask polling — starts as soon as the trade-idea chart opens ────
+  // Polygon close for comparison label — fetched once per ticker open (not cached across tickers)
   useEffect(() => {
-    if (!ticker) return;
-
+    if (!ticker) {
+      setPolygonClose(null);
+      return;
+    }
     let cancelled = false;
-    setLiveQuote({ fetching: true });
-
-    const fetchQuote = async () => {
-      setLiveQuote(prev => prev ? { ...prev, fetching: true } : { fetching: true });
-      const [alpacaRes, polyRes] = await Promise.allSettled([
-        alpacaApi.quote(ticker),
-        stockApi.quote(ticker),
-      ]);
-      if (cancelled) return;
-
-      let alpacaFields = null;
-      let alpacaError = null;
-      if (alpacaRes.status === "fulfilled") {
-        const d = alpacaRes.value.data;
-        const bid = d.bid > 0 ? d.bid : null;
-        const ask = d.ask > 0 ? d.ask : null;
-        const spread = (d.spread != null && Number.isFinite(Number(d.spread)))
-          ? Number(d.spread)
-          : (bid != null && ask != null ? Number((ask - bid).toFixed(4)) : null);
-        alpacaFields = {
-          bid,
-          ask,
-          bidSize: d.bid_size || null,
-          askSize: d.ask_size || null,
-          spread,
-          last:    d.last > 0 ? d.last : null,
-          error:   null,
-        };
-      } else {
-        alpacaError = alpacaRes.reason?.response?.data?.error || "Quote unavailable";
-      }
-
-      let polygonClose = null;
-      if (polyRes.status === "fulfilled") {
-        const p = polyRes.value.data || {};
+    stockApi.quote(ticker)
+      .then((res) => {
+        if (cancelled) return;
+        const p = res.data || {};
         const n = Number(p.last_trade_price ?? p.close ?? p.minute_close);
-        polygonClose = n > 0 ? n : null;
-      }
-
-      setLiveQuote(prev => {
-        const keepAlpaca = !alpacaFields && prev?.bid != null;
-        return {
-          ...(keepAlpaca ? prev : {}),
-          ...(alpacaFields || {}),
-          fetching:     false,
-          updatedAt:    Date.now(),
-          error:        alpacaFields || keepAlpaca ? null : alpacaError,
-          polygonClose: polygonClose ?? prev?.polygonClose ?? null,
-        };
-      });
-    };
-
-    fetchQuote();
-    const id = setInterval(fetchQuote, QUOTE_POLL_MS);
-    return () => { cancelled = true; clearInterval(id); };
+        setPolygonClose(n > 0 ? n : null);
+      })
+      .catch(() => { if (!cancelled) setPolygonClose(null); });
+    return () => { cancelled = true; };
   }, [ticker]);
 
   // ── Click-to-place entry (rrMode) ───────────────────────────────────────────
@@ -1149,7 +1108,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
 
     chart.container.style.cursor = "crosshair";
 
-    const handleClick = (e) => {
+    const handleClick = async (e) => {
       const norm = chart.pointer.normalize(e);
 
       // Ignore clicks outside the price pane (top 80%)
@@ -1164,7 +1123,9 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
       );
       const nearest  = bars[nearestIdx];
       const barClose = parseFloat(nearest.c.toFixed(2));
-      const entry    = entryInsideAlpacaSpread(liveQuoteRef.current, barClose);
+      const fresh    = await refetchQuote();
+      liveQuoteRef.current = fresh;
+      const entry    = entryInsideAlpacaSpread(fresh, barClose);
 
       // ATR-based stop: 1.5× ATR so the stop hugs recent price action
       const atr      = calcATR(bars, nearestIdx) ?? entry * 0.02;
@@ -1190,7 +1151,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
       chart.container.removeEventListener("click", handleClick);
       chart.container.style.cursor = "";
     };
-  }, [rrMode, bars, direction, defaultRrRatio]);
+  }, [rrMode, bars, direction, defaultRrRatio, refetchQuote]);
 
   // Derived values needed by effects below — must be declared before any useEffect that uses them
   const barTimeMs = etStringToUtcMs(barTime);
@@ -1572,7 +1533,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
             )}
 
             <div className="ml-auto flex items-center gap-2 shrink-0">
-              {!orderType && <AlpacaSpreadOverlay quote={liveQuote} />}
+              {!orderType && <AlpacaSpreadOverlay quote={displayQuote} />}
               {rr && (
                 <button
                   onClick={() => {
@@ -1595,59 +1556,65 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
           {/* ── Live quote strip — visible while a drawing is active ── */}
           {rr && (
             <div className="flex items-center gap-x-5 px-4 py-1.5 border-b border-slate-700/60 bg-slate-950/50 shrink-0 text-xs">
-              {liveQuote && !liveQuote.fetching || (liveQuote && liveQuote.updatedAt) ? (
+              {displayQuote && (!displayQuote.fetching || displayQuote.updatedAt) ? (
                 <>
-                  {liveQuote.bid != null && (
+                  {displayQuote.bid != null && (
                     <span className="flex items-center gap-1">
                       <span className="text-slate-500">Bid</span>
                       <span className="font-mono font-semibold text-emerald-400">
-                        ${liveQuote.bid.toFixed(2)}
+                        ${displayQuote.bid.toFixed(2)}
                       </span>
-                      {liveQuote.bidSize != null && (
-                        <span className="text-slate-600 text-[10px]">×{liveQuote.bidSize}</span>
+                      {displayQuote.bidSize != null && (
+                        <span className="text-slate-600 text-[10px]">×{displayQuote.bidSize}</span>
                       )}
                     </span>
                   )}
-                  {liveQuote.ask != null && (
+                  {displayQuote.ask != null && (
                     <span className="flex items-center gap-1">
                       <span className="text-slate-500">Ask</span>
                       <span className="font-mono font-semibold text-red-400">
-                        ${liveQuote.ask.toFixed(2)}
+                        ${displayQuote.ask.toFixed(2)}
                       </span>
-                      {liveQuote.askSize != null && (
-                        <span className="text-slate-600 text-[10px]">×{liveQuote.askSize}</span>
+                      {displayQuote.askSize != null && (
+                        <span className="text-slate-600 text-[10px]">×{displayQuote.askSize}</span>
                       )}
                     </span>
                   )}
-                  {liveQuote.spread != null && (
+                  {displayQuote.spread != null && (
                     <span className="flex items-center gap-1">
                       <span className="text-slate-500">Spread</span>
                       <span className="font-mono text-yellow-400">
-                        ${liveQuote.spread.toFixed(2)}
+                        ${displayQuote.spread.toFixed(2)}
                       </span>
                     </span>
                   )}
-                  {liveQuote.last != null && (
+                  {displayQuote.last != null && (
                     <span className="flex items-center gap-1">
                       <span className="text-slate-500">Last</span>
                       <span className="font-mono text-slate-300">
-                        ${liveQuote.last.toFixed(2)}
+                        ${displayQuote.last.toFixed(2)}
                       </span>
                     </span>
                   )}
-                  {liveQuote.bid == null && liveQuote.ask == null && liveQuote.last == null && (
+                  {displayQuote.bid == null && displayQuote.ask == null && displayQuote.last == null && (
                     <span className="text-slate-600 italic">No quote data</span>
                   )}
                   <span className="ml-auto flex items-center gap-1.5 text-slate-600">
-                    {liveQuote.fetching && (
+                    {displayQuote.fetching && (
                       <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse" />
                     )}
-                    {liveQuote.updatedAt && (
-                      <span title="Last refreshed">
-                        {new Date(liveQuote.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    {displayQuote.updatedAt && (
+                      <span title="Last fetched">
+                        {new Date(displayQuote.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                       </span>
                     )}
-                    <span className="text-slate-700">· 5s refresh</span>
+                    <button
+                      type="button"
+                      onClick={() => refetchQuote()}
+                      className="text-brand-400 hover:text-brand-300 text-[10px] font-medium"
+                    >
+                      Refresh
+                    </button>
                   </span>
                 </>
               ) : (
@@ -2019,6 +1986,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                           }
 
                           setOrderSubmitting(true);
+                          await refetchQuote();
                           const risk   = Math.abs(entryPrice - rr.stop);
                           const reward = Math.abs(rr.target  - entryPrice);
                           try {

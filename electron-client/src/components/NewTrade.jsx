@@ -42,9 +42,8 @@ function SectorHeatmap({ onSectorClick }) {
       const res = await stockApi.sectorHeatmap();
       const sectors = res.data.sectors || [];
       setData(sectors);
-      if (sectors.length && sectors[0].last_updated) {
-        setUpdated(new Date(sectors[0].last_updated));
-      }
+      const ts = res.data.fetched_at || (sectors.length && sectors[0].last_updated);
+      if (ts) setUpdated(new Date(ts));
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {
@@ -57,7 +56,7 @@ function SectorHeatmap({ onSectorClick }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8 text-slate-500 gap-2 text-sm">
-        <Loader2 className="w-4 h-4 animate-spin" /> Loading sector data…
+        <Loader2 className="w-4 h-4 animate-spin" /> Fetching live sector data from Polygon…
       </div>
     );
   }
@@ -71,7 +70,7 @@ function SectorHeatmap({ onSectorClick }) {
   if (!data.length) {
     return (
       <div className="text-sm text-slate-500 text-center py-4">
-        No snapshot data yet — prices refresh every 60 s.
+        No sector performance data available.
       </div>
     );
   }

@@ -10,6 +10,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
 import { stockApi, alpacaApi, preferencesApi } from "../api/client";
+import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
 import { Loader2, AlertCircle, Target, X } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 
@@ -622,7 +623,6 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   const [orderType,     setOrderType]     = useState(null);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderResult,   setOrderResult]   = useState(null);
-  const [liveQuote,     setLiveQuote]     = useState(null);
   const [activeZoom,    setActiveZoom]    = useState("2W");
   const [riskPrefs,     setRiskPrefs]     = useState(null);
   const [portfolioValue, setPortfolioValue] = useState(null);
@@ -777,36 +777,9 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, barTime]);
 
-  // ── Live bid/ask polling ─────────────────────────────────────────────────────
+  // ── Live bid/ask — fetched when a drawing is active (no polling cache) ───────
   const hasDrawing = rr !== null;
-  useEffect(() => {
-    if (!hasDrawing) { setLiveQuote(null); return; }
-    let cancelled = false;
-    const fetchQuote = async () => {
-      setLiveQuote(prev => prev ? { ...prev, fetching: true } : { fetching: true });
-      try {
-        const res = await alpacaApi.quote(ticker);
-        if (cancelled) return;
-        const d = res.data;
-        setLiveQuote({
-          bid:      d.bid  > 0 ? d.bid  : null,
-          ask:      d.ask  > 0 ? d.ask  : null,
-          bidSize:  d.bid_size || null,
-          askSize:  d.ask_size || null,
-          spread:   d.spread > 0 ? d.spread : null,
-          last:     d.last  > 0 ? d.last  : null,
-          updatedAt: Date.now(),
-          fetching:  false,
-        });
-      } catch {
-        if (cancelled) return;
-        setLiveQuote(prev => prev ? { ...prev, fetching: false } : null);
-      }
-    };
-    fetchQuote();
-    const id = setInterval(fetchQuote, 30_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [hasDrawing, ticker]);
+  const { quote: liveQuote, refetch: refetchQuote } = useFreshAlpacaQuote(ticker, hasDrawing);
 
   // ── Click-to-place entry ─────────────────────────────────────────────────────
   // directionRef.current is always the live direction value — no stale closure risk.
@@ -1228,7 +1201,13 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                         {new Date(liveQuote.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                       </span>
                     )}
-                    <span className="text-slate-700">· 30s refresh</span>
+                    <button
+                      type="button"
+                      onClick={() => refetchQuote()}
+                      className="text-brand-400 hover:text-brand-300 text-[10px] font-medium"
+                    >
+                      Refresh
+                    </button>
                   </span>
                 </>
               ) : (
@@ -1547,6 +1526,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                             return;
                           }
                           setOrderSubmitting(true);
+                          await refetchQuote();
                           const risk   = Math.abs(entryPrice - rr.stop);
                           const reward = Math.abs(rr.target  - entryPrice);
                           try {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { stockApi } from "../api/client";
+import { fetchAlpacaQuote } from "../utils/fetchAlpacaQuote";
 import StockDetailChart from "./StockDetailChart";
 import TechnicalChart from "./TechnicalChart";
 import {
@@ -41,10 +42,10 @@ function fmtPct(n) {
 
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 function OverviewTab({ ticker, quote, details, news, watchlist, defaultInterval, barTime, threshold }) {
-  const price = quote?.last_trade_price ?? quote?.close;
-  const change = quote?.change;
-  const changePct = quote?.change_pct;
-  const isUp = change == null ? null : change >= 0;
+  const price = quote?.price ?? quote?.last ?? null;
+  const change = null;
+  const changePct = null;
+  const isUp = null;
 
   const toggleWatchlist = async () => {
     try {
@@ -357,12 +358,12 @@ export default function StockDetail({ ticker, onClose, watchlist, defaultInterva
     setActiveTab("Overview");
 
     Promise.all([
-      stockApi.quote(ticker),
+      fetchAlpacaQuote(ticker),
       stockApi.details(ticker),
       stockApi.news(ticker),
     ])
-      .then(([qRes, dRes, nRes]) => {
-        setQuote(qRes.data);
+      .then(([q, dRes, nRes]) => {
+        setQuote(q);
         setDetails(dRes.data);
         setNews(nRes.data.articles || []);
       })

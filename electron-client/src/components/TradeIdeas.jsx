@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { tradeIdeasApi, stockApi, snapshotsApi, alpacaApi, preferencesApi } from "../api/client";
+import { tradeIdeasApi, stockApi, alpacaApi, preferencesApi } from "../api/client";
+import { fetchAlpacaQuote } from "../utils/fetchAlpacaQuote";
+import LiveAlpacaPrice from "./LiveAlpacaPrice";
 import {
   Lightbulb, TrendingUp, TrendingDown, RefreshCw,
   ChevronRight, AlertCircle, Loader2, ArrowUpRight,
@@ -203,7 +205,7 @@ function barTimeForWatchlistApi(row) {
   return String(t);
 }
 
-function Cell({ col, value, livePrice, dimmed, companyName }) {
+function Cell({ col, value, liveTicker, dimmed, companyName }) {
   const meta = COL_META[col] || { fmt: "raw" };
   switch (meta.fmt) {
     case "ticker":
@@ -220,8 +222,15 @@ function Cell({ col, value, livePrice, dimmed, companyName }) {
         </span>
       );
     case "live":
-      return livePrice != null
-        ? <span className="font-semibold text-cyan-400 tabular-nums">{fmtPrice(livePrice)}</span>
+      return liveTicker
+        ? (
+          <LiveAlpacaPrice
+            ticker={liveTicker}
+            className="font-semibold text-cyan-400"
+            loadingClassName="text-slate-600 text-xs animate-pulse"
+            emptyClassName="text-slate-600 text-xs"
+          />
+        )
         : <span className="text-slate-600 text-xs">—</span>;
     case "price": {
       return <span className="text-slate-200 tabular-nums">{fmtPrice(value)}</span>;
@@ -371,11 +380,25 @@ function ScoreDots({ score, total = 5 }) {
 }
 
 // ── MA info popover ───────────────────────────────────────────────────────────
-function InfoPopover({ popover, snapPrices, isLong: strategyIsLong, onMouseEnter, onMouseLeave }) {
+function InfoPopover({ popover, isLong: strategyIsLong, onMouseEnter, onMouseLeave }) {
+  const ticker = popover?.ticker ?? null;
+  const [price, setPrice] = useState(null);
+
+  useEffect(() => {
+    if (!ticker) {
+      setPrice(null);
+      return;
+    }
+    let cancelled = false;
+    fetchAlpacaQuote(ticker)
+      .then((q) => { if (!cancelled) setPrice(q?.price ?? null); })
+      .catch(() => { if (!cancelled) setPrice(null); });
+    return () => { cancelled = true; };
+  }, [ticker]);
+
   if (!popover) return null;
-  const { ticker, x, y, data, loading, isLong: rowIsLong } = popover;
+  const { x, y, data, loading, isLong: rowIsLong } = popover;
   const isLong = rowIsLong ?? strategyIsLong;
-  const price = snapPrices[ticker] ?? null;
 
   const MAS = data ? [
     { label: "EMA 10",  sublabel: "short-term trend",  value: data.ema10  },
@@ -612,7 +635,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   const [columns,        setColumns]        = useState([]);
   const [loadingResult,  setLoadingResult]  = useState(false);
   const [error,          setError]          = useState(null);
-  const [snapPrices,     setSnapPrices]     = useState({});
   const [wlLoading,      setWlLoading]      = useState({});
   const [showPrevDays,   setShowPrevDays]   = useState(false);
   /** Minimum MA alignment score (Info column) to show; 0 = no filter. Resets to user default when switching strategy. */
@@ -816,7 +838,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     setActiveStrategy(strategy);
     setError(null);
     setResults(null);
-    setSnapPrices({});
     setShowPrevDays(false);
     infoCacheRef.current = {};
     setMaCache({});
@@ -844,19 +865,8 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
         });
         setResults(rows);
 
-        // Read cached prices (background service keeps the full universe current)
         const tickers = [...new Set(rows.map((row) => row.ticker).filter(Boolean))];
         if (tickers.length > 0) {
-          snapshotsApi.prices(tickers.join(","))
-            .then((snap) => {
-              const prices = snap.data.prices || {};
-              const priceMap = {};
-              Object.entries(prices).forEach(([t, d]) => {
-                priceMap[t] = typeof d === "object" ? d.price : d;
-              });
-              setSnapPrices(priceMap);
-            })
-            .catch(() => {});
           // Company names from local DB for hover tooltips — fire-and-forget
           stockApi.names(tickers)
             .then((r) => setTickerNames(prev => ({ ...prev, ...(r.data.names ?? {}) })))
@@ -894,11 +904,11 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     return visibleResults.filter((row) => {
       const maData = maCache[row.ticker];
       if (maData === undefined) return true;
-      const price = snapPrices[row.ticker] ?? null;
+      const price = row.close ?? row.first_entry ?? null;
       const score = maScore(maData, price, rowIsLong(row, activeStrategy));
       return score != null && score >= minInfoScore;
     });
-  }, [visibleResults, minInfoScore, maCache, snapPrices, activeStrategy, skipInfoFilter]);
+  }, [visibleResults, minInfoScore, maCache, activeStrategy, skipInfoFilter]);
 
   // Clear in-flight MA scheduling when switching strategies
   useEffect(() => {
@@ -1178,7 +1188,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                               <Cell
                                 col={col}
                                 value={row[col]}
-                                livePrice={snapPrices[row.ticker] ?? null}
+                                liveTicker={col === "_live" ? row.ticker : undefined}
                                 companyName={col === "ticker" ? (tickerNames[row.ticker] ?? null) : null}
                                 dimmed
                               />
@@ -1187,7 +1197,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                             <Cell
                               col={col}
                               value={row[col]}
-                              livePrice={snapPrices[row.ticker] ?? null}
+                              liveTicker={col === "_live" ? row.ticker : undefined}
                               companyName={col === "ticker" ? (tickerNames[row.ticker] ?? null) : null}
                             />
                           )}
@@ -1215,7 +1225,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                         {(() => {
                           const rowLong  = rowIsLong(row, activeStrategy);
                           const maData   = maCache[row.ticker];
-                          const price    = snapPrices[row.ticker] ?? null;
+                          const price    = row.close ?? row.first_entry ?? null;
                           const score    = maScore(maData, price, rowLong);
                           const canOpen  = !openTickers.has(row.ticker);
                           const maPending = maData === undefined;
@@ -1324,14 +1334,12 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
 
     <LorentzianStatsPopover
       popover={lorentzianPopover}
-      snapPrices={snapPrices}
       onMouseEnter={() => clearTimeout(hideTimerRef.current)}
       onMouseLeave={handleLorentzianLeave}
     />
 
     <InfoPopover
       popover={infoPopover}
-      snapPrices={snapPrices}
       isLong={isLong}
       onMouseEnter={() => clearTimeout(hideTimerRef.current)}
       onMouseLeave={handleInfoLeave}
