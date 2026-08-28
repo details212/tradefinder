@@ -130,7 +130,6 @@ function WatchlistTile({ ticker, bias, threshold, barTime, source, onClick, onRe
 }
 
 const LIVE_STREAM_POLL_MS       = 60_000;
-const EXIT_METHOD_BACKFILL_MS   = 5 * 60_000;
 const LIVE_STREAM_MINUTES  = 15;
 const LIVE_STREAM_MIN_INFO = 3;
 const STREAM_NEW_FLASH_MS  = 60_000;
@@ -192,7 +191,6 @@ export default function Dashboard({ user, onLogout }) {
   const streamSeenRef   = useRef(new Set());
   const streamFirstPoll = useRef(true);
   const streamPollRef   = useRef(null);
-  const backfillRunningRef = useRef(false);
 
   // Live stream user preferences — kept in a ref so pollLiveStream can always
   // read the latest value without being recreated on every preference change.
@@ -330,25 +328,6 @@ export default function Dashboard({ user, onLogout }) {
     alpacaApi.test()
       .then(r => setBrokerStatus({ ok: r.data.ok, paper: r.data.paper }))
       .catch(() => setBrokerStatus({ ok: false, paper: null }));
-  }, []);
-
-  // Auto-run "Fix Unknown Exits" every 5 minutes while logged in
-  useEffect(() => {
-    const runBackfill = async () => {
-      if (backfillRunningRef.current) return;
-      backfillRunningRef.current = true;
-      try {
-        const res = await alpacaApi.backfillExitMethods();
-        if (res.data?.updated > 0) {
-          window.dispatchEvent(new CustomEvent("tf:exit-methods-backfilled", { detail: res.data }));
-        }
-      } catch { /* non-fatal — retry on next interval */ }
-      finally { backfillRunningRef.current = false; }
-    };
-
-    runBackfill();
-    const id = setInterval(runBackfill, EXIT_METHOD_BACKFILL_MS);
-    return () => clearInterval(id);
   }, []);
 
   const handleSelectTicker = useCallback((ticker, opts = {}) => {

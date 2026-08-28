@@ -6,6 +6,7 @@ import React, { useMemo, useRef, useEffect, useState } from "react";
 import Highcharts from "highcharts";
 import HighchartsReact from "highcharts-react-official";
 import { BarChart2 } from "lucide-react";
+import { entrySlippagePerShare } from "../utils/tradeExecution";
 
 // ── Highcharts dark theme ─────────────────────────────────────────────────────
 Highcharts.setOptions({
@@ -179,12 +180,12 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
   // ── Slippage histogram ────────────────────────────────────────────────────────
   const slippageOpts = useMemo(() => {
     const slips = closed
-      .filter(o => o.filled_avg_price != null && o.entry_price != null)
-      .map(o => {
-        const fill  = Number(o.filled_avg_price);
-        const limit = Number(o.entry_price);
-        return o.direction === "long" ? fill - limit : limit - fill;
-      });
+      .map((o) => entrySlippagePerShare({
+        limitPrice: o.entry_price != null ? Number(o.entry_price) : null,
+        fillPrice: o.filled_avg_price != null ? Number(o.filled_avg_price) : null,
+        direction: o.direction,
+      }))
+      .filter((v) => v != null && !Number.isNaN(v));
     if (!slips.length) return null;
     const { data } = histogram(slips);
     return {

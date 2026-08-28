@@ -776,8 +776,9 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [activeZoom, setActiveZoom] = useState("2W");
   const [chartH, setChartH] = useState(null);
 
-  // Sanity check (closed trades only)
+  // Sanity check + live Alpaca execution (closed trades only)
   const [sanityCheck, setSanityCheck] = useState(null); // null | { loading } | { error } | { checks }
+  const [alpacaOrder, setAlpacaOrder] = useState(null);
 
   // Close-trade flow
   const [closeConfirm, setCloseConfirm] = useState(false); // show confirm prompt
@@ -795,10 +796,6 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   // Forensic digest toggle (closed trades only)
   const [showDigest, setShowDigest] = useState(false);
 
-  // Exit-method backfill state (for "Unknown" trades)
-  const [fixingExitMethod, setFixingExitMethod]   = useState(false);
-  const [fixExitMethodResult, setFixExitMethodResult] = useState(null); // null | {exit_method, source} | {error}
-
   // AI trade analysis (closed trades only)
   const [aiAnalysis, setAiAnalysis] = useState(null); // null | {loading} | {text} | {error}
 
@@ -810,10 +807,12 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   useEffect(() => {
     if (order.is_open === true || !order.alpaca_order_id) return;
     setSanityCheck({ loading: true });
+    setAlpacaOrder(null);
 
     alpacaApi.getOrderDetail(order.alpaca_order_id)
       .then(res => {
-        const a = res.data;                          // Alpaca order object
+        const a = res.data;
+        setAlpacaOrder(a);
         const legs = Array.isArray(a.legs) ? a.legs : [];
         const stopLeg   = legs.find(l => l.type === "stop" || l.type === "stop_limit");
         const profitLeg = legs.find(l => l.type === "limit" && l !== stopLeg);
@@ -952,7 +951,9 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       const BAR_MS = 5 * 60 * 1000;
       closeTime = Math.round(closeTime / BAR_MS) * BAR_MS;
     }
-    if (!order.is_open && order.unrealized_pl != null && order.filled_avg_price != null && order.qty) {
+    if (!order.is_open && order.exit_price != null) {
+      exitPrice = Number(order.exit_price);
+    } else if (!order.is_open && order.unrealized_pl != null && order.filled_avg_price != null && order.qty) {
       const fill = Number(order.filled_avg_price);
       const pl   = Number(order.unrealized_pl);
       const qty  = Number(order.qty);
@@ -1244,22 +1245,20 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     return ((Number(rr.exitPrice) - Number(fillPrice)) / Number(fillPrice)) * 100 * (isLong ? 1 : -1);
   }, [order.is_open, rr, fillPrice, isLong]);
 
-  // ── Round-trip slippage ───────────────────────────────────────────────────
-  // Positive cost values = slippage hurt you. Negative = you got a better fill.
+  // ── Round-trip slippage (entry fill/limit from live Alpaca) ───────────────
   const slippage = useMemo(() => {
     if (order.is_open || !rr) return null;
     const dir = isLong ? 1 : -1;
-
-    // Entry: fill vs the bar-close price used to draw the R/R (rr.entry)
-    const entryFill = rr.fillPrice;
+    const alpacaLimit = alpacaOrder?.limit_price != null ? Number(alpacaOrder.limit_price) : null;
+    const alpacaFill = alpacaOrder?.filled_avg_price != null ? Number(alpacaOrder.filled_avg_price) : null;
+    const limitPrice = alpacaLimit ?? (order.entry_price != null ? Number(order.entry_price) : null);
+    const entryFill = alpacaFill ?? rr.fillPrice;
     const entryCostPerShare = entryFill != null
-      ? dir * (entryFill - rr.entry)     // positive = bad
+      ? dir * (entryFill - rr.entry)
       : null;
 
-    // Entry: fill vs the Alpaca limit order price (execution quality)
-    const limitPrice = order.entry_price != null ? Number(order.entry_price) : null;
     const fillVsLimitPerShare = entryFill != null && limitPrice != null
-      ? dir * (entryFill - limitPrice)   // positive = paid more than limit (unusual)
+      ? dir * (entryFill - limitPrice)
       : null;
 
     // Exit: exit vs the reference price (target/stop); manual has no clean reference
@@ -1292,7 +1291,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       entryCostDollar,   totalCostDollar,
       pctOfRisk,         hasExitRef: refExitPrice != null,
     };
-  }, [order.is_open, order.entry_price, rr, exitType, isLong]);
+  }, [order.is_open, order.entry_price, rr, exitType, isLong, alpacaOrder]);
 
   // ── AI Trade Analysis ─────────────────────────────────────────────────────
   // Defined after slippage useMemo so it can close over the computed value.
@@ -1966,42 +1965,7 @@ Trade closed: ${fmtTs(order.synced_at)}
                 <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500 mb-2">
                   Exit Method
                 </span>
-                <ExitMethodBadge method={fixExitMethodResult?.exit_method ?? order.exit_method} />
-
-                {/* Backfill button — only shown when exit_method is unrecorded */}
-                {!order.exit_method && !fixExitMethodResult?.exit_method && (
-                  <button
-                    onClick={async () => {
-                      setFixingExitMethod(true);
-                      setFixExitMethodResult(null);
-                      try {
-                        const res = await alpacaApi.fixExitMethod(order.id);
-                        setFixExitMethodResult(res.data);
-                        // Patch the local order object so badge + digest both update
-                        if (res.data.exit_method) order.exit_method = res.data.exit_method;
-                      } catch (err) {
-                        setFixExitMethodResult({ error: err?.response?.data?.error || "Failed to detect exit method" });
-                      } finally {
-                        setFixingExitMethod(false);
-                      }
-                    }}
-                    disabled={fixingExitMethod}
-                    className="mt-2 flex items-center gap-1 text-[9px] text-amber-400/80 hover:text-amber-300 border border-amber-700/40 hover:border-amber-600 bg-amber-900/20 hover:bg-amber-900/30 rounded px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {fixingExitMethod
-                      ? <><Loader2 className="w-2.5 h-2.5 animate-spin" /> Detecting…</>
-                      : <><RefreshCw className="w-2.5 h-2.5" /> Detect from Alpaca</>
-                    }
-                  </button>
-                )}
-                {fixExitMethodResult?.error && (
-                  <span className="mt-1 text-[9px] text-red-400/80">{fixExitMethodResult.error}</span>
-                )}
-                {fixExitMethodResult?.exit_method && (
-                  <span className="mt-1 text-[9px] text-emerald-400/70 italic">
-                    {fixExitMethodResult.source === "inferred" ? "Detected & saved" : "Saved"}
-                  </span>
-                )}
+                <ExitMethodBadge method={order.exit_method} />
               </div>
             )}
 

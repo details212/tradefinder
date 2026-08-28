@@ -1,5 +1,7 @@
 /** Shared helpers for strategy / manual trade performance breakdowns. */
 
+import { entrySlippageDollar, entrySlippagePerShare } from "./tradeExecution";
+
 export const fmt$ = (v, digits = 2) => {
   if (v == null || isNaN(v)) return "—";
   const abs = Math.abs(v);
@@ -908,33 +910,22 @@ export function computeConsistencyMetrics({ closedTrades }) {
   };
 }
 
-/** Entry slippage cost in dollars (positive = adverse). */
-function entrySlippageCost(o) {
-  const fill = o.filled_avg_price != null ? Number(o.filled_avg_price) : null;
-  const limit = o.entry_price != null ? Number(o.entry_price) : null;
-  const qty = o.qty ?? 1;
-  if (fill == null || limit == null || isNaN(fill) || isNaN(limit)) return null;
-  const isLong = o.direction === "long";
-  const perShare = isLong ? fill - limit : limit - fill;
-  return perShare * qty;
+function slipFromTrade(o) {
+  return {
+    limitPrice: o.entry_price != null ? Number(o.entry_price) : null,
+    fillPrice: o.filled_avg_price != null ? Number(o.filled_avg_price) : null,
+    direction: o.direction,
+    qty: o.qty ?? 1,
+  };
 }
 
-/** Entry slippage per share (positive = adverse). */
-function entrySlippagePerShare(o) {
-  const fill = o.filled_avg_price != null ? Number(o.filled_avg_price) : null;
-  const limit = o.entry_price != null ? Number(o.entry_price) : null;
-  if (fill == null || limit == null || isNaN(fill) || isNaN(limit)) return null;
-  const isLong = o.direction === "long";
-  return isLong ? fill - limit : limit - fill;
-}
-
-/** Execution costs from fill vs limit slippage and net vs gross return. */
+/** Execution costs from fill vs limit on each trade, plus net vs gross return. */
 export function computeCostsMetrics({ closedTrades, portfolioValue, netPL }) {
   const slippageCosts = closedTrades
-    .map(entrySlippageCost)
+    .map((o) => entrySlippageDollar(slipFromTrade(o)))
     .filter((v) => v != null && !isNaN(v));
   const slippagePerShare = closedTrades
-    .map(entrySlippagePerShare)
+    .map((o) => entrySlippagePerShare(slipFromTrade(o)))
     .filter((v) => v != null && !isNaN(v));
 
   const totalSlippage = slippageCosts.length

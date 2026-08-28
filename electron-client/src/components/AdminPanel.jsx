@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { alpacaApi } from "../api/client";
 import { exitPrice } from "../utils/alpacaPrices";
 import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
+import { fillVsLimitRaw, slippageDisplayColor, executionFromTrade } from "../utils/tradeExecution";
 import TradeReviewModal from "./TradeReviewModal";
 import AnalyticsPanel from "./AnalyticsPanel";
 import StrategyPerformancePanel from "./StrategyPerformancePanel";
@@ -314,9 +315,8 @@ export default function AdminPanel({ user }) {
   const [ordersPage,    setOrdersPage]    = useState(0);
   const [ordersFilter,  setOrdersFilter]  = useState("open"); // "open" | "closed"
   const [closedSymbolQuery, setClosedSymbolQuery] = useState("");
-  const [backfilling,   setBackfilling]   = useState(false);
-  const [backfillResult, setBackfillResult] = useState(null); // null | { updated, skipped, errors }
   const [reviewOrder,   setReviewOrder]   = useState(null);
+  const [activeTab, setActiveTab] = useState("trades");
   const OPEN_ORDERS_PER_PAGE   = 40;
   const CLOSED_ORDERS_PER_PAGE = 20;
 
@@ -347,20 +347,32 @@ export default function AdminPanel({ user }) {
   }, [refetchOpenQuotes]);
 
   useEffect(() => {
-    syncOrders();
+    let cancelled = false;
+    setOrdersLoading(true);
+    alpacaApi.getOrders()
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : (r.data?.orders ?? []);
+        setOrders(list);
+        setOrdersError(null);
+      })
+      .catch(() => {
+        if (!cancelled) setOrdersError("Could not load or sync orders.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setOrdersLoading(false);
+          syncOrders(true);
+        }
+      });
     const id = setInterval(() => syncOrders(true), 60_000);
-    return () => clearInterval(id);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [syncOrders]);
 
-  useEffect(() => {
-    const onBackfilled = () => syncOrders(true);
-    window.addEventListener("tf:exit-methods-backfilled", onBackfilled);
-    return () => window.removeEventListener("tf:exit-methods-backfilled", onBackfilled);
-  }, [syncOrders]);
-
-  // Hide unfilled dead orders (canceled/expired/rejected before entry).
-  // Filled entries closed via auto-close/manual were incorrectly tagged canceled —
-  // keep those visible when exit_method, closed_at, or a fill price is present.
+  // Hide unfilled dead orders
   const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
   const isDeadOrder = (o) => {
     if (!DEAD_STATUSES.has(o.status)) return false;
@@ -381,8 +393,6 @@ export default function AdminPanel({ user }) {
     }
     return list;
   }, [visibleOrders, ordersFilter, closedSymbolQuery]);
-
-  const [activeTab, setActiveTab] = useState("trades");
 
   const PANEL_TABS = [
     { id: "trades",        label: "My Trades" },
@@ -437,7 +447,7 @@ export default function AdminPanel({ user }) {
                   {["open", "closed"].map(f => (
                     <button
                       key={f}
-                      onClick={() => { setOrdersFilter(f); setOrdersPage(0); setBackfillResult(null); }}
+                      onClick={() => { setOrdersFilter(f); setOrdersPage(0); }}
                       className={`px-3 py-1 capitalize transition ${
                         ordersFilter === f
                           ? "bg-brand-500/20 text-brand-400"
@@ -446,45 +456,6 @@ export default function AdminPanel({ user }) {
                     >{f}</button>
                   ))}
                 </span>
-
-                {/* Backfill exit methods — only shown on closed tab */}
-                {ordersFilter === "closed" && (
-                  <span className="flex items-center gap-1.5">
-                    <button
-                      onClick={async () => {
-                        setBackfilling(true);
-                        setBackfillResult(null);
-                        try {
-                          const res = await alpacaApi.backfillExitMethods();
-                          setBackfillResult(res.data);
-                          if (res.data.updated > 0) syncOrders(true);
-                        } catch (err) {
-                          setBackfillResult({ error: err?.response?.data?.error || "Backfill failed" });
-                        } finally {
-                          setBackfilling(false);
-                        }
-                      }}
-                      disabled={backfilling}
-                      title="Detect missing exit methods for all closed trades by querying Alpaca"
-                      className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-slate-700/50 bg-slate-800/50 text-slate-400 hover:text-amber-300 hover:border-amber-700/50 hover:bg-amber-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                    >
-                      {backfilling
-                        ? <><Loader2 className="w-3 h-3 animate-spin" /> Detecting…</>
-                        : <><RefreshCw className="w-3 h-3" /> Fix Unknown Exits</>
-                      }
-                    </button>
-                    {backfillResult && !backfillResult.error && (
-                      <span className="text-[10px] text-emerald-400/80">
-                        {backfillResult.updated > 0
-                          ? `${backfillResult.updated} updated`
-                          : "Nothing to fix"}
-                      </span>
-                    )}
-                    {backfillResult?.error && (
-                      <span className="text-[10px] text-red-400/80">{backfillResult.error}</span>
-                    )}
-                  </span>
-                )}
 
                 {ordersLoading && (
                   <span className="flex items-center gap-1">
@@ -651,8 +622,9 @@ export default function AdminPanel({ user }) {
                       .map(o => {
                         const isLong    = o.direction === "long";
                         const isPaper   = o.paper_mode;
-                        const entryLim  = o.entry_price  != null ? Number(o.entry_price)      : null;
-                        const fillPx    = o.filled_avg_price != null ? Number(o.filled_avg_price) : null;
+                        const exec      = executionFromTrade(o);
+                        const entryLim  = exec.limitPrice;
+                        const fillPx    = exec.fillPrice;
                         const stopPx    = o.stop_price   != null ? Number(o.stop_price)       : null;
                         const riskAmt   = o.risk_amt     != null ? Number(o.risk_amt)         : (entryLim != null && stopPx != null ? Math.abs(entryLim - stopPx) * (o.qty ?? 1) : null);
                         const rrEff     = o.rr_ratio_effective ?? o.rr_ratio;
@@ -661,11 +633,8 @@ export default function AdminPanel({ user }) {
                         const plNeg     = pl != null && pl < 0;
                         const plColor   = plPos ? "text-emerald-400" : plNeg ? "text-red-400" : "text-slate-400";
 
-                        // Slippage: positive = paid more than limit (bad for long, good for short)
-                        const slip      = entryLim != null && fillPx != null ? fillPx - entryLim : null;
-                        const slipBad   = slip != null && (isLong ? slip > 0.005 : slip < -0.005);
-                        const slipGood  = slip != null && (isLong ? slip < -0.005 : slip > 0.005);
-                        const slipColor = slipBad ? "text-red-400" : slipGood ? "text-emerald-400" : "text-slate-500";
+                        const slip      = fillVsLimitRaw(entryLim, fillPx);
+                        const slipColor = slippageDisplayColor(slip, isLong);
 
                         // R result: actual P/L divided by planned risk per share × qty
                         const rResult   = pl != null && riskAmt != null && riskAmt > 0 ? (pl / riskAmt) : null;
@@ -695,7 +664,9 @@ export default function AdminPanel({ user }) {
                             </div>
 
                             {/* Entry Limit */}
-                            <span className="font-mono text-xs text-slate-300">{entryLim != null ? `$${entryLim.toFixed(2)}` : "—"}</span>
+                            <span className="font-mono text-xs text-slate-300">
+                              {entryLim != null ? `$${entryLim.toFixed(2)}` : "—"}
+                            </span>
 
                             {/* Fill + slippage */}
                             <div className="flex items-center gap-1.5">
@@ -845,17 +816,16 @@ export default function AdminPanel({ user }) {
               {/* ── Fill / Entry summary ── */}
               {(() => {
                 const db        = detailOrder.dbOrder;
-                const a         = detailOrder.alpacaData;  // may be null while loading
+                const a         = detailOrder.alpacaData;
                 const isLong    = db.direction === "long";
-                const fillPrice = db.filled_avg_price ?? db.entry_price;
-                const entryLim  = db.entry_price      != null ? Number(db.entry_price)      : null;
-                const fillPx    = db.filled_avg_price != null ? Number(db.filled_avg_price) : null;
+                const exec      = executionFromTrade(db, a);
+                const entryLim  = exec.limitPrice;
+                const fillPx    = exec.fillPrice;
+                const fillPrice = fillPx ?? entryLim;
                 const stopPx    = db.stop_price       != null ? Number(db.stop_price)       : null;
                 const tgtPx     = db.target_price     != null ? Number(db.target_price)     : null;
-                const slip      = entryLim != null && fillPx != null ? fillPx - entryLim : null;
-                const slipBad   = slip != null && (isLong ? slip > 0.005 : slip < -0.005);
-                const slipGood  = slip != null && (isLong ? slip < -0.005 : slip > 0.005);
-                const slipColor = slipBad ? "text-red-400" : slipGood ? "text-emerald-400" : "text-slate-400";
+                const slip      = fillVsLimitRaw(entryLim, fillPx);
+                const slipColor = slippageDisplayColor(slip, isLong);
 
                 // Alpaca bracket leg values for stop / target mismatch detection
                 const priceTol   = 0.01;

@@ -1,8 +1,7 @@
 /**
  * Closed-trade execution audit.
- * Positive slippage = adverse (hurt the trader). Exit price is inferred from
- * stored P/L when Alpaca did not persist an exit fill — that inference is
- * itself a finding when it disagrees with the recorded exit method.
+ * fillVsLimit = fill − limit (same sign as My Trades).
+ * entrySlip   = direction-adjusted, positive = adverse (used for flags).
  */
 
 export const FLAG_DEFS = {
@@ -118,16 +117,20 @@ export function analyzeClosedTrade(o) {
     addFlag(flags, "status_not_filled");
   }
 
-  const exitPrice = fill != null && pl != null && qty
+  const storedExit = num(o.exit_price);
+  const inferredExit = fill != null && pl != null && qty
     ? fill + dir * (pl / qty)
     : null;
+  const exitPrice = storedExit ?? inferredExit;
 
   if (exitPrice != null && fill != null) {
     const far = Math.abs(exitPrice - fill) / Math.max(Math.abs(fill), 0.01);
     if (exitPrice <= 0 || far > 0.50) addFlag(flags, "implausible_exit");
   }
 
-  const entrySlipPerShare = fill != null && limit != null ? dir * (fill - limit) : null;
+  const fillVsLimitPerShare = fill != null && limit != null ? fill - limit : null;
+  const fillVsLimitDollar = fillVsLimitPerShare != null && qty ? fillVsLimitPerShare * qty : null;
+  const entrySlipPerShare = fillVsLimitPerShare != null ? dir * fillVsLimitPerShare : null;
   const entrySlipDollar = entrySlipPerShare != null && qty ? entrySlipPerShare * qty : null;
 
   const riskPerShare = (() => {
@@ -180,7 +183,8 @@ export function analyzeClosedTrade(o) {
   }
 
   if (
-    expectedPl != null
+    storedExit == null
+    && expectedPl != null
     && pl != null
     && Math.abs(expectedPl) >= 1
     && exitType
@@ -221,6 +225,8 @@ export function analyzeClosedTrade(o) {
     exitType,
     refExit,
     expectedPl,
+    fillVsLimitPerShare,
+    fillVsLimitDollar,
     entrySlipPerShare,
     entrySlipDollar,
     exitSlipPerShare,
@@ -263,9 +269,11 @@ export function summarizeAudits(rows) {
     wins: rows.filter((r) => (r.pl ?? 0) > 0.005).length,
     losses: rows.filter((r) => (r.pl ?? 0) < -0.005).length,
     entrySlipDollar: sum((r) => r.entrySlipDollar),
+    fillVsLimitDollar: sum((r) => r.fillVsLimitDollar),
     exitSlipDollar: sum((r) => r.exitSlipDollar),
     roundTripDollar: sum((r) => r.roundTripDollar),
     avgEntrySlipPs: mean((r) => r.entrySlipPerShare),
+    avgFillVsLimitPs: mean((r) => r.fillVsLimitPerShare),
     avgExitSlipPs: mean((r) => r.exitSlipPerShare),
     flagged: rows.filter((r) => r.flags.length).length,
     errors: rows.filter((r) => r.severity === 3).length,

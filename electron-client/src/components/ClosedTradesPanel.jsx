@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { alpacaApi } from "../api/client";
+import { slippageDisplayColor } from "../utils/tradeExecution";
 import TradeReviewModal from "./TradeReviewModal";
 import {
   analyzeClosedTrades,
@@ -43,6 +44,12 @@ function signedN(v, digits = 3) {
   return v > 0 ? `+${n}` : n;
 }
 
+/** Color for fill − limit, matching My Trades (short: + is better). */
+function entrySlipCls(fillVsLimit, isLong) {
+  return slippageDisplayColor(fillVsLimit, isLong);
+}
+
+/** Color for adverse slippage (positive = hurt). Used for exits and totals. */
 function slipCls(v, loose = 0.005) {
   if (v == null || Number.isNaN(v)) return "text-slate-500";
   if (v > loose) return "text-red-400";
@@ -227,7 +234,7 @@ function ExpandedRow({ row, onReview }) {
             color={row.order.paper_mode ? "text-blue-400" : "text-slate-200"}
           />
           <DigestRow label="Limit" value={row.limit != null ? `$${row.limit.toFixed(2)}` : "—"} />
-          <DigestRow label="Fill" value={row.fill != null ? `$${row.fill.toFixed(2)}` : "—"} color={slipCls(row.entrySlipPerShare)} />
+          <DigestRow label="Fill" value={row.fill != null ? `$${row.fill.toFixed(2)}` : "—"} color={entrySlipCls(row.fillVsLimitPerShare, row.isLong)} />
           <DigestRow label="Stop" value={row.stop != null ? `$${row.stop.toFixed(2)}` : "—"} />
           <DigestRow label="Target" value={row.target != null ? `$${row.target.toFixed(2)}` : "—"} />
           <DigestRow
@@ -242,8 +249,8 @@ function ExpandedRow({ row, onReview }) {
         </div>
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Slippage & P/L</p>
-          <DigestRow label="Entry slip /sh" value={`${signedN(row.entrySlipPerShare)}`} color={slipCls(row.entrySlipPerShare)} />
-          <DigestRow label="Entry slip $" value={signed$(row.entrySlipDollar)} color={slipCls(row.entrySlipDollar)} />
+          <DigestRow label="Entry slip /sh" value={`${signedN(row.fillVsLimitPerShare)}`} color={entrySlipCls(row.fillVsLimitPerShare, row.isLong)} />
+          <DigestRow label="Entry slip $" value={signed$(row.fillVsLimitDollar)} color={entrySlipCls(row.fillVsLimitDollar, row.isLong)} />
           <DigestRow
             label="Exit slip /sh"
             value={row.exitSlipPerShare != null ? signedN(row.exitSlipPerShare) : "n/a"}
@@ -353,7 +360,7 @@ export default function ClosedTradesPanel({ onClose }) {
       switch (key) {
         case "ticker": return r.order.ticker || "";
         case "fill": return r.fill ?? -Infinity;
-        case "entry": return r.entrySlipDollar ?? -Infinity;
+        case "entry": return r.fillVsLimitDollar ?? -Infinity;
         case "exit": return r.exitSlipDollar ?? -Infinity;
         case "pl": return r.pl ?? -Infinity;
         case "date": return r.closedAtMs ?? 0;
@@ -426,9 +433,9 @@ export default function ClosedTradesPanel({ onClose }) {
           <Kpi label="Net P/L" value={signed$(stats.netPl)} color={plCls(stats.netPl)} />
           <Kpi
             label="Entry slip"
-            value={signed$(stats.entrySlipDollar)}
+            value={signed$(stats.fillVsLimitDollar)}
             color={slipCls(stats.entrySlipDollar)}
-            sub={stats.avgEntrySlipPs != null ? `${signedN(stats.avgEntrySlipPs)}/sh avg` : undefined}
+            sub={stats.avgFillVsLimitPs != null ? `${signedN(stats.avgFillVsLimitPs)}/sh avg` : undefined}
           />
           <Kpi
             label="Exit slip"
@@ -554,8 +561,8 @@ export default function ClosedTradesPanel({ onClose }) {
                       <span className="text-[11px] font-mono text-slate-200 tabular-nums">
                         {r.fill != null ? `$${r.fill.toFixed(2)}` : "—"}
                       </span>
-                      <span className={`text-[11px] font-mono tabular-nums ${slipCls(r.entrySlipPerShare)}`}>
-                        {r.entrySlipPerShare != null ? `${signedN(r.entrySlipPerShare, 2)}` : "—"}
+                      <span className={`text-[11px] font-mono tabular-nums ${entrySlipCls(r.fillVsLimitPerShare, r.isLong)}`}>
+                        {r.fillVsLimitPerShare != null ? `${signedN(r.fillVsLimitPerShare, 2)}` : "—"}
                       </span>
                       <span className="text-[11px] font-mono text-slate-300 tabular-nums">
                         {r.exitPrice != null ? `$${r.exitPrice.toFixed(2)}` : "—"}

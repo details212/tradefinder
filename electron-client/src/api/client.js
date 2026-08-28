@@ -199,10 +199,8 @@ export const alpacaApi = {
   patchLevels:     (dbOrderId, data) => api.patch(`/api/broker/alpaca/order/${dbOrderId}/levels`, data),
   getOrderDetail:  (alpacaId)    => api.get(`/api/broker/alpaca/order/${alpacaId}`),
   getOrders:       (ticker = "") => api.get("/api/broker/alpaca/orders", { params: ticker ? { ticker } : {} }),
-  syncOrders:           ()               => api.post("/api/broker/alpaca/orders/sync"),
+  syncOrders:           ()               => api.post("/api/broker/alpaca/orders/sync", null, { timeout: 120_000 }),
   openTickers:          ()               => api.get("/api/broker/alpaca/orders/open-tickers"),
-  fixExitMethod:        (dbOrderId)      => api.patch(`/api/broker/alpaca/order/${dbOrderId}/exit-method`),
-  backfillExitMethods:  ()               => api.post("/api/broker/alpaca/orders/backfill-exit-method"),
 };
 
 // ── User preferences (per-user key/value store) ───────────────────────────────
