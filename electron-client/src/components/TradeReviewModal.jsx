@@ -7,14 +7,62 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
-import { stockApi, alpacaApi, aiApi } from "../api/client";
+import { stockApi, alpacaApi } from "../api/client";
 import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
-import { Loader2, AlertCircle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check, ClipboardList, Sparkles, Volume2, VolumeX, Square } from "lucide-react";
+import { Loader2, AlertCircle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
+import { compactTicker } from "../utils/tradeExecution";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
 
 const etTime = new Highcharts.Time({ timezone: "America/New_York" });
+
+function parseUtcMs(iso) {
+  if (!iso) return null;
+  const raw = /Z$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  const n = Date.parse(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function num(v) {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Reward ÷ risk for a reference entry vs stored stop/target. */
+function rrAtPrice(entryPx, stopPx, targetPx) {
+  const entry = num(entryPx);
+  const stop = num(stopPx);
+  const target = num(targetPx);
+  if (entry == null || stop == null || target == null) return null;
+  const risk = Math.abs(entry - stop);
+  const reward = Math.abs(target - entry);
+  if (risk <= 0) return null;
+  return reward / risk;
+}
+
+function fmtRR(r) {
+  if (r == null || !Number.isFinite(r)) return null;
+  return Number(r.toFixed(2));
+}
+
+function resolveChartCloseTime(order) {
+  if (!order || order.is_open) return null;
+  return parseUtcMs(order.closed_at) ?? parseUtcMs(order.synced_at);
+}
+
+/** If the stored click is older than the loaded bars (truncated crypto history), pin to created_at. */
+function resolveChartEntryTime(order, bars) {
+  const created = parseUtcMs(order.created_at);
+  const stored = order.entry_time ?? created;
+  if (stored == null) return null;
+  if (bars?.length && stored < bars[0].t) {
+    if (created != null && created >= bars[0].t) return created;
+    return bars[bars.length - 1].t;
+  }
+  return stored;
+}
 
 const FUCHSIA      = "#e879f9";
 const GREEN_CANDLE = "#22c55e";
@@ -256,10 +304,13 @@ function drawColoredZones(chart, rr) {
     .attr({ fill: "rgba(34,197,94,0.10)", stroke: "rgba(34,197,94,0.40)", "stroke-width": 1, zIndex: 2 }).add());
   const tgtPct    = ((reward / entry) * 100).toFixed(2);
   const rewardAmt = (reward * qty).toFixed(2);
-  const effectiveRR = risk > 0 ? (reward / risk).toFixed(2) : "∞";
+  const rrRef = fp != null && Math.abs(Number(fp) - entry) > 0.005 ? Number(fp) : entry;
+  const rrRisk = Math.abs(rrRef - stop);
+  const rrReward = Math.abs(target - rrRef);
+  const zoneRR = rrRisk > 0 ? (rrReward / rrRisk).toFixed(2) : "∞";
   const tgtLabel  = isLong
-    ? `▲  $${target.toFixed(2)}  (+${tgtPct}%)  ×${qty}  =  $${rewardAmt}  [${effectiveRR}R]`
-    : `▼  $${target.toFixed(2)}  (−${tgtPct}%)  ×${qty}  =  $${rewardAmt}  [${effectiveRR}R]`;
+    ? `▲  $${target.toFixed(2)}  (+${tgtPct}%)  ×${qty}  =  $${rewardAmt}  [${zoneRR}R]`
+    : `▼  $${target.toFixed(2)}  (−${tgtPct}%)  ×${qty}  =  $${rewardAmt}  [${zoneRR}R]`;
   rrGreyElems.push(chart.renderer.text(tgtLabel, zoneX + zoneW / 2, (greenTop + greenBot) / 2 + 4)
     .attr({ align: "center", zIndex: 5 })
     .css({ color: "#22c55e", fontSize: "11px", fontWeight: "bold", backgroundColor: "rgba(15,23,42,0.85)", padding: "2px 8px", borderRadius: "3px" }).add());
@@ -354,201 +405,15 @@ function applyRR(chart, rr) {
   clearGreyElems();
   if (!rr?.entry || !rr?.stop || !rr?.target) return;
   const { entry, stop, target } = rr;
-  const risk   = Math.abs(entry - stop);
-  const reward = Math.abs(target - entry);
-  const rrRatio = risk > 0 ? (reward / risk).toFixed(2) : "∞";
   yAxis.addPlotLine({
     id: "rr-entry", value: entry, color: "#94a3b8", width: 1, dashStyle: "Dash", zIndex: 5,
-    label: { text: `Entry $${entry.toFixed(2)}  ·  R/R ${rrRatio}`, align: "right", x: -6, style: { color: "#94a3b8", fontSize: "10px", fontWeight: "600" } },
+    label: { text: `Entry $${entry.toFixed(2)}`, align: "right", x: -6, style: { color: "#94a3b8", fontSize: "10px", fontWeight: "600" } },
   });
   if (rr.entryTime) {
     applyClipsAtEntry(chart, rr.entryTime);
     drawGreyLeftLines(chart, rr);
     drawColoredZones(chart, rr);
   }
-}
-
-// ── Plain-English trade narrative ────────────────────────────────────────────
-function fmtDate(isoStr) {
-  if (!isoStr) return null;
-  const d = new Date(isoStr.endsWith("Z") ? isoStr : isoStr + "Z");
-  return d.toLocaleString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-    hour: "2-digit", minute: "2-digit", timeZone: "America/New_York",
-    hour12: true,
-  }) + " ET";
-}
-
-function fmtDuration(isoA, isoB) {
-  if (!isoA || !isoB) return null;
-  const ms  = Math.abs(new Date(isoB.endsWith("Z") ? isoB : isoB + "Z") -
-                        new Date(isoA.endsWith("Z") ? isoA : isoA + "Z"));
-  const min = Math.round(ms / 60000);
-  if (min < 60) return `${min} minute${min !== 1 ? "s" : ""}`;
-  const hrs = Math.floor(min / 60);
-  const rem = min % 60;
-  if (hrs < 24) return rem ? `${hrs}h ${rem}m` : `${hrs} hour${hrs !== 1 ? "s" : ""}`;
-  const days = Math.floor(hrs / 24);
-  return `${days} day${days !== 1 ? "s" : ""}`;
-}
-
-function buildTradeNarrative(order, rr, slippage, effectiveRR) {
-  if (!rr) return null;
-
-  const dir      = order.direction === "long" ? "long" : "short";
-  const isLong   = dir === "long";
-  const ticker   = (order.ticker || "").toUpperCase();
-  const qty      = order.qty ?? 1;
-  const paper    = order.paper_mode ? " (paper account)" : "";
-  const fill     = rr.fillPrice ?? Number(order.filled_avg_price ?? 0);
-  const entry    = rr.entry;
-  const stop     = rr.stop;
-  const target   = rr.target;
-  const exitPx   = rr.exitPrice;
-  const pl       = order.unrealized_pl != null ? Number(order.unrealized_pl) : null;
-  const method   = order.exit_method ?? null;
-  const openedAt = fmtDate(order.created_at);
-  const closedAt = fmtDate(order.closed_at ?? order.synced_at);
-  const duration = fmtDuration(order.created_at, order.closed_at ?? order.synced_at);
-  const risk     = order.risk_amt   != null ? Number(order.risk_amt)   : null;
-  const reward   = order.reward_amt != null ? Number(order.reward_amt) : null;
-  const rrPlan   = order.rr_ratio   != null ? Number(order.rr_ratio)   : null;
-
-  // ── Para 1: Entry ────────────────────────────────────────────────────────────
-  let entry_para = openedAt
-    ? `On ${openedAt}, you opened a ${dir} position${paper} in ${ticker}, ${isLong ? "buying" : "selling short"} ${qty} share${qty !== 1 ? "s" : ""}.`
-    : `You opened a ${dir} position${paper} in ${ticker}, ${isLong ? "buying" : "selling short"} ${qty} share${qty !== 1 ? "s" : ""}.`;
-  if (fill && Math.abs(fill - entry) > 0.005) {
-    entry_para += ` Your limit entry was set at $${entry.toFixed(2)} but the order filled at $${fill.toFixed(2)} — a ${fill > entry ? "slightly higher" : "slightly lower"} price due to market movement at the moment of execution.`;
-  } else if (fill) {
-    entry_para += ` The order filled at $${fill.toFixed(2)}.`;
-  }
-
-  // ── Para 2: The plan ─────────────────────────────────────────────────────────
-  let plan_para = `Your take-profit target was set at $${target.toFixed(2)} and your stop-loss at $${stop.toFixed(2)}.`;
-  if (risk != null && reward != null && rrPlan != null) {
-    plan_para += ` This meant risking $${risk.toFixed(2)} to potentially gain $${reward.toFixed(2)} — a planned ${rrPlan.toFixed(1)}R trade.`;
-  } else if (rrPlan != null) {
-    plan_para += ` The intended reward-to-risk ratio was ${rrPlan.toFixed(1)}R.`;
-  }
-  if (isLong) {
-    plan_para += ` As a long trade you profit when the price rises above your entry, and lose if it falls below your stop.`;
-  } else {
-    plan_para += ` As a short trade you profit when the price falls below your entry, and lose if it rises above your stop.`;
-  }
-
-  // ── Para 3: What happened ────────────────────────────────────────────────────
-  let exit_para;
-  switch (method) {
-    case "bracket_tp":
-      exit_para = `The stock reached your $${target.toFixed(2)} take-profit level and the exchange filled your limit order, closing the position at your planned target.${
-        exitPx && Math.abs(exitPx - target) > 0.02
-          ? ` The actual exit price was $${exitPx.toFixed(2)}.`
-          : ""
-      }`;
-      break;
-    case "bracket_sl":
-      exit_para = `The price moved against you and hit your $${stop.toFixed(2)} stop-loss level. The exchange triggered your stop order and closed the position to prevent further losses.${
-        exitPx && Math.abs(exitPx - stop) > 0.02
-          ? ` In fast-moving markets stop orders sometimes fill slightly beyond the stop level — the actual exit was $${exitPx.toFixed(2)}.`
-          : ""
-      }`;
-      break;
-    case "auto_close_tp":
-      exit_para = `The price stayed beyond your $${target.toFixed(2)} take-profit target for three consecutive 60-second checks. ` +
-        `Because the broker's native bracket order had not yet been filled, the auto-close system stepped in and sent a market order to close the position.` +
-        (exitPx ? ` The position closed at approximately $${exitPx.toFixed(2)}.` : "");
-      break;
-    case "auto_close_sl":
-      exit_para = `The price stayed beyond your $${stop.toFixed(2)} stop-loss for three consecutive 60-second checks. ` +
-        `The auto-close system sent a market order to limit further loss.` +
-        (exitPx ? ` The position closed at approximately $${exitPx.toFixed(2)}.` : "");
-      break;
-    case "manual":
-      exit_para = `You chose to close the position manually` +
-        (exitPx ? ` at approximately $${exitPx.toFixed(2)}` : "") +
-        `, before it reached either your target or stop.`;
-      break;
-    default:
-      exit_para = `The position was closed` +
-        (exitPx ? ` at approximately $${exitPx.toFixed(2)}` : "") +
-        `. The exact exit method is not recorded for this trade.`;
-  }
-  if (duration) exit_para += ` The trade was held for ${duration}.`;
-
-  // ── Para 4: Outcome ──────────────────────────────────────────────────────────
-  let outcome_para = null;
-  if (pl != null) {
-    const plSign  = pl >= 0 ? "+" : "";
-    const plAmt   = `${plSign}$${Math.abs(pl).toFixed(2)}`;
-    const fillBase = fill && qty ? fill * qty : null;
-    const pctStr  = fillBase ? ` (${plSign}${((pl / fillBase) * 100).toFixed(2)}%)` : "";
-    outcome_para  = `The trade closed with a ${pl >= 0 ? "gain" : "loss"} of ${plAmt}${pctStr}.`;
-
-    if (effectiveRR != null && rrPlan != null) {
-      const eRR = Number(effectiveRR);
-      if (pl >= 0) {
-        outcome_para += ` You achieved ${eRR.toFixed(2)}R of your planned ${rrPlan.toFixed(1)}R reward.`;
-      } else {
-        const lossVsRisk = risk != null ? (Math.abs(pl) / risk) * 100 : null;
-        outcome_para += lossVsRisk != null
-          ? ` The loss was ${lossVsRisk.toFixed(0)}% of your planned risk amount.`
-          : ` The actual reward-to-risk achieved was ${eRR.toFixed(2)}R.`;
-      }
-    }
-
-    // Beginner tip based on outcome
-    if (method === "bracket_sl" || method === "auto_close_sl") {
-      outcome_para += ` Stop-losses are a core part of risk management — they ensure one bad trade can never wipe out many good ones.`;
-    } else if (method === "bracket_tp" || method === "auto_close_tp") {
-      outcome_para += ` Taking profit at a pre-planned level removes emotion from the exit decision.`;
-    } else if (method === "manual" && pl < 0) {
-      outcome_para += ` Exiting early can be valid when market conditions change, but consider whether your original stop would have been a better plan.`;
-    }
-  }
-
-  return { entry: entry_para, plan: plan_para, exit: exit_para, outcome: outcome_para };
-}
-
-function TradeNarrative({ order, rr, slippage, effectiveRR }) {
-  const [open, setOpen] = useState(true);
-  const narrative = buildTradeNarrative(order, rr, slippage, effectiveRR);
-  if (!narrative) return null;
-
-  const paras = [
-    { label: "Entry",   text: narrative.entry,   color: "text-sky-400" },
-    { label: "The plan",text: narrative.plan,     color: "text-purple-400" },
-    { label: "Exit",    text: narrative.exit,     color: "text-amber-400" },
-    narrative.outcome
-      ? { label: "Outcome", text: narrative.outcome,
-          color: Number(order.unrealized_pl) >= 0 ? "text-emerald-400" : "text-red-400" }
-      : null,
-  ].filter(Boolean);
-
-  return (
-    <div className="border-b border-slate-700/60 bg-slate-950/30 shrink-0">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-5 py-2 text-left hover:bg-slate-800/30 transition"
-      >
-        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">
-          Trade Summary
-        </span>
-        <span className="text-[10px] text-slate-600 ml-1">— plain-English recap</span>
-        <span className={`ml-auto text-slate-500 text-xs transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
-      </button>
-      {open && (
-        <div className="px-5 pb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {paras.map(({ label, text, color }) => (
-            <div key={label} className="flex flex-col gap-1">
-              <span className={`text-[10px] font-bold uppercase tracking-wider ${color}`}>{label}</span>
-              <p className="text-xs text-slate-300 leading-relaxed">{text}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 // ── Exit method badge ─────────────────────────────────────────────────────────
@@ -575,197 +440,6 @@ function ExitMethodBadge({ method }) {
   );
 }
 
-// ── Forensic Digest ───────────────────────────────────────────────────────────
-// Full table of every metric collected for a closed trade: planned vs actual
-// pricing, slippage breakdown, P/L derivation, risk parameters, timestamps.
-function DigestSection({ title, children }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[8px] font-bold uppercase tracking-[0.22em] text-slate-600 pb-1 mb-1 border-b border-slate-800/70">
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function DigestRow({ label, value, color, italic }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2 py-[2.5px] border-b border-slate-800/30 last:border-0">
-      <span className="text-[10px] text-slate-500 shrink-0 leading-snug">{label}</span>
-      <span className={`font-mono text-[11px] text-right leading-snug break-all ${color ?? "text-slate-200"} ${italic ? "italic" : ""}`}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function TradeForensicDigest({
-  order, rr, slippage, effectiveRR, rAchieved, tradeDuration,
-  closedPl, closedPctChange, exitType, isClosedWin, isBreakeven,
-}) {
-  const isLong = order.direction === "long";
-
-  const fmtTs = (v) => {
-    if (!v) return "—";
-    try {
-      const ms = typeof v === "number" ? v : new Date(v.endsWith("Z") ? v : v + "Z").getTime();
-      return etTime.dateFormat("%b %e %Y, %H:%M ET", ms);
-    } catch { return String(v); }
-  };
-
-  const slipClr = (v) =>
-    v == null ? "text-slate-400" : v > 0.005 ? "text-red-400" : v < -0.005 ? "text-emerald-400" : "text-slate-400";
-  const plClr = (v) =>
-    v == null ? "text-slate-400" : v > 0.005 ? "text-emerald-400" : v < -0.005 ? "text-red-400" : "text-slate-400";
-  const sign$ = (v, d = 2) =>
-    v != null ? `${Number(v) >= 0 ? "+" : "−"}$${Math.abs(Number(v)).toFixed(d)}` : "—";
-  const signN = (v, d = 4) =>
-    v != null ? `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(d)}` : "—";
-
-  // Entry fill color: bad if fill is worse than chart entry for the direction
-  const entryFillClr = (() => {
-    if (rr?.fillPrice == null || rr?.entry == null) return "text-slate-200";
-    const diff = isLong ? rr.fillPrice - rr.entry : rr.entry - rr.fillPrice;
-    return diff > 0.005 ? "text-red-400" : diff < -0.005 ? "text-emerald-400" : "text-slate-300";
-  })();
-
-  return (
-    <div className="border-b border-slate-700/80 bg-[#070d19] shrink-0 overflow-y-auto" style={{ maxHeight: "310px" }}>
-      {/* Digest header */}
-      <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/80 bg-slate-950/60 sticky top-0">
-        <ClipboardList className="w-3 h-3 text-slate-500" />
-        <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">Forensic Trade Digest</span>
-        <span className="text-[9px] text-slate-600 ml-1">— every recorded &amp; derived metric</span>
-      </div>
-
-      {/* 4-column grid */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 divide-x divide-slate-800/50">
-
-        {/* ── Col 1: Identity + Setup ── */}
-        <div className="px-4 py-3 flex flex-col gap-4">
-          <DigestSection title="Trade Identity">
-            <DigestRow label="DB Order ID"     value={order.id ?? "—"} color="text-slate-400" />
-            <DigestRow label="Alpaca Order ID" value={order.alpaca_order_id ?? "—"} color="text-slate-400" />
-            <DigestRow label="Ticker"          value={order.ticker ?? "—"} color="text-brand-400" />
-            <DigestRow label="Direction"       value={isLong ? "Long  ↑" : "Short ↓"} color={isLong ? "text-emerald-400" : "text-red-400"} />
-            <DigestRow label="Mode"            value={order.paper_mode ? "Paper" : "Live"} color={order.paper_mode ? "text-blue-400" : "text-slate-300"} />
-            <DigestRow label="Status"          value={order.status ?? "—"} />
-          </DigestSection>
-          <DigestSection title="Setup Metadata">
-            <DigestRow label="Signal Bar"      value={order.bar_time ?? "—"} color="text-slate-400" />
-            <DigestRow label="Threshold Ref"   value={order.threshold != null ? `$${Number(order.threshold).toFixed(2)}` : "—"} color="text-fuchsia-400" />
-            <DigestRow label="Entry Time"      value={fmtTs(order.entry_time)} color="text-slate-400" />
-          </DigestSection>
-        </div>
-
-        {/* ── Col 2: Order Parameters + Execution ── */}
-        <div className="px-4 py-3 flex flex-col gap-4">
-          <DigestSection title="Order Parameters (Requested)">
-            <DigestRow label="Entry Limit"               value={order.entry_price != null ? `$${Number(order.entry_price).toFixed(2)}` : "—"} color="text-blue-300" />
-            <DigestRow label="Stop Price"                value={order.stop_price != null  ? `$${Number(order.stop_price).toFixed(2)}`  : "—"} color="text-red-400" />
-            <DigestRow label="Target Price"              value={order.target_price != null ? `$${Number(order.target_price).toFixed(2)}` : "—"} color="text-emerald-400" />
-            <DigestRow label="Qty (ordered)"             value={String(order.qty ?? "—")} />
-            <DigestRow label="Risk to Reward (planned)"  value={order.rr_ratio != null ? Number(order.rr_ratio).toFixed(2) : "—"} />
-            <DigestRow label="Risk to Reward (effective)" value={order.rr_ratio_effective != null ? Number(order.rr_ratio_effective).toFixed(2) : "—"} />
-            <DigestRow label="Risk Amount"               value={order.risk_amt != null  ? `$${Number(order.risk_amt).toFixed(2)}`  : "—"} color="text-red-400" />
-            <DigestRow label="Reward Amount"             value={order.reward_amt != null ? `$${Number(order.reward_amt).toFixed(2)}` : "—"} color="text-emerald-400" />
-          </DigestSection>
-          <DigestSection title="Execution (Actual Fills)">
-            <DigestRow label="Chart Entry"     value={rr?.entry != null ? `$${rr.entry.toFixed(2)}` : "—"} color="text-slate-300" />
-            <DigestRow label="Entry Fill"      value={rr?.fillPrice != null ? `$${Number(rr.fillPrice).toFixed(2)}` : "—"} color={entryFillClr} />
-            <DigestRow label="Fill vs Limit"   value={slippage?.fillVsLimitPerShare != null ? `${signN(slippage.fillVsLimitPerShare)}/sh` : "—"} color={slipClr(slippage?.fillVsLimitPerShare)} />
-            <DigestRow label="Exit Fill"       value={rr?.exitPrice != null ? `$${Number(rr.exitPrice).toFixed(2)}` : "—"} color={isClosedWin ? "text-emerald-400" : "text-red-400"} />
-            <DigestRow label="Exit Reference"  value={exitType === "target" ? `$${rr?.target?.toFixed(2)} (target)` : exitType === "stop" ? `$${rr?.stop?.toFixed(2)} (stop)` : "—"} color="text-slate-400" />
-            <DigestRow label="Qty (filled)"    value={rr?.qty != null ? String(rr.qty) : "—"} />
-          </DigestSection>
-        </div>
-
-        {/* ── Col 3: Slippage + Outcome ── */}
-        <div className="px-4 py-3 flex flex-col gap-4">
-          <DigestSection title="Slippage Analysis">
-            <DigestRow label="Entry Slip/sh"   value={slippage?.entryCostPerShare != null ? `${signN(slippage.entryCostPerShare)}/sh` : "—"} color={slipClr(slippage?.entryCostPerShare)} />
-            <DigestRow label="Entry Slip $"    value={slippage?.entryCostDollar != null ? sign$(slippage.entryCostDollar) : "—"} color={slipClr(slippage?.entryCostDollar)} />
-            <DigestRow label="Fill vs Limit/sh" value={slippage?.fillVsLimitPerShare != null ? `${signN(slippage.fillVsLimitPerShare)}/sh` : "—"} color={slipClr(slippage?.fillVsLimitPerShare)} />
-            <DigestRow label="Exit Slip/sh"    value={slippage?.exitCostPerShare != null ? `${signN(slippage.exitCostPerShare)}/sh` : slippage?.hasExitRef === false ? "n/a (manual)" : "—"} color={slippage?.exitCostPerShare != null ? slipClr(slippage.exitCostPerShare) : "text-slate-600"} italic={slippage?.exitCostPerShare == null} />
-            <DigestRow label="Exit Slip $"     value={slippage?.exitCostDollar != null ? sign$(slippage.exitCostDollar) : "—"} color={slipClr(slippage?.exitCostDollar)} />
-            <DigestRow label="Round-trip $"    value={slippage?.totalCostDollar != null ? sign$(slippage.totalCostDollar) : "—"} color={slipClr(slippage?.totalCostDollar)} />
-            <DigestRow label="Slip % of Risk"  value={slippage?.pctOfRisk != null ? `${slippage.pctOfRisk > 0 ? "+" : ""}${slippage.pctOfRisk.toFixed(2)}%` : "—"} color={slippage?.pctOfRisk != null ? (slippage.pctOfRisk > 5 ? "text-red-400" : slippage.pctOfRisk < -5 ? "text-emerald-400" : "text-slate-400") : "text-slate-400"} />
-          </DigestSection>
-          <DigestSection title="Outcome &amp; Profit and Loss">
-            <DigestRow label="Profit and Loss"  value={closedPl != null ? sign$(closedPl) : "—"} color={plClr(closedPl)} />
-            <DigestRow label="% Change"        value={closedPctChange != null ? `${closedPctChange >= 0 ? "+" : ""}${closedPctChange.toFixed(3)}%` : "—"} color={plClr(closedPctChange)} />
-            <DigestRow label="R Achieved"      value={rAchieved != null ? `${rAchieved >= 0 ? "+" : ""}${rAchieved.toFixed(3)}R` : "—"} color={plClr(rAchieved)} />
-            <DigestRow label="Outcome"         value={isBreakeven ? "Breakeven" : isClosedWin ? "Win" : "Loss"} color={isBreakeven ? "text-slate-300" : isClosedWin ? "text-emerald-400" : "text-red-400"} />
-            <DigestRow label="Exit Category"   value={exitType === "target" ? "Target Hit" : exitType === "stop" ? "Stopped Out" : exitType === "manual" ? "Manual Exit" : "—"} />
-            <DigestRow label="Exit Method (raw)" value={order.exit_method ?? "—"} color="text-slate-400" />
-            <DigestRow label="Duration"        value={tradeDuration ?? "—"} />
-          </DigestSection>
-          <DigestSection title="Close Mechanism">
-            {(() => {
-              const m = order.exit_method;
-              const meta = m ? EXIT_METHOD_META[m] : null;
-              const isBracket   = m === "bracket_tp"    || m === "bracket_sl";
-              const isAutoClose = m === "auto_close_tp" || m === "auto_close_sl";
-              const isManual    = m === "manual";
-              const executor = isBracket   ? "Alpaca broker (bracket order)"
-                             : isAutoClose ? "TradeFinder automation service"
-                             : isManual    ? "Trader (manual close)"
-                             : "Unknown";
-              const executorColor = isBracket   ? "text-blue-400"
-                                  : isAutoClose ? "text-amber-400"
-                                  : isManual    ? "text-slate-300"
-                                  : "text-slate-600";
-              const sideColor = (m === "bracket_tp" || m === "auto_close_tp") ? "text-emerald-400"
-                              : (m === "bracket_sl" || m === "auto_close_sl") ? "text-red-400"
-                              : "text-slate-400";
-              return (
-                <>
-                  <DigestRow label="Closed by"     value={executor} color={executorColor} />
-                  <DigestRow label="TP or SL side" value={
-                    m === "bracket_tp"    ? "Take-profit hit" :
-                    m === "auto_close_tp" ? "Take-profit breach ×3" :
-                    m === "bracket_sl"    ? "Stop-loss hit" :
-                    m === "auto_close_sl" ? "Stop-loss breach ×3" :
-                    isManual              ? "N/A (manual)" : "—"
-                  } color={sideColor} />
-                  <DigestRow label="How it works"  value={meta?.desc ?? "—"} color="text-slate-400" italic />
-                  {isBracket && (
-                    <DigestRow label="Bracket type"  value="Native OCO bracket — broker fills TP/SL leg when price reaches level" color="text-slate-500" italic />
-                  )}
-                  {isAutoClose && (
-                    <DigestRow label="Auto-close"    value="System polled price, detected ≥3 consecutive level breaches, sent market order to Alpaca" color="text-slate-500" italic />
-                  )}
-                </>
-              );
-            })()}
-          </DigestSection>
-        </div>
-
-        {/* ── Col 4: Risk Parameters + Timestamps ── */}
-        <div className="px-4 py-3 flex flex-col gap-4">
-          <DigestSection title="Risk Parameters">
-            <DigestRow label="Stop Dist/sh"              value={rr ? `$${Math.abs(rr.entry - rr.stop).toFixed(2)}` : "—"} color="text-red-400" />
-            <DigestRow label="Target Dist/sh"            value={rr ? `$${Math.abs(rr.target - rr.entry).toFixed(2)}` : "—"} color="text-emerald-400" />
-            <DigestRow label="Planned Risk"              value={rr ? `$${(Math.abs(rr.entry - rr.stop) * rr.qty).toFixed(2)}` : "—"} color="text-red-400" />
-            <DigestRow label="Planned Reward"            value={rr ? `$${(Math.abs(rr.target - rr.entry) * rr.qty).toFixed(2)}` : "—"} color="text-emerald-400" />
-            <DigestRow label="Effective Risk to Reward"  value={effectiveRR ?? "—"} />
-            <DigestRow label="Risk Amount (stored)"      value={order.risk_amt != null  ? `$${Number(order.risk_amt).toFixed(2)}`  : "—"} color="text-slate-400" />
-            <DigestRow label="Reward Amount (stored)"    value={order.reward_amt != null ? `$${Number(order.reward_amt).toFixed(2)}` : "—"} color="text-slate-400" />
-          </DigestSection>
-          <DigestSection title="Timestamps (ET)">
-            <DigestRow label="Order Created"   value={fmtTs(order.created_at)} color="text-slate-400" />
-            <DigestRow label="Entry Time"      value={fmtTs(order.entry_time)} color="text-slate-400" />
-            <DigestRow label="Close / Sync"    value={fmtTs(order.synced_at)} color="text-slate-400" />
-            <DigestRow label="Close Time (drv)" value={fmtTs(rr?.closeTime)} color="text-slate-400" />
-            <DigestRow label="Signal Bar"      value={order.bar_time ?? "—"} color="text-slate-400" />
-          </DigestSection>
-        </div>
-
-      </div>
-    </div>
-  );
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
@@ -773,12 +447,13 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState(null);
   const [rr,        setRr]        = useState(null);
-  const [activeZoom, setActiveZoom] = useState("2W");
+  const [activeZoom, setActiveZoom] = useState(() => (order.is_open ? "2D" : "2W"));
   const [chartH, setChartH] = useState(null);
 
   // Sanity check + live Alpaca execution (closed trades only)
   const [sanityCheck, setSanityCheck] = useState(null); // null | { loading } | { error } | { checks }
   const [alpacaOrder, setAlpacaOrder] = useState(null);
+  const [alpacaCloseOrder, setAlpacaCloseOrder] = useState(null);
 
   // Close-trade flow
   const [closeConfirm, setCloseConfirm] = useState(false); // show confirm prompt
@@ -793,21 +468,18 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [editLevelsError,   setEditLevelsError]   = useState(null);
   const [editLevelsSaved,   setEditLevelsSaved]   = useState(false);
 
-  // Forensic digest toggle (closed trades only)
-  const [showDigest, setShowDigest] = useState(false);
-
-  // AI trade analysis (closed trades only)
-  const [aiAnalysis, setAiAnalysis] = useState(null); // null | {loading} | {text} | {error}
-
-  // TTS audio playback
-  const [audioState, setAudioState] = useState(null); // null | {loading} | {playing, url} | {error}
-  const audioRef = useRef(null);
-
   // ── Sanity check: fetch Alpaca order and compare to DB (closed trades only) ──
   useEffect(() => {
     if (order.is_open === true || !order.alpaca_order_id) return;
     setSanityCheck({ loading: true });
     setAlpacaOrder(null);
+    setAlpacaCloseOrder(null);
+
+    if (order.close_alpaca_order_id) {
+      alpacaApi.getOrderDetail(order.close_alpaca_order_id)
+        .then(res => setAlpacaCloseOrder(res.data))
+        .catch(() => setAlpacaCloseOrder(null));
+    }
 
     alpacaApi.getOrderDetail(order.alpaca_order_id)
       .then(res => {
@@ -823,19 +495,20 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
           return Math.abs(Number(db) - Number(al)) <= priceTol;
         };
 
+        const isMkt = (a.type || a.order_type) === "market";
         const checks = [
           {
             label:  "Symbol",
             db:     order.ticker,
             alpaca: a.symbol ?? "—",
-            match:  order.ticker === a.symbol,
+            match:  compactTicker(order.ticker) === compactTicker(a.symbol),
           },
           {
             label:  "Qty",
             db:     String(order.qty),
-            alpaca: a.filled_qty != null ? String(parseInt(a.filled_qty, 10)) : "—",
+            alpaca: a.filled_qty != null ? String(Number(a.filled_qty)) : "—",
             match:  a.filled_qty != null
-                      ? order.qty === parseInt(a.filled_qty, 10)
+                      ? Number(order.qty) === Number(a.filled_qty)
                       : null,
           },
           {
@@ -851,10 +524,10 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
             match:  (order.status ?? "") === (a.status ?? ""),
           },
           {
-            label:  "Entry Limit",
+            label:  isMkt ? "Chart entry" : "Entry Limit",
             db:     order.entry_price != null ? `$${Number(order.entry_price).toFixed(2)}` : "—",
             alpaca: a.limit_price    != null ? `$${Number(a.limit_price).toFixed(2)}`    : "—",
-            match:  priceMatch(order.entry_price, a.limit_price),
+            match:  isMkt ? null : priceMatch(order.entry_price, a.limit_price),
           },
           {
             label:  "Stop",
@@ -877,7 +550,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
         setSanityCheck({ error: msg });
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order.alpaca_order_id, order.is_open]);
+  }, [order.alpaca_order_id, order.close_alpaca_order_id, order.is_open]);
 
   const chartRef    = useRef(null);
   const rrRef       = useRef(null);
@@ -919,9 +592,14 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     const stop    = Number(order.stop_price);
     const rrRatio = Number(order.rr_ratio ?? 2);
 
+    const entryTime = resolveChartEntryTime(order, bars);
+    const storedClickOffChart = Boolean(
+      bars.length && order.entry_time != null && order.entry_time < bars[0].t
+    );
+
     // Locate the entry bar by finding the nearest bar to entry_time
     let chartEntry = null;
-    if (order.entry_time && bars.length) {
+    if (!storedClickOffChart && order.entry_time && bars.length) {
       const entryBar = bars.reduce((best, b) =>
         Math.abs(b.t - order.entry_time) < Math.abs(best.t - order.entry_time) ? b : best
       , bars[0]);
@@ -942,15 +620,12 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       : parseFloat((entry + (entry - stop) * rrRatio).toFixed(2));
 
     // Derive close time and exit price for closed trades
-    let closeTime = null;
-    let exitPrice = null;
-    if (!order.is_open && order.synced_at) {
-      const raw = order.synced_at.endsWith("Z") ? order.synced_at : order.synced_at + "Z";
-      closeTime = new Date(raw).getTime();
-      // Snap to nearest 5-min bar boundary
+    let closeTime = resolveChartCloseTime(order);
+    if (closeTime != null) {
       const BAR_MS = 5 * 60 * 1000;
-      closeTime = Math.round(closeTime / BAR_MS) * BAR_MS;
+      closeTime = Math.floor(closeTime / BAR_MS) * BAR_MS;
     }
+    let exitPrice = null;
     if (!order.is_open && order.exit_price != null) {
       exitPrice = Number(order.exit_price);
     } else if (!order.is_open && order.unrealized_pl != null && order.filled_avg_price != null && order.qty) {
@@ -967,7 +642,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       target,
       qty:       order.qty ?? 1,
       rrRatio,
-      entryTime: order.entry_time ?? null,
+      entryTime,
       threshold: order.threshold ?? null,
       fillPrice: order.filled_avg_price != null ? Number(order.filled_avg_price) : null,
       closeTime,
@@ -1006,14 +681,17 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       to = today;
     }
 
-    stockApi.history(ticker, { multiplier: 5, timespan: "minute", from: fmt(from), to: fmt(to), limit: 3000 })
+    stockApi.history(ticker, { multiplier: 5, timespan: "minute", from: fmt(from), to: fmt(to), limit: 5000 })
       .then(r => {
         const raw = (r.data.bars || []).sort((a, b) => a.t - b.t);
-        setBars(raw.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v })));
+        let mapped = raw.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
+        const closeMs = resolveChartCloseTime(order);
+        if (closeMs != null) mapped = mapped.filter(b => b.t <= closeMs);
+        setBars(mapped);
       })
       .catch(() => setError("Failed to load chart data"))
       .finally(() => setLoading(false));
-  }, [ticker, order.is_open, order.created_at, order.synced_at]);
+  }, [ticker, order.is_open, order.created_at, order.synced_at, order.closed_at]);
 
   useEffect(() => { fetchBars(); }, [fetchBars]);
 
@@ -1084,10 +762,11 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       return;
     }
 
-    if (preset.entryRelative && order.entry_time) {
+    const zoomEntry = rr?.entryTime ?? order.entry_time;
+    if (preset.entryRelative && zoomEntry) {
       // ±N days centred on entry time
-      const fromT = Math.max(order.entry_time - preset.days * DAY_MS, bars[0].t);
-      const toT   = Math.min(order.entry_time + preset.days * DAY_MS, padT);
+      const fromT = Math.max(zoomEntry - preset.days * DAY_MS, bars[0].t);
+      const toT   = Math.min(zoomEntry + preset.days * DAY_MS, padT);
       chart.xAxis[0].setExtremes(fromT, toT, true, false);
       return;
     }
@@ -1097,7 +776,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     const fromT   = lastT - preset.days * DAY_MS;
     const fromIdx = bars.findIndex(b => b.t >= fromT);
     chart.xAxis[0].setExtremes(bars[Math.max(0, fromIdx)].t, padT, true, false);
-  }, [bars, paddedLastT, order.entry_time]);
+  }, [bars, paddedLastT, order.entry_time, rr?.entryTime]);
 
   // Expand Y-axis to show the full R/R drawing (stop → target) with padding
   const fitRRZoom = useCallback(() => {
@@ -1116,12 +795,8 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     if (!chart || !bars.length) return;
     chart.reflow();
     {
-      // Both open and closed trades: default to 2W ending at the most recent bar
       const preset = ZOOM_PRESETS.find(p => p.label === activeZoom);
-      const windowMs = preset?.days ? preset.days * 24 * 60 * 60 * 1000 : null;
-      const lastT = bars[bars.length - 1].t;
-      const windowStart = windowMs ? lastT - windowMs : bars[0].t;
-      chart.xAxis[0].setExtremes(windowStart, paddedLastT(), true, false);
+      if (preset) applyZoom(preset);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, barTimeMs]);
@@ -1159,13 +834,17 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
 
   const ready = !loading && !error && bars.length > 0 && chartH != null;
 
-  // ── R/R calculations ──────────────────────────────────────────────────────
-  const effectiveRR = useMemo(() => {
+  // ── R/R from fill (live trade) vs planned at click ───────────────────────
+  const rrAtFill = useMemo(() => {
     if (!rr) return null;
-    const risk   = Math.abs(rr.entry - rr.stop);
-    const reward = Math.abs(rr.target - rr.entry);
-    return risk > 0 ? (reward / risk).toFixed(2) : null;
-  }, [rr]);
+    const px = rr.fillPrice ?? num(order.filled_avg_price);
+    return fmtRR(rrAtPrice(px, rr.stop, rr.target));
+  }, [rr, order.filled_avg_price]);
+
+  const plannedRR = useMemo(() => {
+    const v = num(order.rr_ratio_effective) ?? num(order.rr_ratio) ?? rr?.rrRatio;
+    return v != null ? fmtRR(v) : null;
+  }, [order.rr_ratio_effective, order.rr_ratio, rr?.rrRatio]);
 
   // ── P/L calculations ──────────────────────────────────────────────────────
   const currentPrice = liveQuote?.last ?? liveQuote?.bid ?? null;
@@ -1245,33 +924,42 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     return ((Number(rr.exitPrice) - Number(fillPrice)) / Number(fillPrice)) * 100 * (isLong ? 1 : -1);
   }, [order.is_open, rr, fillPrice, isLong]);
 
-  // ── Round-trip slippage (entry fill/limit from live Alpaca) ───────────────
+  // ── Round-trip slippage (Alpaca fills vs intended/limit prices) ───────────
+  // No stored slippage column. Fills come from live Alpaca; DB filled_avg_price
+  // / exit_price are only fallbacks (synced snapshots). Chart-bar reconstruction
+  // (rr.entry) is not an execution reference.
   const slippage = useMemo(() => {
     if (order.is_open || !rr) return null;
     const dir = isLong ? 1 : -1;
-    const alpacaLimit = alpacaOrder?.limit_price != null ? Number(alpacaOrder.limit_price) : null;
-    const alpacaFill = alpacaOrder?.filled_avg_price != null ? Number(alpacaOrder.filled_avg_price) : null;
-    const limitPrice = alpacaLimit ?? (order.entry_price != null ? Number(order.entry_price) : null);
-    const entryFill = alpacaFill ?? rr.fillPrice;
-    const entryCostPerShare = entryFill != null
-      ? dir * (entryFill - rr.entry)
-      : null;
-
-    const fillVsLimitPerShare = entryFill != null && limitPrice != null
-      ? dir * (entryFill - limitPrice)
-      : null;
-
-    // Exit: exit vs the reference price (target/stop); manual has no clean reference
-    let refExitPrice = null;
-    if      (exitType === "target") refExitPrice = rr.target;
-    else if (exitType === "stop")   refExitPrice = rr.stop;
-
-    const exitCostPerShare = rr.exitPrice != null && refExitPrice != null
-      ? dir * (refExitPrice - Number(rr.exitPrice))  // positive = received less / paid more
-      : null;
-
-    // Dollar totals
     const qty = rr.qty ?? 1;
+
+    const alpacaType = String(alpacaOrder?.type || alpacaOrder?.order_type || order.order_type || "").toLowerCase();
+    const isMarket = alpacaType === "market";
+
+    const entryFill = num(alpacaOrder?.filled_avg_price) ?? num(rr.fillPrice);
+    const alpacaLimit = num(alpacaOrder?.limit_price);
+    const intendedEntry = alpacaLimit ?? num(order.entry_price);
+    const entryCostPerShare = entryFill != null && intendedEntry != null
+      ? dir * (entryFill - intendedEntry)
+      : null;
+
+    const legs = Array.isArray(alpacaOrder?.legs) ? alpacaOrder.legs : [];
+    const stopLeg = legs.find(l => l.type === "stop" || l.type === "stop_limit");
+    const profitLeg = legs.find(l => l.type === "limit" && l !== stopLeg);
+    const filledExitLeg = legs.find(l => String(l.status || "").toLowerCase() === "filled" && num(l.filled_avg_price) != null);
+
+    const exitFill = num(alpacaCloseOrder?.filled_avg_price)
+      ?? num(filledExitLeg?.filled_avg_price)
+      ?? num(rr.exitPrice);
+
+    let refExitPrice = null;
+    if (exitType === "target") refExitPrice = num(profitLeg?.limit_price) ?? num(rr.target);
+    else if (exitType === "stop") refExitPrice = num(stopLeg?.stop_price) ?? num(stopLeg?.limit_price) ?? num(rr.stop);
+
+    const exitCostPerShare = exitFill != null && refExitPrice != null
+      ? dir * (refExitPrice - exitFill)
+      : null;
+
     const entryCostDollar = entryCostPerShare != null ? entryCostPerShare * qty : null;
     const exitCostDollar  = exitCostPerShare  != null ? exitCostPerShare  * qty : null;
     const totalCostDollar =
@@ -1279,169 +967,23 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
         ? (entryCostDollar ?? 0) + (exitCostDollar ?? 0)
         : null;
 
-    // Slippage as % of planned risk (how many "risk dollars" did slippage eat?)
-    const plannedRisk = Math.abs(rr.entry - rr.stop) * qty;
+    const riskRef = intendedEntry ?? rr.entry;
+    const plannedRisk = riskRef != null && rr.stop != null
+      ? Math.abs(riskRef - rr.stop) * qty
+      : null;
     const pctOfRisk = totalCostDollar != null && plannedRisk > 0
       ? (totalCostDollar / plannedRisk) * 100
       : null;
 
     return {
-      entryCostPerShare, fillVsLimitPerShare,
-      exitCostPerShare,  exitCostDollar,
-      entryCostDollar,   totalCostDollar,
-      pctOfRisk,         hasExitRef: refExitPrice != null,
+      entryCostPerShare,
+      exitCostPerShare, exitCostDollar,
+      entryCostDollar,  totalCostDollar,
+      pctOfRisk,        hasExitRef: refExitPrice != null,
+      isMarket,
     };
-  }, [order.is_open, order.entry_price, rr, exitType, isLong, alpacaOrder]);
+  }, [order.is_open, order.entry_price, order.order_type, rr, exitType, isLong, alpacaOrder, alpacaCloseOrder]);
 
-  // ── AI Trade Analysis ─────────────────────────────────────────────────────
-  // Defined after slippage useMemo so it can close over the computed value.
-  const handleAIAnalysis = useCallback(async () => {
-    if (!rr) return;
-    setAiAnalysis({ loading: true });
-
-    const isLongDir = order.direction === "long";
-    const n = (v, d = 2) => v != null ? Number(v).toFixed(d) : "N/A";
-    const s$ = (v, d = 2) => v != null ? `${Number(v) >= 0 ? "+" : "−"}$${Math.abs(Number(v)).toFixed(d)}` : "N/A";
-    const fmtTs = (v) => {
-      if (!v) return "N/A";
-      try {
-        const ms = typeof v === "number" ? v : new Date(v.endsWith("Z") ? v : v + "Z").getTime();
-        return etTime.dateFormat("%b %e %Y %H:%M ET", ms);
-      } catch { return String(v); }
-    };
-
-    const sl = slippage;
-    const plannedRisk$   = rr ? (Math.abs(rr.entry - rr.stop)   * rr.qty).toFixed(2) : "N/A";
-    const plannedReward$ = rr ? (Math.abs(rr.target - rr.entry) * rr.qty).toFixed(2) : "N/A";
-
-    const prompt = `You are a friendly but honest trading coach giving a trader a quick debrief on their just-closed trade. \
-Your tone is warm, clear, and encouraging — like a knowledgeable friend who tells it straight without being harsh. \
-Write 2–3 short paragraphs that give a high-level human summary of the trade: \
-open with what the trader was trying to do and whether the core idea worked out, \
-then highlight what went right (good setup, clean execution, tight slippage, disciplined exit, etc.), \
-and finish with what went wrong or could be improved (bad fill, oversize risk, stop too tight, price moved against them, etc.). \
-If nothing went wrong, say so honestly. If nothing went right beyond following the plan, say that too. \
-Keep it conversational and easy to understand for someone who is not a professional. \
-STRICT STYLE RULES — you must follow these exactly: \
-(a) All dollar amounts must be rounded to exactly 2 decimal places (e.g. $74.35, not $74.3500). \
-(b) Never write "R/R" — always write "Risk to Reward" in full. \
-(c) Never write "P/L" — always write "Profit and Loss" in full. \
-(d) Do not use bullet points — write in flowing prose paragraphs only. \
-(e) Do not start with "This trade" — vary the opening.
-
-=== FORENSIC TRADE DATA ===
-
-IDENTITY
-Ticker: ${order.ticker}  |  Direction: ${isLongDir ? "Long (buy)" : "Short (sell)"}  |  Mode: ${order.paper_mode ? "Paper" : "Live"}  |  Status: ${order.status ?? "N/A"}
-
-ORDER PARAMETERS (what was requested)
-Entry Limit Price: $${n(order.entry_price)}
-Stop Price: $${n(order.stop_price)}
-Target Price: $${n(order.target_price)}
-Quantity: ${order.qty ?? "N/A"} shares
-Planned Risk to Reward: ${n(order.rr_ratio)}  |  Effective Risk to Reward: ${effectiveRR ?? "N/A"}
-Planned Risk: $${plannedRisk$}  |  Planned Reward: $${plannedReward$}
-
-EXECUTION (what actually happened)
-Chart Entry (bar close): $${n(rr.entry)}
-Entry Fill Price: $${rr.fillPrice != null ? n(rr.fillPrice) : "N/A"}
-Fill vs Limit delta: ${sl?.fillVsLimitPerShare != null ? `${sl.fillVsLimitPerShare > 0 ? "+" : ""}${sl.fillVsLimitPerShare.toFixed(2)}/sh` : "N/A"}
-Exit Fill Price: $${rr.exitPrice != null ? n(rr.exitPrice) : "N/A"}
-Exit Reference: ${exitType === "target" ? `$${n(rr.target)} (take-profit target)` : exitType === "stop" ? `$${n(rr.stop)} (stop-loss)` : "manual — no clean reference"}
-
-SLIPPAGE ANALYSIS
-Entry slippage vs chart entry: ${sl?.entryCostPerShare != null ? `${sl.entryCostPerShare > 0 ? "+" : ""}${sl.entryCostPerShare.toFixed(2)}/sh (${s$(sl.entryCostDollar)} total)` : "N/A"}
-Entry fill vs submitted limit: ${sl?.fillVsLimitPerShare != null ? `${sl.fillVsLimitPerShare > 0 ? "+" : ""}${sl.fillVsLimitPerShare.toFixed(2)}/sh` : "N/A"}
-Exit slippage vs reference: ${sl?.exitCostPerShare != null ? `${sl.exitCostPerShare > 0 ? "+" : ""}${sl.exitCostPerShare.toFixed(2)}/sh (${s$(sl.exitCostDollar)} total)` : sl?.hasExitRef === false ? "N/A (manual exit, no reference)" : "N/A"}
-Round-trip slippage cost: ${sl?.totalCostDollar != null ? s$(sl.totalCostDollar) : "N/A"}
-Slippage as % of planned risk: ${sl?.pctOfRisk != null ? `${sl.pctOfRisk.toFixed(2)}%` : "N/A"}
-
-OUTCOME & PROFIT AND LOSS
-Final Realized Profit and Loss: ${closedPl != null ? s$(closedPl) : "N/A"}
-% Change (fill to exit): ${closedPctChange != null ? `${closedPctChange >= 0 ? "+" : ""}${closedPctChange.toFixed(2)}%` : "N/A"}
-Risk Units Achieved: ${rAchieved != null ? `${rAchieved >= 0 ? "+" : ""}${rAchieved.toFixed(2)}R` : "N/A"}
-Outcome: ${isBreakeven ? "Breakeven" : isClosedWin ? "WIN" : "LOSS"}
-Exit Category: ${exitType === "target" ? "Target Hit" : exitType === "stop" ? "Stopped Out (stop-loss triggered)" : exitType === "manual" ? "Manual Exit" : "Unknown"}
-Exit Method: ${order.exit_method ?? "N/A"}
-Trade Duration: ${tradeDuration ?? "N/A"}
-
-TIMESTAMPS
-Order placed: ${fmtTs(order.created_at)}
-Entry filled: ${fmtTs(order.entry_time)}
-Trade closed: ${fmtTs(order.synced_at)}
-`;
-
-    try {
-      const { data } = await aiApi.chat(
-        [{ role: "user", content: prompt }],
-        { model: "gpt-4o-mini", max_completion_tokens: 800, temperature: 0.4 },
-      );
-      const text = data.choices?.[0]?.message?.content?.trim() ?? "No response returned.";
-      setAiAnalysis({ text });
-    } catch (err) {
-      const msg = err.response?.data?.error?.message || err.message || "Failed to fetch AI analysis.";
-      setAiAnalysis({ error: msg });
-    }
-  }, [order, rr, slippage, effectiveRR, exitType, rAchieved, tradeDuration,
-      closedPl, closedPctChange, isClosedWin, isBreakeven]);
-
-  // ── Text-to-Speech (Replicate / MiniMax Speech 2.8 Turbo) ─────────────────
-  const stopAudio = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = "";
-      audioRef.current = null;
-    }
-    setAudioState(prev => prev?.url ? { ...prev, playing: false } : null);
-  }, []);
-
-  const handleTTS = useCallback(async (text) => {
-    stopAudio();
-    setAudioState({ loading: true });
-    try {
-      const res = await aiApi.tts(text, { voice_id: "English_MatureBoss", speed: 1.0, emotion: "neutral" });
-      let prediction = res.data;
-
-      // If Prefer:wait timed out server-side, poll until complete
-      while (prediction.status === "starting" || prediction.status === "processing") {
-        await new Promise(r => setTimeout(r, 1200));
-        const poll = await aiApi.pollTts(prediction.id);
-        prediction = poll.data;
-      }
-      if (prediction.status === "failed") {
-        throw new Error(prediction.error || "Speech generation failed");
-      }
-
-      const audioUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
-      if (!audioUrl) throw new Error("No audio URL returned from Replicate");
-
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
-      audio.onended = () => setAudioState({ url: audioUrl, playing: false });
-      audio.onerror = () => setAudioState({ url: audioUrl, playing: false, error: "Playback error" });
-      setAudioState({ url: audioUrl, playing: true });
-      await audio.play();
-    } catch (err) {
-      const msg = err?.response?.data?.error || err?.response?.data?.detail || err.message || "TTS failed";
-      setAudioState({ error: msg });
-    }
-  }, [stopAudio]);
-
-  // Auto-play TTS whenever a fresh AI analysis text arrives
-  useEffect(() => {
-    if (aiAnalysis?.text) {
-      handleTTS(aiAnalysis.text);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aiAnalysis?.text]);
-
-  // Stop audio when AI panel is dismissed
-  useEffect(() => {
-    if (!aiAnalysis) stopAudio();
-  }, [aiAnalysis, stopAudio]);
-
-  // Cleanup on modal unmount
-  useEffect(() => () => stopAudio(), [stopAudio]);
 
   return (
     <div
@@ -1806,8 +1348,8 @@ Trade closed: ${fmtTs(order.synced_at)}
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-blue-400 ring-2 ring-blue-400/20 shrink-0" />
                   <span className="font-mono text-slate-300">
-                    {order.entry_time != null
-                      ? etTime.dateFormat("%b %e, %H:%M ET", order.entry_time)
+                    {(rr?.entryTime ?? order.entry_time) != null
+                      ? etTime.dateFormat("%b %e, %H:%M ET", rr?.entryTime ?? order.entry_time)
                       : <span className="text-slate-600 italic">unknown</span>}
                   </span>
                   <span className="text-[10px] text-slate-600">entry</span>
@@ -1846,9 +1388,14 @@ Trade closed: ${fmtTs(order.synced_at)}
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
                   <span className="w-14 text-[10px] text-slate-500">R/R</span>
-                  <span className="font-mono font-bold text-white text-sm">{effectiveRR ?? "—"}</span>
-                  {rr.rrRatio != null && effectiveRR != null && Math.abs(Number(effectiveRR) - Number(rr.rrRatio)) > 0.05 && (
-                    <span className="text-[10px] text-slate-600">/ {Number(rr.rrRatio).toFixed(1)} planned</span>
+                  <span className="font-mono font-bold text-white text-sm">
+                    {rrAtFill != null ? `${rrAtFill}R` : "—"}
+                  </span>
+                  {rrAtFill != null && rr.fillPrice != null && Math.abs(rr.fillPrice - rr.entry) > 0.005 && (
+                    <span className="text-[10px] text-slate-500">at fill</span>
+                  )}
+                  {plannedRR != null && rrAtFill != null && Math.abs(plannedRR - rrAtFill) > 0.05 && (
+                    <span className="text-[10px] text-slate-600">· {plannedRR}R planned</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -1872,9 +1419,11 @@ Trade closed: ${fmtTs(order.synced_at)}
                 </span>
                 <div className="flex flex-col gap-1.5">
 
-                  {/* Entry fill vs bar entry */}
+                  {/* Entry fill vs Alpaca limit (or intended entry for market) */}
                   <div className="flex items-center gap-2">
-                    <span className="w-16 text-[10px] text-slate-500 shrink-0">Entry fill</span>
+                    <span className="w-16 text-[10px] text-slate-500 shrink-0">
+                      {slippage.isMarket ? "vs intended" : "vs limit"}
+                    </span>
                     {slippage.entryCostPerShare != null ? (
                       <>
                         <span className={`font-mono text-xs font-semibold ${
@@ -1892,19 +1441,6 @@ Trade closed: ${fmtTs(order.synced_at)}
                       </>
                     ) : <span className="text-slate-600 text-[10px]">—</span>}
                   </div>
-
-                  {/* Fill vs limit order price */}
-                  {slippage.fillVsLimitPerShare != null && Math.abs(slippage.fillVsLimitPerShare) > 0.001 && (
-                    <div className="flex items-center gap-2">
-                      <span className="w-16 text-[10px] text-slate-500 shrink-0">vs limit</span>
-                      <span className={`font-mono text-xs ${
-                        slippage.fillVsLimitPerShare > 0.005  ? "text-red-400"     :
-                        slippage.fillVsLimitPerShare < -0.005 ? "text-emerald-400" : "text-slate-400"
-                      }`}>
-                        {slippage.fillVsLimitPerShare > 0 ? "+" : ""}{slippage.fillVsLimitPerShare.toFixed(3)}/sh
-                      </span>
-                    </div>
-                  )}
 
                   {/* Exit fill vs target/stop */}
                   <div className="flex items-center gap-2">
@@ -1968,207 +1504,9 @@ Trade closed: ${fmtTs(order.synced_at)}
                 <ExitMethodBadge method={order.exit_method} />
               </div>
             )}
-
-            {/* Forensic Digest + AI Analysis toggles */}
-            {!order.is_open && (
-              <div className="flex items-center gap-2 px-4 py-3 shrink-0 border-l border-slate-700/50 ml-auto">
-                {/* Digest toggle */}
-                <div className="flex flex-col items-center gap-1">
-                  <button
-                    onClick={() => setShowDigest(v => !v)}
-                    className={`flex items-center gap-1.5 text-[10px] font-semibold px-3 py-1.5 rounded border transition-colors ${
-                      showDigest
-                        ? "bg-indigo-900/50 border-indigo-600/60 text-indigo-300 hover:bg-indigo-900/70"
-                        : "bg-slate-800/60 border-slate-600/50 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200"
-                    }`}
-                  >
-                    <ClipboardList className="w-3 h-3" />
-                    {showDigest ? "Hide Digest" : "Trade Digest"}
-                  </button>
-                </div>
-
-                {/* AI Analysis button */}
-                <div className="flex flex-col items-center gap-1">
-                  <button
-                    onClick={() => {
-                      if (aiAnalysis?.text || aiAnalysis?.error) {
-                        setAiAnalysis(null);
-                      } else {
-                        handleAIAnalysis();
-                      }
-                    }}
-                    disabled={aiAnalysis?.loading}
-                    className={`flex items-center gap-1.5 text-[10px] font-semibold px-3 py-1.5 rounded border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-                      aiAnalysis?.text
-                        ? "bg-violet-900/50 border-violet-600/60 text-violet-300 hover:bg-violet-900/70"
-                        : aiAnalysis?.error
-                        ? "bg-red-900/40 border-red-700/50 text-red-400 hover:bg-red-900/60"
-                        : "bg-slate-800/60 border-slate-600/50 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200"
-                    }`}
-                  >
-                    {aiAnalysis?.loading
-                      ? <Loader2 className="w-3 h-3 animate-spin" />
-                      : <Sparkles className="w-3 h-3" />
-                    }
-                    {aiAnalysis?.loading ? "Analyzing…"
-                      : aiAnalysis?.text  ? "Hide"
-                      : aiAnalysis?.error ? "Retry"
-                      : "Analysis"}
-                  </button>
-                </div>
-              </div>
-            )}
-
           </div>
         )}
 
-        {/* ── CLOSED TRADE: Forensic Digest ── */}
-        {!order.is_open && rr && showDigest && (
-          <TradeForensicDigest
-            order={order}
-            rr={rr}
-            slippage={slippage}
-            effectiveRR={effectiveRR}
-            rAchieved={rAchieved}
-            tradeDuration={tradeDuration}
-            closedPl={closedPl}
-            closedPctChange={closedPctChange}
-            exitType={exitType}
-            isClosedWin={isClosedWin}
-            isBreakeven={isBreakeven}
-          />
-        )}
-
-        {/* ── CLOSED TRADE: AI Analysis panel ── */}
-        {!order.is_open && aiAnalysis && (
-          <div className="border-b border-slate-700/80 bg-[#0a0718] shrink-0 overflow-y-auto" style={{ maxHeight: "280px" }}>
-            {/* Header */}
-            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/80 bg-slate-950/60 sticky top-0">
-              <Sparkles className="w-3 h-3 text-violet-400" />
-              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-violet-300">AI Trade Analysis</span>
-
-              {/* Audio status indicator */}
-              <div className="flex items-center gap-1.5 ml-3">
-                {audioState?.loading && (
-                  <span className="flex items-center gap-1 text-[9px] text-amber-400/80">
-                    <Loader2 className="w-2.5 h-2.5 animate-spin" /> Generating audio…
-                  </span>
-                )}
-                {audioState?.playing && (
-                  <span className="flex items-center gap-1 text-[9px] text-emerald-400/80 animate-pulse">
-                    <Volume2 className="w-2.5 h-2.5" /> Playing
-                  </span>
-                )}
-                {audioState?.url && !audioState.playing && !audioState.loading && (
-                  <span className="flex items-center gap-1 text-[9px] text-slate-500">
-                    <VolumeX className="w-2.5 h-2.5" /> Audio ready
-                  </span>
-                )}
-                {audioState?.error && (
-                  <span className="flex items-center gap-1 text-[9px] text-red-400/80">
-                    <AlertCircle className="w-2.5 h-2.5" /> Audio error
-                  </span>
-                )}
-              </div>
-
-              {/* Audio controls */}
-              <div className="flex items-center gap-1 ml-1">
-                {audioState?.playing && (
-                  <button
-                    onClick={stopAudio}
-                    title="Stop audio"
-                    className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-red-400 transition-colors px-1.5 py-0.5 rounded border border-slate-700/50 hover:border-red-700/50"
-                  >
-                    <Square className="w-2.5 h-2.5" /> Stop
-                  </button>
-                )}
-                {audioState?.url && !audioState.playing && !audioState.loading && (
-                  <button
-                    onClick={() => {
-                      if (audioRef.current) {
-                        audioRef.current.currentTime = 0;
-                        audioRef.current.play();
-                        setAudioState(prev => ({ ...prev, playing: true }));
-                      } else if (audioState.url) {
-                        const audio = new Audio(audioState.url);
-                        audioRef.current = audio;
-                        audio.onended = () => setAudioState(prev => ({ ...prev, playing: false }));
-                        audio.play();
-                        setAudioState(prev => ({ ...prev, playing: true }));
-                      }
-                    }}
-                    title="Replay audio"
-                    className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-emerald-400 transition-colors px-1.5 py-0.5 rounded border border-slate-700/50 hover:border-emerald-700/50"
-                  >
-                    <Volume2 className="w-2.5 h-2.5" /> Replay
-                  </button>
-                )}
-                {aiAnalysis.text && (
-                  <button
-                    onClick={() => handleTTS(aiAnalysis.text)}
-                    disabled={audioState?.loading}
-                    title="Re-generate audio"
-                    className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-amber-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-0.5 rounded border border-slate-700/50 hover:border-amber-700/50"
-                  >
-                    <RefreshCw className="w-2.5 h-2.5" /> New audio
-                  </button>
-                )}
-              </div>
-
-              {aiAnalysis.text && (
-                <button
-                  onClick={handleAIAnalysis}
-                  className="ml-auto flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-300 transition-colors"
-                >
-                  <RefreshCw className="w-2.5 h-2.5" /> Regenerate text
-                </button>
-              )}
-            </div>
-
-            {/* Loading */}
-            {aiAnalysis.loading && (
-              <div className="flex items-center gap-2 px-5 py-6 text-slate-500 text-xs">
-                <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
-                <span>Analyzing…</span>
-              </div>
-            )}
-
-            {/* Error */}
-            {aiAnalysis.error && (
-              <div className="flex items-start gap-2 px-5 py-4 text-red-400 text-xs">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{aiAnalysis.error}</span>
-              </div>
-            )}
-
-            {/* Result — only shown once audio has started (or failed to generate) */}
-            {aiAnalysis.text && (audioState?.playing || audioState?.url || audioState?.error) && (
-              <div className="px-5 py-4 text-[12px] text-slate-300 leading-relaxed space-y-3">
-                {aiAnalysis.text.split(/\n\n+/).map((para, i) => (
-                  <p key={i}>{para}</p>
-                ))}
-              </div>
-            )}
-
-            {/* Waiting for audio — show a holding message */}
-            {aiAnalysis.text && audioState?.loading && (
-              <div className="flex items-center gap-2 px-5 py-6 text-slate-600 text-xs italic">
-                <Volume2 className="w-3.5 h-3.5 text-amber-500/60" />
-                <span>Generating audio — analysis will appear when playback begins…</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── CLOSED TRADE: Plain-English narrative ── */}
-        {!order.is_open && rr && (
-          <TradeNarrative
-            order={order}
-            rr={rr}
-            slippage={slippage}
-            effectiveRR={effectiveRR}
-          />
-        )}
 
         {/* ── OPEN TRADE: Level strip ── */}
         {order.is_open && rr && (
@@ -2180,18 +1518,22 @@ Trade closed: ${fmtTs(order.synced_at)}
             <span className="text-slate-500">Stop  <span className="font-mono font-bold text-red-400">${rr.stop.toFixed(2)}</span></span>
             <span className="text-slate-500">Target <span className="font-mono font-bold text-emerald-400">${rr.target.toFixed(2)}</span></span>
             <span className="text-slate-500">
-              R/R <span className="font-mono font-bold text-white">{effectiveRR ?? "—"}</span>
-              {rr.rrRatio != null && effectiveRR != null && Math.abs(Number(effectiveRR) - Number(rr.rrRatio)) > 0.05 && (
-                <span className="text-slate-600 ml-1">(intended {Number(rr.rrRatio).toFixed(1)})</span>
+              R/R{" "}
+              <span className="font-mono font-bold text-white">{rrAtFill != null ? `${rrAtFill}R` : "—"}</span>
+              {rrAtFill != null && rr.fillPrice != null && Math.abs(rr.fillPrice - rr.entry) > 0.005 && (
+                <span className="text-[10px] text-slate-500 ml-1">at fill</span>
+              )}
+              {plannedRR != null && rrAtFill != null && Math.abs(plannedRR - rrAtFill) > 0.05 && (
+                <span className="text-slate-600 ml-1">· {plannedRR}R planned</span>
               )}
             </span>
             <span className="text-slate-500">Qty <span className="font-mono text-slate-300">{rr.qty}</span></span>
             {rr.threshold != null && (
               <span className="text-slate-500">Ref <span className="font-mono text-fuchsia-400">${Number(rr.threshold).toFixed(2)}</span></span>
             )}
-            {order.entry_time != null && (
+            {(rr.entryTime ?? order.entry_time) != null && (
               <span className="ml-auto text-slate-500">
-                Start <span className="font-mono text-slate-300">{etTime.dateFormat("%b %e %H:%M ET", order.entry_time)}</span>
+                Start <span className="font-mono text-slate-300">{etTime.dateFormat("%b %e %H:%M ET", rr.entryTime ?? order.entry_time)}</span>
               </span>
             )}
           </div>

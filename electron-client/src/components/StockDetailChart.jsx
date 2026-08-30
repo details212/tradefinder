@@ -13,6 +13,8 @@ import { stockApi, alpacaApi, preferencesApi } from "../api/client";
 import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
 import { Loader2, AlertCircle, Target, X } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
+import { deriveRiskQty, qtyFromInput, qtyNumber } from "../utils/qtyInput";
+import OpenOrderMenu from "./OpenOrderMenu";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
 
@@ -34,6 +36,10 @@ const TIMEFRAMES = [
   { label: "1D",  multiplier: 1,  timespan: "day",    days: 365,  limit: 500  },
   { label: "1W",  multiplier: 1,  timespan: "week",   days: 1460, limit: 300  },
 ];
+
+function defaultTimeframe() {
+  return TIMEFRAMES[2]; // 15m — Alpaca crypto feed is intraday
+}
 
 // ── Build Highcharts options ──────────────────────────────────────────────────
 function buildOptions(ticker, ohlcv, barTimeMs, threshold, barMs = 5 * 60 * 1000) {
@@ -231,16 +237,7 @@ function calcATR(bars, idx, period = 14) {
 
 // ── Risk qty helper ───────────────────────────────────────────────────────────
 function deriveQty(entry, riskPrefs, portfolioValue) {
-  if (!riskPrefs || entry <= 0) return null;
-  let riskDollars = 0;
-  if (riskPrefs.risk_mode === "dollar") {
-    riskDollars = parseFloat(riskPrefs.risk_value) || 0;
-  } else if (riskPrefs.risk_mode === "percent") {
-    const pv = parseFloat(portfolioValue) || 0;
-    riskDollars = ((parseFloat(riskPrefs.risk_value) || 0) / 100) * pv;
-  }
-  if (riskDollars <= 0) return null;
-  return Math.max(1, Math.floor(riskDollars / entry));
+  return deriveRiskQty(entry, riskPrefs, portfolioValue);
 }
 
 // Expand the price-pane Y-axis so the full R/R drawing is visible.
@@ -613,7 +610,7 @@ function drawVolumeProfile(chart, bars) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function StockDetailChart({ ticker, barTime = null, threshold = null, bias = null }) {
-  const [timeframe, setTimeframe] = useState(TIMEFRAMES[2]); // default 15m
+  const [timeframe, setTimeframe] = useState(() => defaultTimeframe());
   const [bars,    setBars]    = useState([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
@@ -1027,6 +1024,11 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
           <span className="text-sm">{error}</span>
         </div>
       )}
+      {!loading && !error && chartHeight != null && bars.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-slate-400 z-10 bg-slate-800/80">
+          <span className="text-sm">No bars returned for {ticker}</span>
+        </div>
+      )}
 
       {ready && (
         <>
@@ -1150,12 +1152,10 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
 
             {rr && (
               <div className="ml-auto flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => { setOrderType("limit"); setOrderResult(null); }}
-                  className="px-3 py-1.5 rounded text-xs font-semibold bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 transition shadow-sm animate-pulse"
-                >
-                  Open Limit Order
-                </button>
+                <OpenOrderMenu
+                  ticker={ticker}
+                  onSelect={(type) => { setOrderType(type); setOrderResult(null); }}
+                />
               </div>
             )}
           </div>
@@ -1300,12 +1300,14 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                   )}
                 </span>
                 <input
-                  type="number" step="1" min="1" value={rr.qty}
+                  type="text" inputMode="decimal" value={rr.qty}
                   onChange={e => {
+                    const next = qtyFromInput(e.target.value);
+                    if (next === null) return;
                     setQtyDerived(false);
-                    setRr(r => ({ ...r, qty: Math.max(1, parseInt(e.target.value) || r.qty) }));
+                    setRr(r => ({ ...r, qty: next }));
                   }}
-                  className={`${inputCls} w-16 border ${qtyDerived ? "border-brand-700/60 focus:ring-brand-500/40" : "border-slate-700 focus:ring-slate-500/40"}`}
+                  className={`${inputCls} w-24 border ${qtyDerived ? "border-brand-700/60 focus:ring-brand-500/40" : "border-slate-700 focus:ring-slate-500/40"}`}
                 />
               </label>
 
@@ -1409,9 +1411,10 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                     isMarket ? "bg-blue-900/40" : "bg-yellow-900/20"
                   }`}>
                     <div>
-                      <p className="text-white font-bold text-sm">{isMarket ? "Market Order" : "Limit Order"}</p>
+                      <p className="text-white font-bold text-sm">{isMarket ? "Market Order" : "Bracket Limit"}</p>
                       <p className="text-slate-400 text-[11px] mt-0.5">
                         {ticker} &nbsp;·&nbsp; <span className={dirColor}>{dirLabel}</span>
+                        {isMarket ? " · market fill, then stop/target" : ""}
                       </p>
                     </div>
                     <button onClick={() => setOrderType(null)} className="text-slate-500 hover:text-slate-300 transition">
@@ -1510,19 +1513,26 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                     </button>
                     {!orderResult?.ok && (
                       <button
-                        disabled={orderSubmitting || hasLevelError}
+                        disabled={orderSubmitting || (!isMarket && hasLevelError)}
                         onClick={async () => {
                           setOrderResult(null);
-                          if (isLong && rr.stop >= entryPrice) {
-                            setOrderResult({ ok: false, message: "Stop loss must be below the entry price for a Long trade." });
-                            return;
+                          if (!isMarket) {
+                            if (isLong && rr.stop >= entryPrice) {
+                              setOrderResult({ ok: false, message: "Stop loss must be below the entry price for a Long trade." });
+                              return;
+                            }
+                            if (!isLong && rr.stop <= entryPrice) {
+                              setOrderResult({ ok: false, message: "Stop loss must be above the entry price for a Short trade." });
+                              return;
+                            }
+                            if (targetBadSide) {
+                              setOrderResult({ ok: false, message: `Take profit must be ${isLong ? "above" : "below"} the entry price for a ${isLong ? "Long" : "Short"} trade.` });
+                              return;
+                            }
                           }
-                          if (!isLong && rr.stop <= entryPrice) {
-                            setOrderResult({ ok: false, message: "Stop loss must be above the entry price for a Short trade." });
-                            return;
-                          }
-                          if (targetBadSide) {
-                            setOrderResult({ ok: false, message: `Take profit must be ${isLong ? "above" : "below"} the entry price for a ${isLong ? "Long" : "Short"} trade.` });
+                          const qty = qtyNumber(rr.qty);
+                          if (!qty) {
+                            setOrderResult({ ok: false, message: "Quantity must be greater than zero." });
                             return;
                           }
                           setOrderSubmitting(true);
@@ -1533,16 +1543,17 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                             const res = await alpacaApi.placeOrder({
                               ticker,
                               direction,
-                              order_type:         orderType,
+                              order_type:         isMarket ? "market" : "limit",
+                              order_class:        isMarket ? "simple" : "bracket",
                               entry_tif:          isMarket ? "day" : "gtc",
-                              qty:                rr.qty,
+                              qty,
                               entry_price:        entryPrice,
                               stop_price:         rr.stop,
                               target_price:       rr.target,
                               rr_ratio:           rr.rrRatio ?? null,
                               rr_ratio_effective: risk > 0 ? parseFloat((reward / risk).toFixed(4)) : null,
-                              risk_amt:           parseFloat((risk   * rr.qty).toFixed(4)),
-                              reward_amt:         parseFloat((reward * rr.qty).toFixed(4)),
+                              risk_amt:           parseFloat((risk   * qty).toFixed(4)),
+                              reward_amt:         parseFloat((reward * qty).toFixed(4)),
                               bias:               bias ?? null,
                               bar_time:           barTime ?? null,
                               threshold:          threshold != null ? parseFloat(threshold) : null,

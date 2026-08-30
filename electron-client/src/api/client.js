@@ -126,7 +126,7 @@ export const stockApi = {
 
   // History — long timeout: backend waits up to 30 s per Polygon page + retry
   history: (ticker, params = {}) =>
-    api.get(`/api/stocks/${ticker}/history`, { params, timeout: 75000 }),
+    api.get(`/api/stocks/${encodeURIComponent(ticker)}/history`, { params, timeout: 75000 }),
 
   // Technicals: indicator = sma | ema | rsi | macd
   indicator: (ticker, indicator, params = {}) =>
@@ -199,6 +199,7 @@ export const alpacaApi = {
   patchLevels:     (dbOrderId, data) => api.patch(`/api/broker/alpaca/order/${dbOrderId}/levels`, data),
   getOrderDetail:  (alpacaId)    => api.get(`/api/broker/alpaca/order/${alpacaId}`),
   getOrders:       (ticker = "") => api.get("/api/broker/alpaca/orders", { params: ticker ? { ticker } : {} }),
+  getClosedOrders: ()               => api.get("/api/broker/alpaca/orders", { params: { closed: "1" } }),
   syncOrders:           ()               => api.post("/api/broker/alpaca/orders/sync", null, { timeout: 120_000 }),
   openTickers:          ()               => api.get("/api/broker/alpaca/orders/open-tickers"),
 };

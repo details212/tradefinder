@@ -1,6 +1,6 @@
 /** Shared helpers for strategy / manual trade performance breakdowns. */
 
-import { entrySlippageDollar, entrySlippagePerShare } from "./tradeExecution";
+import { entrySlippageDollar, entrySlippagePerShare, executionFromTrade } from "./tradeExecution";
 
 export const fmt$ = (v, digits = 2) => {
   if (v == null || isNaN(v)) return "—";
@@ -911,11 +911,13 @@ export function computeConsistencyMetrics({ closedTrades }) {
 }
 
 function slipFromTrade(o) {
+  const exec = executionFromTrade(o);
   return {
-    limitPrice: o.entry_price != null ? Number(o.entry_price) : null,
-    fillPrice: o.filled_avg_price != null ? Number(o.filled_avg_price) : null,
+    limitPrice: exec.limitPrice,
+    fillPrice: exec.fillPrice,
     direction: o.direction,
     qty: o.qty ?? 1,
+    isMarket: exec.isMarket,
   };
 }
 

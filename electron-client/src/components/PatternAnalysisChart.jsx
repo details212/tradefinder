@@ -25,6 +25,8 @@ import {
   Loader2, AlertCircle, Target, X, RefreshCw,
   ChevronLeft, ChevronRight, Square,
 } from "lucide-react";
+import OpenOrderMenu from "./OpenOrderMenu";
+import { deriveRiskQty, qtyFromInput, qtyNumber } from "../utils/qtyInput";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
 
@@ -692,12 +694,7 @@ function calcATRAtIdx(bars, idx) {
 }
 
 function deriveQty(entry, prefs, portVal) {
-  if (!prefs || entry <= 0) return null;
-  let dollars = 0;
-  if (prefs.risk_mode === "dollar")   dollars = parseFloat(prefs.risk_value) || 0;
-  if (prefs.risk_mode === "percent")  dollars = ((parseFloat(prefs.risk_value)||0)/100) * (parseFloat(portVal)||0);
-  if (dollars <= 0) return null;
-  return Math.max(1, Math.floor(dollars / entry));
+  return deriveRiskQty(entry, prefs, portVal);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1460,10 +1457,12 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                 <span className="text-[10px] text-yellow-400/70 font-medium">{boxes.length} box{boxes.length > 1 ? "es" : ""}</span>
               )}
               {rr && (
-                <button onClick={() => { setOrderType("limit"); setOrderResult(null); }}
-                  className="ml-auto px-3 py-1.5 rounded text-xs font-semibold bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 transition animate-pulse">
-                  Open Limit Order
-                </button>
+                <div className="ml-auto">
+                  <OpenOrderMenu
+                    ticker={ticker}
+                    onSelect={(type) => { setOrderType(type); setOrderResult(null); }}
+                  />
+                </div>
               )}
             </div>
 
@@ -1508,9 +1507,14 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                   <span className="text-slate-500 flex items-center gap-1">Qty
                     {qtyDerived && <span className="text-[9px] px-1 py-0.5 rounded bg-brand-900/60 text-brand-400 border border-brand-700/50 leading-none">auto</span>}
                   </span>
-                  <input type="number" step="1" min="1" value={rr.qty}
-                    onChange={e => { setQtyDerived(false); setRr(r => ({...r,qty:Math.max(1,parseInt(e.target.value)||r.qty)})); }}
-                    className={`${inputCls} w-16 border ${qtyDerived?"border-brand-700/60":"border-slate-700"}`} />
+                  <input type="text" inputMode="decimal" value={rr.qty}
+                    onChange={e => {
+                      const next = qtyFromInput(e.target.value);
+                      if (next === null) return;
+                      setQtyDerived(false);
+                      setRr(r => ({ ...r, qty: next }));
+                    }}
+                    className={`${inputCls} w-24 border ${qtyDerived?"border-brand-700/60":"border-slate-700"}`} />
                 </label>
                 {rrMetrics && (
                   <div className="flex items-center gap-4 pl-4 border-l border-slate-700">
@@ -1720,15 +1724,18 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
 
       {/* ── Order confirmation modal ── */}
       {orderType && rr && (() => {
+        const isMarket = orderType === "market";
         const liveAsk  = liveQuote?.ask  > 0 ? liveQuote.ask  : null;
         const liveLast = liveQuote?.last > 0 ? liveQuote.last : null;
-        const smartEntry = parseFloat(((liveAsk ?? liveLast ?? rr.entry) + 0.01).toFixed(2));
+        const smartEntry = isMarket
+          ? (liveLast ?? liveAsk ?? rr.entry)
+          : parseFloat(((liveAsk ?? liveLast ?? rr.entry) + 0.01).toFixed(2));
         const entrySource = liveAsk != null ? "ask + $0.01" : liveLast != null ? "last trade" : "chart level";
         const safeTarget = parseFloat(Math.max(rr.target, smartEntry + 0.01).toFixed(2));
         const risk   = Math.abs(smartEntry - rr.stop);
         const reward = Math.abs(safeTarget  - smartEntry);
         const rrRatio = risk > 0 ? (reward / risk).toFixed(2) : "∞";
-        const hasErr  = rr.stop >= smartEntry;
+        const hasErr  = !isMarket && rr.stop >= smartEntry;
         const Row = ({ label, value, valueClass = "text-slate-200" }) => (
           <div className="flex justify-between items-center py-1.5 border-b border-slate-700/50 last:border-0">
             <span className="text-slate-500 text-xs">{label}</span>
@@ -1738,19 +1745,23 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
         return (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-[2px]">
             <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-72 overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 bg-yellow-900/20">
+              <div className={`flex items-center justify-between px-4 py-3 border-b border-slate-700 ${isMarket ? "bg-blue-900/40" : "bg-yellow-900/20"}`}>
                 <div>
-                  <p className="text-white font-bold text-sm">Limit Order</p>
-                  <p className="text-slate-400 text-[11px] mt-0.5">{ticker} · <span className="text-emerald-400">▲ Long</span></p>
+                  <p className="text-white font-bold text-sm">{isMarket ? "Market Order" : "Bracket Limit"}</p>
+                  <p className="text-slate-400 text-[11px] mt-0.5">{ticker} · <span className="text-emerald-400">▲ Long</span>{isMarket ? " · market fill, then stop/target" : ""}</p>
                 </div>
                 <button onClick={() => setOrderType(null)} className="text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
               </div>
               <div className="px-4 py-2">
                 <Row label="Quantity" value={`${rr.qty} shares`} />
+                {isMarket ? (
+                  <Row label="Entry" value="at market" valueClass="text-blue-300" />
+                ) : (
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-700/50">
                   <span className="text-slate-500 text-xs">Entry</span>
                   <div className="flex flex-col items-end"><span className="font-mono text-xs font-semibold">${smartEntry.toFixed(2)}</span><span className="text-[10px] text-slate-600">{entrySource}</span></div>
                 </div>
+                )}
                 <Row label="Stop loss"   value={`$${rr.stop.toFixed(2)}`}         valueClass="text-red-400" />
                 <Row label="Take profit" value={`$${safeTarget.toFixed(2)}`}         valueClass="text-emerald-400" />
               </div>
@@ -1780,17 +1791,25 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                 {!orderResult?.ok && (
                   <button disabled={orderSubmitting || hasErr}
                     onClick={async () => {
+                      const qty = qtyNumber(rr.qty);
+                      if (!qty) {
+                        setOrderResult({ ok: false, message: "Quantity must be greater than zero." });
+                        return;
+                      }
                       setOrderResult(null); setOrderSubmitting(true);
                       await refetchQuote();
                       const risk2   = Math.abs(smartEntry - rr.stop);
                       const reward2 = Math.abs(safeTarget  - smartEntry);
                       try {
                         const res = await alpacaApi.placeOrder({
-                          ticker, direction: "long", order_type: "limit", entry_tif: "gtc",
-                          qty: rr.qty, entry_price: smartEntry, stop_price: rr.stop,
+                          ticker, direction: "long",
+                          order_type: isMarket ? "market" : "limit",
+                          order_class: isMarket ? "simple" : "bracket",
+                          entry_tif: isMarket ? "day" : "gtc",
+                          qty, entry_price: smartEntry, stop_price: rr.stop,
                           target_price: safeTarget, rr_ratio: rr.rrRatio ?? null,
                           rr_ratio_effective: risk2>0?parseFloat((reward2/risk2).toFixed(4)):null,
-                          risk_amt: parseFloat((risk2*rr.qty).toFixed(4)), reward_amt: parseFloat((reward2*rr.qty).toFixed(4)),
+                          risk_amt: parseFloat((risk2*qty).toFixed(4)), reward_amt: parseFloat((reward2*qty).toFixed(4)),
                           bias: null, bar_time: null, threshold: null, entry_time: rr.entryTime ?? null,
                         });
                         window.dispatchEvent(new CustomEvent("tf:trade-opened"));
@@ -1799,8 +1818,12 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                         setOrderResult({ ok: false, message: err.response?.data?.error || err.message || "Failed to place order." });
                       } finally { setOrderSubmitting(false); }
                     }}
-                    className="flex-1 py-2 rounded-lg text-xs font-bold text-yellow-200 bg-yellow-500/30 hover:bg-yellow-500/50 border border-yellow-500/60 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    {orderSubmitting ? "Placing…" : "Confirm Limit"}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold text-white border transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                      isMarket
+                        ? "bg-blue-600 hover:bg-blue-500 border-blue-500"
+                        : "text-yellow-200 bg-yellow-500/30 hover:bg-yellow-500/50 border-yellow-500/60"
+                    }`}>
+                    {orderSubmitting ? "Placing…" : isMarket ? "Confirm Market" : "Confirm Limit"}
                   </button>
                 )}
               </div>

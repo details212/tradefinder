@@ -357,17 +357,17 @@ export default function StockDetail({ ticker, onClose, watchlist, defaultInterva
     setError("");
     setActiveTab("Overview");
 
+    const crypto = /^X:|[A-Z]{2,}(USD|USDT|USDC|EUR|GBP)$/i.test(String(ticker || "").replace(/[-/]/g, ""));
     Promise.all([
-      fetchAlpacaQuote(ticker),
-      stockApi.details(ticker),
-      stockApi.news(ticker),
+      fetchAlpacaQuote(ticker).catch(() => null),
+      stockApi.details(ticker).then((r) => r.data).catch(() => null),
+      crypto ? Promise.resolve([]) : stockApi.news(ticker).then((r) => r.data.articles || []).catch(() => []),
     ])
-      .then(([q, dRes, nRes]) => {
+      .then(([q, detailsData, articles]) => {
         setQuote(q);
-        setDetails(dRes.data);
-        setNews(nRes.data.articles || []);
+        setDetails(detailsData);
+        setNews(articles);
       })
-      .catch(() => setError("Failed to load stock data"))
       .finally(() => setLoading(false));
   }, [ticker]);
 

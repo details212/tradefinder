@@ -6,6 +6,10 @@ const { exec } = require("child_process");
 
 const isDev = !app.isPackaged;
 
+if (isDev) {
+  app.commandLine.appendSwitch("disable-http-cache");
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -24,7 +28,8 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL("http://localhost:5173");
+    const url = `http://localhost:5173/?v=${Date.now()}`;
+    win.webContents.session.clearCache().finally(() => win.loadURL(url));
   } else {
     win.loadFile(path.join(__dirname, "../dist/index.html"));
   }

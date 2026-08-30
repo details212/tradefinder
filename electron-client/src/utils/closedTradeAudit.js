@@ -1,8 +1,11 @@
 /**
  * Closed-trade execution audit.
- * fillVsLimit = fill − limit (same sign as My Trades).
- * entrySlip   = direction-adjusted, positive = adverse (used for flags).
+ *
+ * Uses order.filled_avg_price and order.exit_price (Alpaca snapshots on sync)
+ * vs entry_price (intended/limit at placement) and TP/SL levels.
  */
+
+import { exitTypeOf, roundTripSlippageFromOrder } from "./tradeExecution";
 
 export const FLAG_DEFS = {
   missing_fill:         { severity: "error", label: "No fill",           group: "data",  detail: "Closed with no filled_avg_price." },
@@ -14,32 +17,40 @@ export const FLAG_DEFS = {
   zero_qty:             { severity: "error", label: "Qty 0",             group: "data",  detail: "Quantity is missing or zero." },
   missing_levels:       { severity: "warn",  label: "Missing levels",    group: "data",  detail: "Stop or target is missing." },
   implausible_exit:     { severity: "error", label: "Implausible exit",  group: "data",  detail: "Inferred exit is ≤ 0 or more than 50% away from the fill." },
-  entry_slip_large:     { severity: "warn",  label: "Entry slip",        group: "entry", detail: "Fill vs limit is large relative to planned risk." },
-  entry_slip_severe:    { severity: "error", label: "Severe entry slip", group: "entry", detail: "Fill vs limit is extreme — check whether the limit was honored." },
+  entry_slip_large:     { severity: "warn",  label: "Entry slip",        group: "entry", detail: "Adverse fill vs intended/limit is large relative to planned risk." },
+  entry_slip_severe:    { severity: "error", label: "Severe entry slip", group: "entry", detail: "Adverse fill vs intended/limit ate a large share of planned risk." },
   fill_worse_than_limit:{ severity: "error", label: "Fill past limit",   group: "entry", detail: "Limit order filled worse than the limit — should not happen on a true limit." },
-  exit_slip_large:      { severity: "warn",  label: "Exit slip",         group: "exit",  detail: "Inferred exit is far from the TP/SL implied by exit_method." },
-  exit_slip_severe:     { severity: "error", label: "Severe exit slip",  group: "exit",  detail: "Inferred exit is far from the recorded exit level." },
-  exit_method_mismatch: { severity: "error", label: "Exit vs method",    group: "exit",  detail: "Inferred exit is closer to the opposite level than the recorded method." },
+  exit_slip_large:      { severity: "warn",  label: "Exit slip",         group: "exit",  detail: "Exit fill is worse than the TP/SL for this exit method." },
+  exit_slip_severe:     { severity: "error", label: "Severe exit slip",  group: "exit",  detail: "Exit fill is far worse than the recorded TP/SL." },
+  exit_method_mismatch: { severity: "error", label: "Exit vs method",    group: "exit",  detail: "Exit fill is closer to the opposite level than the recorded method." },
+  bad_entry_reference:  { severity: "warn",  label: "Bad entry ref",     group: "data",  detail: "Stored intended entry is far from the Alpaca fill — entry slip skipped." },
   stale_pl:             { severity: "error", label: "Stale P/L?",        group: "exit",  detail: "Stored P/L looks like a last open mark, not a close at the recorded TP/SL." },
 };
 
 const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
 
-const ENTRY_SLIP_WARN_PS  = 0.05;
-const ENTRY_SLIP_ERR_PS   = 0.15;
-const ENTRY_SLIP_WARN_R   = 0.08;
-const ENTRY_SLIP_ERR_R    = 0.20;
-const EXIT_SLIP_WARN_PS   = 0.10;
-const EXIT_SLIP_ERR_PS    = 0.25;
-const EXIT_SLIP_WARN_R    = 0.12;
-const EXIT_SLIP_ERR_R     = 0.30;
+// Scale-free: fraction of planned risk, or fraction of price when risk is missing.
+const ENTRY_SLIP_WARN_R   = 0.15;
+const ENTRY_SLIP_ERR_R    = 0.35;
+const ENTRY_SLIP_WARN_PCT = 0.0010;
+const ENTRY_SLIP_ERR_PCT  = 0.0035;
+const EXIT_SLIP_WARN_R    = 0.15;
+const EXIT_SLIP_ERR_R     = 0.35;
+const EXIT_SLIP_WARN_PCT  = 0.0010;
+const EXIT_SLIP_ERR_PCT   = 0.0035;
 const STALE_PL_RATIO      = 0.50;
-const LIMIT_VIOLATION_PS  = 0.01;
 
 export function isDeadOrder(o) {
   if (!DEAD_STATUSES.has(o.status)) return false;
   if (o.exit_method || o.closed_at || o.filled_avg_price != null) return false;
   return true;
+}
+
+/** Realized close — do not rely on is_open alone (crypto sync can leave it true). */
+export function isRealizedClose(o) {
+  if (!o) return false;
+  if (o.exit_method || o.closed_at || o.exit_price != null) return true;
+  return o.is_open === false || o.is_open === 0;
 }
 
 export function parseTs(v) {
@@ -49,13 +60,6 @@ export function parseTs(v) {
   const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(s);
   const d = new Date(hasTz ? s : `${s}Z`);
   return Number.isNaN(d.getTime()) ? null : d.getTime();
-}
-
-export function exitTypeOf(method) {
-  if (method === "bracket_tp" || method === "auto_close_tp") return "target";
-  if (method === "bracket_sl" || method === "auto_close_sl") return "stop";
-  if (method === "manual") return "manual";
-  return null;
 }
 
 export const EXIT_LABELS = {
@@ -84,11 +88,25 @@ function severityRank(flags) {
   return 0;
 }
 
+/** Flag only adverse (positive) slip. Prefer planned-risk; % of price is fallback. */
+function flagAdverseSlip(flags, slipPerShare, { riskPerShare, price, warnR, errR, warnPct, errPct, largeKey, severeKey }) {
+  if (slipPerShare == null || !(slipPerShare > 0)) return;
+  if (riskPerShare > 0) {
+    const vsRisk = slipPerShare / riskPerShare;
+    if (vsRisk >= errR) addFlag(flags, severeKey);
+    else if (vsRisk >= warnR) addFlag(flags, largeKey);
+    return;
+  }
+  const vsPx = price > 0 ? slipPerShare / price : 0;
+  if (vsPx >= errPct) addFlag(flags, severeKey);
+  else if (vsPx >= warnPct) addFlag(flags, largeKey);
+}
+
 /**
  * Analyze one closed order. Open / never-filled dead orders return null.
  */
 export function analyzeClosedTrade(o) {
-  if (!o || o.is_open || isDeadOrder(o)) return null;
+  if (!o || isDeadOrder(o)) return null;
 
   const flags = [];
   const isLong = o.direction === "long";
@@ -128,58 +146,50 @@ export function analyzeClosedTrade(o) {
     if (exitPrice <= 0 || far > 0.50) addFlag(flags, "implausible_exit");
   }
 
-  const fillVsLimitPerShare = fill != null && limit != null ? fill - limit : null;
+  const slip = roundTripSlippageFromOrder(o);
+  const {
+    isMarket,
+    intendedEntry,
+    entryFill,
+    exitFill,
+    refExit,
+    exitType,
+    entrySlipPerShare,
+    entrySlipDollar,
+    exitSlipPerShare,
+    exitSlipDollar,
+    roundTripDollar,
+    entryRefBad,
+    exitMethodMismatch,
+    riskPerShare,
+    fillVsLimitPerShare,
+  } = slip;
+
+  if (entryRefBad) addFlag(flags, "bad_entry_reference");
+
   const fillVsLimitDollar = fillVsLimitPerShare != null && qty ? fillVsLimitPerShare * qty : null;
-  const entrySlipPerShare = fillVsLimitPerShare != null ? dir * fillVsLimitPerShare : null;
-  const entrySlipDollar = entrySlipPerShare != null && qty ? entrySlipPerShare * qty : null;
+  const px = Math.abs(entryFill ?? intendedEntry ?? 0);
 
-  const riskPerShare = (() => {
-    if (riskAmt != null && qty) return Math.abs(riskAmt) / qty;
-    const ref = fill ?? limit;
-    if (ref != null && stop != null) return Math.abs(ref - stop);
-    return null;
-  })();
+  flagAdverseSlip(flags, entrySlipPerShare, {
+    riskPerShare, price: px,
+    warnR: ENTRY_SLIP_WARN_R, errR: ENTRY_SLIP_ERR_R,
+    warnPct: ENTRY_SLIP_WARN_PCT, errPct: ENTRY_SLIP_ERR_PCT,
+    largeKey: "entry_slip_large", severeKey: "entry_slip_severe",
+  });
 
-  if (entrySlipPerShare != null) {
-    const vsRisk = riskPerShare > 0 ? Math.abs(entrySlipPerShare) / riskPerShare : 0;
-    if (Math.abs(entrySlipPerShare) >= ENTRY_SLIP_ERR_PS || vsRisk >= ENTRY_SLIP_ERR_R) {
-      addFlag(flags, "entry_slip_severe");
-    } else if (Math.abs(entrySlipPerShare) >= ENTRY_SLIP_WARN_PS || vsRisk >= ENTRY_SLIP_WARN_R) {
-      addFlag(flags, "entry_slip_large");
-    }
-    if (
-      (o.order_type || "").toLowerCase() === "limit"
-      && entrySlipPerShare > LIMIT_VIOLATION_PS
-    ) {
-      addFlag(flags, "fill_worse_than_limit");
-    }
-  }
+  if (exitMethodMismatch) addFlag(flags, "exit_method_mismatch");
 
-  const exitType = exitTypeOf(o.exit_method);
-  const refExit = exitType === "target" ? target : exitType === "stop" ? stop : null;
-  const exitSlipPerShare = exitPrice != null && refExit != null
-    ? dir * (refExit - exitPrice)
-    : null;
-  const exitSlipDollar = exitSlipPerShare != null && qty ? exitSlipPerShare * qty : null;
-
-  if (exitPrice != null && target != null && stop != null) {
-    const dTarget = Math.abs(exitPrice - target);
-    const dStop = Math.abs(exitPrice - stop);
-    if (exitType === "target" && dStop + 0.01 < dTarget) addFlag(flags, "exit_method_mismatch");
-    if (exitType === "stop" && dTarget + 0.01 < dStop) addFlag(flags, "exit_method_mismatch");
-  }
-
-  const expectedPl = fill != null && refExit != null && qty
-    ? dir * (refExit - fill) * qty
+  const expectedPl = entryFill != null && refExit != null && qty
+    ? dir * (refExit - entryFill) * qty
     : (exitType === "target" ? rewardAmt : exitType === "stop" && riskAmt != null ? -Math.abs(riskAmt) : null);
 
-  if (exitSlipPerShare != null) {
-    const vsRisk = riskPerShare > 0 ? Math.abs(exitSlipPerShare) / riskPerShare : 0;
-    if (Math.abs(exitSlipPerShare) >= EXIT_SLIP_ERR_PS || vsRisk >= EXIT_SLIP_ERR_R) {
-      addFlag(flags, "exit_slip_severe");
-    } else if (Math.abs(exitSlipPerShare) >= EXIT_SLIP_WARN_PS || vsRisk >= EXIT_SLIP_WARN_R) {
-      addFlag(flags, "exit_slip_large");
-    }
+  if (!exitMethodMismatch) {
+    flagAdverseSlip(flags, exitSlipPerShare, {
+      riskPerShare, price: px,
+      warnR: EXIT_SLIP_WARN_R, errR: EXIT_SLIP_ERR_R,
+      warnPct: EXIT_SLIP_WARN_PCT, errPct: EXIT_SLIP_ERR_PCT,
+      largeKey: "exit_slip_large", severeKey: "exit_slip_severe",
+    });
   }
 
   if (
@@ -197,17 +207,20 @@ export function analyzeClosedTrade(o) {
     }
   }
 
+  const shownExitSlipPs = exitMethodMismatch ? null : exitSlipPerShare;
+  const shownExitSlipDollar = exitMethodMismatch ? null : exitSlipDollar;
+  const shownRoundTrip =
+    entrySlipDollar != null || shownExitSlipDollar != null
+      ? (entrySlipDollar ?? 0) + (shownExitSlipDollar ?? 0)
+      : null;
+
   const plannedRisk = riskAmt != null
     ? Math.abs(riskAmt)
     : (riskPerShare != null && qty ? riskPerShare * qty : null);
   const rResult = pl != null && plannedRisk > 0 ? pl / plannedRisk : null;
-  const roundTripDollar =
-    entrySlipDollar != null || exitSlipDollar != null
-      ? (entrySlipDollar ?? 0) + (exitSlipDollar ?? 0)
-      : null;
   const slipPctOfRisk =
-    roundTripDollar != null && plannedRisk > 0
-      ? (roundTripDollar / plannedRisk) * 100
+    shownRoundTrip != null && plannedRisk > 0
+      ? (shownRoundTrip / plannedRisk) * 100
       : null;
 
   const closedAtMs = parseTs(o.closed_at) ?? parseTs(o.synced_at) ?? parseTs(o.created_at);
@@ -215,13 +228,14 @@ export function analyzeClosedTrade(o) {
   return {
     order: o,
     isLong,
+    isMarket,
     qty,
-    limit,
-    fill,
+    limit: intendedEntry,
+    fill: entryFill,
     stop,
     target,
     pl,
-    exitPrice,
+    exitPrice: exitFill,
     exitType,
     refExit,
     expectedPl,
@@ -229,9 +243,9 @@ export function analyzeClosedTrade(o) {
     fillVsLimitDollar,
     entrySlipPerShare,
     entrySlipDollar,
-    exitSlipPerShare,
-    exitSlipDollar,
-    roundTripDollar,
+    exitSlipPerShare: shownExitSlipPs,
+    exitSlipDollar: shownExitSlipDollar,
+    roundTripDollar: shownRoundTrip,
     slipPctOfRisk,
     rResult,
     plannedRisk,

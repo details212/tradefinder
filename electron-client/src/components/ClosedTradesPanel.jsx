@@ -13,12 +13,13 @@ import {
   X,
 } from "lucide-react";
 import { alpacaApi } from "../api/client";
-import { slippageDisplayColor } from "../utils/tradeExecution";
+import { adverseSlipColor, compactTicker } from "../utils/tradeExecution";
 import TradeReviewModal from "./TradeReviewModal";
 import {
   analyzeClosedTrades,
   compareAlpacaDetail,
   EXIT_LABELS,
+  isRealizedClose,
   summarizeAudits,
 } from "../utils/closedTradeAudit";
 
@@ -44,17 +45,9 @@ function signedN(v, digits = 3) {
   return v > 0 ? `+${n}` : n;
 }
 
-/** Color for fill − limit, matching My Trades (short: + is better). */
-function entrySlipCls(fillVsLimit, isLong) {
-  return slippageDisplayColor(fillVsLimit, isLong);
-}
-
-/** Color for adverse slippage (positive = hurt). Used for exits and totals. */
+/** Color for adverse slippage (positive = hurt). */
 function slipCls(v, loose = 0.005) {
-  if (v == null || Number.isNaN(v)) return "text-slate-500";
-  if (v > loose) return "text-red-400";
-  if (v < -loose) return "text-emerald-400";
-  return "text-slate-400";
+  return adverseSlipColor(v, loose);
 }
 
 function plCls(v) {
@@ -213,9 +206,11 @@ function AlpacaVerify({ row }) {
           Stored P/L does not match a close at the filled Alpaca leg. The last open mark was probably kept as the final P/L.
         </p>
       )}
-      {!d.alpacaExit && (
+          {!d.alpacaExit && (
         <p className="text-[10px] text-amber-300/90 mt-1.5">
-          No bracket leg filled — this was a market/manual close. Exit price in the table is inferred from stored P/L only.
+          {row.order.exit_price != null
+            ? "No bracket TP/SL leg on this parent — exit fill is the stored Alpaca close price."
+            : "No bracket leg filled — this was a market/manual close. Exit price is inferred from stored P/L."}
         </p>
       )}
     </div>
@@ -233,12 +228,12 @@ function ExpandedRow({ row, onReview }) {
             value={row.order.paper_mode ? "Paper" : "Live"}
             color={row.order.paper_mode ? "text-blue-400" : "text-slate-200"}
           />
-          <DigestRow label="Limit" value={row.limit != null ? `$${row.limit.toFixed(2)}` : "—"} />
-          <DigestRow label="Fill" value={row.fill != null ? `$${row.fill.toFixed(2)}` : "—"} color={entrySlipCls(row.fillVsLimitPerShare, row.isLong)} />
+          <DigestRow label={row.isMarket ? "Intended" : "Limit"} value={row.limit != null ? `$${row.limit.toFixed(2)}` : "—"} />
+          <DigestRow label="Fill" value={row.fill != null ? `$${row.fill.toFixed(2)}` : "—"} color={slipCls(row.entrySlipPerShare)} />
           <DigestRow label="Stop" value={row.stop != null ? `$${row.stop.toFixed(2)}` : "—"} />
           <DigestRow label="Target" value={row.target != null ? `$${row.target.toFixed(2)}` : "—"} />
           <DigestRow
-            label="Inferred exit"
+            label={row.order.exit_price != null ? "Exit fill" : "Inferred exit"}
             value={row.exitPrice != null ? `$${row.exitPrice.toFixed(2)}` : "—"}
             color={slipCls(row.exitSlipPerShare)}
           />
@@ -249,8 +244,8 @@ function ExpandedRow({ row, onReview }) {
         </div>
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Slippage & P/L</p>
-          <DigestRow label="Entry slip /sh" value={`${signedN(row.fillVsLimitPerShare)}`} color={entrySlipCls(row.fillVsLimitPerShare, row.isLong)} />
-          <DigestRow label="Entry slip $" value={signed$(row.fillVsLimitDollar)} color={entrySlipCls(row.fillVsLimitDollar, row.isLong)} />
+          <DigestRow label="Entry slip /sh" value={signedN(row.entrySlipPerShare)} color={slipCls(row.entrySlipPerShare)} />
+          <DigestRow label="Entry slip $" value={signed$(row.entrySlipDollar)} color={slipCls(row.entrySlipDollar)} />
           <DigestRow
             label="Exit slip /sh"
             value={row.exitSlipPerShare != null ? signedN(row.exitSlipPerShare) : "n/a"}
@@ -307,23 +302,52 @@ export default function ClosedTradesPanel({ onClose }) {
   const [lastAt, setLastAt] = useState(null);
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
-  const [modeFilter, setModeFilter] = useState("all");
-  const [methodFilter, setMethodFilter] = useState("all");
-  const [sort, setSort] = useState({ key: "severity", dir: "desc" });
+  const [sort, setSort] = useState({ key: "date", dir: "desc" });
   const [expandedId, setExpandedId] = useState(null);
   const [reviewOrder, setReviewOrder] = useState(null);
 
   const load = useCallback((useSync = false) => {
     setLoading(true);
-    const req = useSync ? alpacaApi.syncOrders() : alpacaApi.getOrders();
+
+    const pickClosed = (list) => {
+      const rows = Array.isArray(list) ? list : [];
+      // Older backend ignores ?closed=1 and returns open + closed — trim client-side.
+      if (rows.some((o) => o.is_open && !isRealizedClose(o))) {
+        return rows.filter(isRealizedClose);
+      }
+      return rows;
+    };
+
+    const fetchClosed = () =>
+      alpacaApi.getClosedOrders()
+        .then((r) => pickClosed(r.data))
+        .catch((err) => {
+          // Fallback when ?closed=1 is not deployed yet.
+          if (err?.response?.status === 404) {
+            return alpacaApi.getOrders().then((r) => pickClosed(r.data));
+          }
+          throw err;
+        });
+
+    const req = useSync
+      ? alpacaApi.syncOrders().then(() => fetchClosed())
+      : fetchClosed();
+
     req
-      .then((r) => {
-        const list = Array.isArray(r.data) ? r.data : (r.data?.orders ?? []);
+      .then((list) => {
         setOrders(list);
         setLastAt(Date.now());
         setError(null);
       })
-      .catch(() => setError("Could not load closed trades."))
+      .catch((err) => {
+        const status = err?.response?.status;
+        const detail = err?.response?.data?.error || err?.message;
+        setError(
+          status
+            ? `Could not load closed trades (HTTP ${status}${detail ? `: ${detail}` : ""}).`
+            : (detail || "Could not load closed trades.")
+        );
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -331,26 +355,22 @@ export default function ClosedTradesPanel({ onClose }) {
 
   const rows = useMemo(() => analyzeClosedTrades(orders), [orders]);
 
-  const methods = useMemo(() => {
-    const set = new Set(rows.map((r) => r.order.exit_method).filter(Boolean));
-    return [...set].sort();
-  }, [rows]);
-
   const filtered = useMemo(() => {
     const needle = query.trim().toUpperCase();
+    const needleCompact = needle ? compactTicker(needle) : "";
     return rows.filter((r) => {
       if (filter === "flagged" && !r.flags.length) return false;
       if (filter === "entry" && !r.hasEntryIssue) return false;
       if (filter === "exit" && !r.hasExitIssue) return false;
       if (filter === "data" && !r.hasDataIssue) return false;
-      if (modeFilter === "paper" && !r.order.paper_mode) return false;
-      if (modeFilter === "live" && r.order.paper_mode) return false;
-      if (methodFilter === "none" && r.order.exit_method) return false;
-      if (methodFilter !== "all" && methodFilter !== "none" && r.order.exit_method !== methodFilter) return false;
-      if (needle && !String(r.order.ticker || "").toUpperCase().includes(needle)) return false;
+      if (needle) {
+        const sym = String(r.order.ticker || "").toUpperCase();
+        const symCompact = compactTicker(sym);
+        if (!sym.includes(needle) && !symCompact.includes(needleCompact)) return false;
+      }
       return true;
     });
-  }, [rows, filter, query, modeFilter, methodFilter]);
+  }, [rows, filter, query]);
 
   const sorted = useMemo(() => {
     const list = filtered.slice();
@@ -360,7 +380,7 @@ export default function ClosedTradesPanel({ onClose }) {
       switch (key) {
         case "ticker": return r.order.ticker || "";
         case "fill": return r.fill ?? -Infinity;
-        case "entry": return r.fillVsLimitDollar ?? -Infinity;
+        case "entry": return r.entrySlipDollar ?? -Infinity;
         case "exit": return r.exitSlipDollar ?? -Infinity;
         case "pl": return r.pl ?? -Infinity;
         case "date": return r.closedAtMs ?? 0;
@@ -398,7 +418,7 @@ export default function ClosedTradesPanel({ onClose }) {
             Closed Trades
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Fill & close audit · {allStats.count} closed
+            DB closed orders · {allStats.count} trades
             {lastAt ? ` · ${new Date(lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
           </p>
         </div>
@@ -433,9 +453,9 @@ export default function ClosedTradesPanel({ onClose }) {
           <Kpi label="Net P/L" value={signed$(stats.netPl)} color={plCls(stats.netPl)} />
           <Kpi
             label="Entry slip"
-            value={signed$(stats.fillVsLimitDollar)}
+            value={signed$(stats.entrySlipDollar)}
             color={slipCls(stats.entrySlipDollar)}
-            sub={stats.avgFillVsLimitPs != null ? `${signedN(stats.avgFillVsLimitPs)}/sh avg` : undefined}
+            sub={stats.avgEntrySlipPs != null ? `${signedN(stats.avgEntrySlipPs)}/sh avg` : undefined}
           />
           <Kpi
             label="Exit slip"
@@ -484,30 +504,10 @@ export default function ClosedTradesPanel({ onClose }) {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Ticker"
+                placeholder="Filter ticker (optional)"
                 className="w-full bg-slate-800/70 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-brand-600/50"
               />
             </div>
-            <select
-              value={modeFilter}
-              onChange={(e) => setModeFilter(e.target.value)}
-              className="bg-slate-800/70 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300"
-            >
-              <option value="all">Paper + live</option>
-              <option value="paper">Paper</option>
-              <option value="live">Live</option>
-            </select>
-            <select
-              value={methodFilter}
-              onChange={(e) => setMethodFilter(e.target.value)}
-              className="bg-slate-800/70 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300"
-            >
-              <option value="all">Any exit</option>
-              <option value="none">Unknown exit</option>
-              {methods.map((m) => (
-                <option key={m} value={m}>{EXIT_LABELS[m] ?? m}</option>
-              ))}
-            </select>
           </div>
         </div>
 
@@ -561,8 +561,8 @@ export default function ClosedTradesPanel({ onClose }) {
                       <span className="text-[11px] font-mono text-slate-200 tabular-nums">
                         {r.fill != null ? `$${r.fill.toFixed(2)}` : "—"}
                       </span>
-                      <span className={`text-[11px] font-mono tabular-nums ${entrySlipCls(r.fillVsLimitPerShare, r.isLong)}`}>
-                        {r.fillVsLimitPerShare != null ? `${signedN(r.fillVsLimitPerShare, 2)}` : "—"}
+                      <span className={`text-[11px] font-mono tabular-nums ${slipCls(r.entrySlipPerShare)}`}>
+                        {r.entrySlipPerShare != null ? `${signedN(r.entrySlipPerShare, 2)}` : "—"}
                       </span>
                       <span className="text-[11px] font-mono text-slate-300 tabular-nums">
                         {r.exitPrice != null ? `$${r.exitPrice.toFixed(2)}` : "—"}

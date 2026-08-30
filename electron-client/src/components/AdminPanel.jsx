@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { alpacaApi } from "../api/client";
-import { exitPrice } from "../utils/alpacaPrices";
 import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
-import { fillVsLimitRaw, slippageDisplayColor, executionFromTrade } from "../utils/tradeExecution";
+import { entrySlippagePerShare, adverseSlipColor, executionFromTrade, compactTicker } from "../utils/tradeExecution";
+import { isRealizedClose } from "../utils/closedTradeAudit";
 import TradeReviewModal from "./TradeReviewModal";
+import OpenTradesCards from "./OpenTradesCards";
 import AnalyticsPanel from "./AnalyticsPanel";
 import StrategyPerformancePanel from "./StrategyPerformancePanel";
 import ManualTradesPanel from "./ManualTradesPanel";
@@ -317,7 +318,7 @@ export default function AdminPanel({ user }) {
   const [closedSymbolQuery, setClosedSymbolQuery] = useState("");
   const [reviewOrder,   setReviewOrder]   = useState(null);
   const [activeTab, setActiveTab] = useState("trades");
-  const OPEN_ORDERS_PER_PAGE   = 40;
+  const OPEN_ORDERS_PER_PAGE   = 24;
   const CLOSED_ORDERS_PER_PAGE = 20;
 
   const openOrderTickers = useMemo(() => {
@@ -386,10 +387,14 @@ export default function AdminPanel({ user }) {
 
   const tabOrders = useMemo(() => {
     const isOpenTab = ordersFilter === "open";
-    let list = visibleOrders.filter(o => isOpenTab ? o.is_open : !o.is_open);
+    let list = visibleOrders.filter(o => isOpenTab ? o.is_open && !isRealizedClose(o) : isRealizedClose(o));
     const needle = closedSymbolQuery.trim().toUpperCase();
     if (!isOpenTab && needle) {
-      list = list.filter(o => String(o.ticker || "").toUpperCase().includes(needle));
+      const needleCompact = compactTicker(needle);
+      list = list.filter((o) => {
+        const sym = String(o.ticker || "").toUpperCase();
+        return sym.includes(needle) || compactTicker(sym).includes(needleCompact);
+      });
     }
     return list;
   }, [visibleOrders, ordersFilter, closedSymbolQuery]);
@@ -464,9 +469,9 @@ export default function AdminPanel({ user }) {
                 )}
                 {!ordersLoading && visibleOrders.length > 0 && (
                   <span className="whitespace-nowrap">
-                    {visibleOrders.filter(o => o.is_open).length} open
-                    {visibleOrders.filter(o => !o.is_open).length > 0 && (
-                      <> · {visibleOrders.filter(o => !o.is_open).length} closed</>
+                    {visibleOrders.filter(o => o.is_open && !isRealizedClose(o)).length} open
+                    {visibleOrders.filter(o => isRealizedClose(o)).length > 0 && (
+                      <> · {visibleOrders.filter(o => isRealizedClose(o)).length} closed</>
                     )}
                   </span>
                 )}
@@ -530,83 +535,23 @@ export default function AdminPanel({ user }) {
           ) : (
             <>
               {ordersFilter === "open" ? (
-                <>
-                  {/* ── Open trades headers ── */}
-                  <div className="grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr_0.5fr] gap-3 px-5 py-2 border-b border-slate-800/40">
-                    {["Ticker", "Mode", "Source", "Detail", "Chart", "Dir", "Qty", "Open P/L", "State", "Status", "Start Date", "Days"].map(h => (
-                      <span key={h} className={`text-[10px] font-semibold text-slate-500 uppercase tracking-wider${h === "Dir" ? " text-center" : ""}`}>{h}</span>
-                    ))}
-                  </div>
-
-                  {/* ── Open trades rows ── */}
-                  <div className="divide-y divide-slate-800/40">
-                    {tabOrders
-                      .slice().sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
-                      .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE)
-                      .map(o => {
-                        const isLong    = o.direction === "long";
-                        const isPaper   = o.paper_mode;
-                        const placed    = o.created_at ? new Date(o.created_at).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
-                        const statusColor = o.status === "filled" ? "text-emerald-400" : o.status === "accepted" || o.status === "new" || o.status === "held" ? "text-yellow-400" : "text-slate-400";
-                        const pl        = o.unrealized_pl;
-                        const plPos     = pl != null && pl > 0;
-                        const plNeg     = pl != null && pl < 0;
-                        const plColor   = plPos ? "text-emerald-400" : plNeg ? "text-red-400" : "text-slate-400";
-                        const fillPrice = o.filled_avg_price ?? o.entry_price;
-                        const tUpper = o.ticker ? String(o.ticker).trim().toUpperCase() : "";
-                        const quote = tUpper ? liveQuotes[tUpper] : null;
-                        const livePx =
-                          exitPrice(o.direction, quote) ??
-                          (o.current_price != null ? Number(o.current_price) : null);
-                        const targetPx = o.target_price != null ? Number(o.target_price) : null;
-                        const beyondTakeProfit =
-                          livePx != null &&
-                          targetPx != null &&
-                          (isLong ? livePx >= targetPx : livePx <= targetPx);
-                        const daysOpen = tradingDaysOpen(o.created_at);
-                        return (
-                          <div
-                            key={o.id}
-                            className={`grid grid-cols-[1fr_0.55fr_0.85fr_0.5fr_0.5fr_0.7fr_0.6fr_1fr_0.7fr_1fr_1.4fr_0.5fr] gap-3 px-5 py-3 transition items-center ${
-                              beyondTakeProfit ? "tp-row-flash" : "hover:bg-slate-800/30"
-                            }`}
-                          >
-                            <span className="font-bold text-slate-100 text-sm truncate">{o.ticker}</span>
-                            {isPaper
-                              ? <span className="text-[9px] font-semibold text-blue-400 bg-blue-900/30 border border-blue-700/40 rounded px-1 py-0.5 w-fit">PAPER</span>
-                              : <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 rounded px-1 py-0.5 w-fit">LIVE</span>
-                            }
-                            <span className="text-[11px] text-slate-400 truncate" title={o.trade_idea_name ?? "Manual"}>
-                              {o.trade_idea_name ?? <span className="text-slate-600 italic">Manual</span>}
-                            </span>
-                            <button onClick={() => openDetail(o)} disabled={!o.alpaca_order_id} title="View bracket details from Alpaca" className="text-slate-500 hover:text-brand-400 disabled:opacity-20 disabled:cursor-not-allowed transition"><Search className="w-3.5 h-3.5" /></button>
-                            <button title="View trade chart" onClick={() => setReviewOrder(o)} className="text-slate-500 hover:text-emerald-400 transition"><BarChart2 className="w-3.5 h-3.5" /></button>
-                            <div className="flex items-center justify-center gap-1">
-                              {isLong ? <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> : <TrendingDown className="w-3.5 h-3.5 text-red-400" />}
-                              <span className={`text-xs font-semibold ${isLong ? "text-emerald-400" : "text-red-400"}`}>{isLong ? "Long" : "Short"}</span>
-                            </div>
-                            <span className="font-mono text-xs text-slate-300">{o.qty}</span>
-                            <span className={`font-mono text-xs font-semibold ${plColor}`}>{pl != null ? `${plPos ? "+" : ""}$${Math.abs(pl).toFixed(2)}` : "—"}</span>
-                            {o.is_open ? <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-900/30 border border-emerald-700/40 rounded px-1 py-0.5 w-fit">Open</span> : <span className="text-[10px] font-semibold text-slate-400 bg-slate-800/60 border border-slate-700/40 rounded px-1 py-0.5 w-fit">Closed</span>}
-                            <span className={`text-xs font-medium capitalize ${statusColor}`}>{o.status ?? "—"}</span>
-                            <span className="text-[11px] text-slate-400">{placed}</span>
-                            <span className={`font-mono text-xs ${
-                              o.trade_idea_name === "Tradefinder AI" && daysOpen != null && daysOpen >= 4
-                                ? "text-yellow-400 animate-pulse font-semibold"
-                                : "text-slate-300"
-                            }`}>{daysOpen ?? "—"}</span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </>
+                <OpenTradesCards
+                  orders={tabOrders
+                    .slice()
+                    .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
+                    .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE)}
+                  liveQuotes={liveQuotes}
+                  onDetail={openDetail}
+                  onChart={setReviewOrder}
+                  daysOpenFn={tradingDaysOpen}
+                />
               ) : (
                 <>
                   {/* ── Closed trades headers ── */}
                   <div className="grid grid-cols-[1.4fr_0.5fr_0.5fr_0.4fr_0.9fr_1fr_0.5fr_0.8fr_0.7fr_1fr_0.8fr_0.9fr_1.4fr] gap-3 px-5 py-2 border-b border-slate-800/40">
                     {[
                       { h: "Ticker" }, { h: "Detail" }, { h: "Chart" }, { h: "Dir", center: true },
-                      { h: "Entry Limit" }, { h: "Fill / Slippage" }, { h: "Qty" },
+                      { h: "Entry" }, { h: "Fill / Slippage" }, { h: "Qty" },
                       { h: "Risk $" }, { h: "R/R" }, { h: "Final P/L" }, { h: "R Result" },
                       { h: "Status" }, { h: "Closed Date" },
                     ].map(({ h, center }) => (
@@ -633,8 +578,8 @@ export default function AdminPanel({ user }) {
                         const plNeg     = pl != null && pl < 0;
                         const plColor   = plPos ? "text-emerald-400" : plNeg ? "text-red-400" : "text-slate-400";
 
-                        const slip      = fillVsLimitRaw(entryLim, fillPx);
-                        const slipColor = slippageDisplayColor(slip, isLong);
+                        const slip      = entrySlippagePerShare({ limitPrice: entryLim, fillPrice: fillPx, direction: o.direction, isMarket: exec.isMarket });
+                        const slipColor = adverseSlipColor(slip);
 
                         // R result: actual P/L divided by planned risk per share × qty
                         const rResult   = pl != null && riskAmt != null && riskAmt > 0 ? (pl / riskAmt) : null;
@@ -824,8 +769,8 @@ export default function AdminPanel({ user }) {
                 const fillPrice = fillPx ?? entryLim;
                 const stopPx    = db.stop_price       != null ? Number(db.stop_price)       : null;
                 const tgtPx     = db.target_price     != null ? Number(db.target_price)     : null;
-                const slip      = fillVsLimitRaw(entryLim, fillPx);
-                const slipColor = slippageDisplayColor(slip, isLong);
+                const slip      = entrySlippagePerShare({ limitPrice: entryLim, fillPrice: fillPx, direction: db.direction, isMarket: exec.isMarket });
+                const slipColor = adverseSlipColor(slip);
 
                 // Alpaca bracket leg values for stop / target mismatch detection
                 const priceTol   = 0.01;
@@ -849,7 +794,7 @@ export default function AdminPanel({ user }) {
                 const rows = [
                   ["Direction", <span className={`font-semibold ${isLong ? "text-emerald-400" : "text-red-400"}`}>{isLong ? "Long" : "Short"}</span>],
                   ["Qty",       <span className="font-mono text-slate-200">{db.qty ?? "—"}</span>],
-                  ["Entry Limit", entryLim != null
+                  [((a?.type || a?.order_type) === "market" ? "Chart entry" : "Entry Limit"), entryLim != null
                     ? <span className="font-mono text-slate-300">${entryLim.toFixed(2)}</span>
                     : <span className="text-slate-500">—</span>],
                   ["Fill Price", fillPrice != null
@@ -898,12 +843,15 @@ export default function AdminPanel({ user }) {
                 const priceMatch = (x, y) =>
                   x == null || y == null ? null : Math.abs(Number(x) - Number(y)) <= priceTol;
 
+                const isMkt = (a.type || a.order_type) === "market";
                 const checks = [
-                  { label: "Symbol",      db: db.ticker,                                              alpaca: a.symbol ?? "—",                                                  match: db.ticker === a.symbol },
-                  { label: "Qty",         db: String(db.qty),                                         alpaca: a.filled_qty != null ? String(parseInt(a.filled_qty, 10)) : "—", match: a.filled_qty != null ? db.qty === parseInt(a.filled_qty, 10) : null },
+                  { label: "Symbol",      db: db.ticker,                                              alpaca: a.symbol ?? "—",                                                  match: compactTicker(db.ticker) === compactTicker(a.symbol) },
+                  { label: "Qty",         db: String(db.qty),                                         alpaca: a.filled_qty != null ? String(Number(a.filled_qty)) : "—", match: a.filled_qty != null ? Number(db.qty) === Number(a.filled_qty) : null },
                   { label: "Fill Price",  db: db.filled_avg_price != null ? `$${Number(db.filled_avg_price).toFixed(2)}` : "—", alpaca: a.filled_avg_price != null ? `$${Number(a.filled_avg_price).toFixed(2)}` : "—", match: priceMatch(db.filled_avg_price, a.filled_avg_price) },
                   { label: "Status",      db: db.status ?? "—",                                       alpaca: a.status ?? "—",                                                  match: (db.status ?? "") === (a.status ?? "") },
-                  { label: "Entry Limit", db: db.entry_price != null ? `$${Number(db.entry_price).toFixed(2)}` : "—",       alpaca: a.limit_price != null ? `$${Number(a.limit_price).toFixed(2)}` : "—",     match: priceMatch(db.entry_price, a.limit_price) },
+                  { label: isMkt ? "Chart entry" : "Entry Limit", db: db.entry_price != null ? `$${Number(db.entry_price).toFixed(2)}` : "—",       alpaca: a.limit_price != null ? `$${Number(a.limit_price).toFixed(2)}` : "—",     match: isMkt ? null : priceMatch(db.entry_price, a.limit_price) },
+                  { label: "Stop",        db: db.stop_price != null ? `$${Number(db.stop_price).toFixed(2)}` : "—", alpaca: stopLeg?.stop_price != null ? `$${Number(stopLeg.stop_price).toFixed(2)}` : "—", match: priceMatch(db.stop_price, stopLeg?.stop_price) },
+                  { label: "Target",      db: db.target_price != null ? `$${Number(db.target_price).toFixed(2)}` : "—", alpaca: profitLeg?.limit_price != null ? `$${Number(profitLeg.limit_price).toFixed(2)}` : "—", match: priceMatch(db.target_price, profitLeg?.limit_price) },
                 ];
 
                 const mismatches = checks.filter(c => c.match === false);

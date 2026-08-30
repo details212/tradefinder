@@ -11,6 +11,8 @@ import { stockApi, alpacaApi, preferencesApi } from "../api/client";
 import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
 import { Loader2, AlertCircle, Target, X } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
+import { deriveRiskQty, qtyFromInput, qtyNumber } from "../utils/qtyInput";
+import OpenOrderMenu from "./OpenOrderMenu";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
 
@@ -429,18 +431,7 @@ function AlpacaSpreadOverlay({ quote }) {
 // qty = floor(riskDollars / entryPrice)
 // riskDollars = the "Equals approximately" value shown in the Risk Management section
 function deriveQty(entry, riskPrefs, portfolioValue) {
-  if (!riskPrefs || entry <= 0) return null;
-
-  let riskDollars = 0;
-  if (riskPrefs.risk_mode === "dollar") {
-    riskDollars = parseFloat(riskPrefs.risk_value) || 0;
-  } else if (riskPrefs.risk_mode === "percent") {
-    const pv = parseFloat(portfolioValue) || 0;
-    riskDollars = ((parseFloat(riskPrefs.risk_value) || 0) / 100) * pv;
-  }
-
-  if (riskDollars <= 0) return null;
-  return Math.max(1, Math.floor(riskDollars / entry));
+  return deriveRiskQty(entry, riskPrefs, portfolioValue);
 }
 
 // Expand the price-pane Y-axis so the full R/R drawing is visible.
@@ -1535,20 +1526,20 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
             <div className="ml-auto flex items-center gap-2 shrink-0">
               {!orderType && <AlpacaSpreadOverlay quote={displayQuote} />}
               {rr && (
-                <button
-                  onClick={() => {
-                    setRr(r => {
-                      if (!r) return r;
-                      const next = entryInsideAlpacaSpread(liveQuote, r.entry);
-                      return next != null && next !== r.entry ? { ...r, entry: next } : r;
-                    });
-                    setOrderType("limit");
+                <OpenOrderMenu
+                  ticker={ticker}
+                  onSelect={(type) => {
+                    if (type === "limit") {
+                      setRr((r) => {
+                        if (!r) return r;
+                        const next = entryInsideAlpacaSpread(liveQuote, r.entry);
+                        return next != null && next !== r.entry ? { ...r, entry: next } : r;
+                      });
+                    }
+                    setOrderType(type);
                     setOrderResult(null);
                   }}
-                  className="px-3 py-1.5 rounded text-xs font-semibold bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 transition shadow-sm animate-pulse"
-                >
-                  Open Limit Order
-                </button>
+                />
               )}
             </div>
           </div>
@@ -1717,12 +1708,14 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                   )}
                 </span>
                 <input
-                  type="number" step="1" min="1" value={rr.qty}
+                  type="text" inputMode="decimal" value={rr.qty}
                   onChange={e => {
+                    const next = qtyFromInput(e.target.value);
+                    if (next === null) return;
                     setQtyDerived(false);
-                    setRr(r => ({ ...r, qty: Math.max(1, parseInt(e.target.value) || r.qty) }));
+                    setRr(r => ({ ...r, qty: next }));
                   }}
-                  className={`${inputCls} w-16 border ${qtyDerived ? "border-brand-700/60 focus:ring-brand-500/40" : "border-slate-700 focus:ring-slate-500/40"}`}
+                  className={`${inputCls} w-24 border ${qtyDerived ? "border-brand-700/60 focus:ring-brand-500/40" : "border-slate-700 focus:ring-slate-500/40"}`}
                 />
               </label>
 
@@ -1830,7 +1823,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                   }`}>
                     <div>
                       <p className="text-white font-bold text-sm">
-                        {isMarket ? "Market Order" : "Limit Order"}
+                        {isMarket ? "Market Order" : "Bracket Limit"}
                       </p>
                       <p className="text-slate-400 text-[11px] mt-0.5">
                         {ticker} &nbsp;·&nbsp;
@@ -1965,26 +1958,30 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                     </button>
                     {!orderResult?.ok && (
                       <button
-                        disabled={orderSubmitting || hasLevelError}
+                        disabled={orderSubmitting || (!isMarket && hasLevelError)}
                         onClick={async () => {
                           setOrderResult(null);
 
-                          // Guard both levels: the target can be dragged/typed to
-                          // the wrong side, which Alpaca rejects with a cryptic
-                          // "take_profit.limit_price must be <= base_price - 0.01".
-                          if (isLong && rr.stop >= entryPrice) {
-                            setOrderResult({ ok: false, message: "Stop loss must be below the entry price for a Long trade. Drag the stop line to fix." });
-                            return;
-                          }
-                          if (!isLong && rr.stop <= entryPrice) {
-                            setOrderResult({ ok: false, message: "Stop loss must be above the entry price for a Short trade. Drag the stop line to fix." });
-                            return;
-                          }
-                          if (targetBadSide) {
-                            setOrderResult({ ok: false, message: `Take profit must be ${isLong ? "above" : "below"} the entry price for a ${isLong ? "Long" : "Short"} trade. Drag the target line to fix.` });
-                            return;
+                          if (!isMarket) {
+                            if (isLong && rr.stop >= entryPrice) {
+                              setOrderResult({ ok: false, message: "Stop loss must be below the entry price for a Long trade. Drag the stop line to fix." });
+                              return;
+                            }
+                            if (!isLong && rr.stop <= entryPrice) {
+                              setOrderResult({ ok: false, message: "Stop loss must be above the entry price for a Short trade. Drag the stop line to fix." });
+                              return;
+                            }
+                            if (targetBadSide) {
+                              setOrderResult({ ok: false, message: `Take profit must be ${isLong ? "above" : "below"} the entry price for a ${isLong ? "Long" : "Short"} trade. Drag the target line to fix.` });
+                              return;
+                            }
                           }
 
+                          const qty = qtyNumber(rr.qty);
+                          if (!qty) {
+                            setOrderResult({ ok: false, message: "Quantity must be greater than zero." });
+                            return;
+                          }
                           setOrderSubmitting(true);
                           await refetchQuote();
                           const risk   = Math.abs(entryPrice - rr.stop);
@@ -1993,16 +1990,17 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                             const res = await alpacaApi.placeOrder({
                               ticker,
                               direction,
-                              order_type:   orderType,
+                              order_type:   isMarket ? "market" : "limit",
+                              order_class:  isMarket ? "simple" : "bracket",
                               entry_tif:    isMarket ? "day" : "gtc",
-                              qty:                rr.qty,
+                              qty,
                               entry_price:        entryPrice,
                               stop_price:         rr.stop,
                               target_price:       rr.target,
                               rr_ratio:           rr.rrRatio ?? null,
                               rr_ratio_effective: risk > 0 ? parseFloat((reward / risk).toFixed(4)) : null,
-                              risk_amt:           parseFloat((risk   * rr.qty).toFixed(4)),
-                              reward_amt:         parseFloat((reward * rr.qty).toFixed(4)),
+                              risk_amt:           parseFloat((risk   * qty).toFixed(4)),
+                              reward_amt:         parseFloat((reward * qty).toFixed(4)),
                               // chart reconstruction metadata
                               bias,
                               bar_time:        barTime  ?? null,

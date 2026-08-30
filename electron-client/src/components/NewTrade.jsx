@@ -7,6 +7,13 @@ import {
 
 const PAGE_SIZE = 25;
 
+/** Allow opening a typed symbol (e.g. BTCUSD) even if it is not in the stock table. */
+function normalizeTypedTicker(raw) {
+  const ticker = String(raw || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!/^[A-Z0-9./-]{2,20}$/.test(ticker)) return "";
+  return ticker;
+}
+
 function fmtVol(v) {
   if (v == null) return null;
   if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
@@ -278,6 +285,17 @@ export default function NewTrade({ onSelectTicker }) {
 
   const handleSelect = (ticker) => onSelectTicker(ticker);
 
+  const typedTicker = normalizeTypedTicker(query);
+  const exactInResults = results.some(
+    (r) => String(r.ticker || "").toUpperCase() === typedTicker,
+  );
+  const canOpenTyped = Boolean(typedTicker) && !exactInResults;
+
+  const openTypedTicker = () => {
+    if (!typedTicker) return;
+    handleSelect(typedTicker);
+  };
+
   const hasFilter = selSector || selIndustry;
 
   return (
@@ -308,6 +326,12 @@ export default function NewTrade({ onSelectTicker }) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                openTypedTicker();
+              }
+            }}
             placeholder="Search ticker or company name…"
             className="w-full bg-slate-800 border border-slate-700 rounded-2xl pl-12 pr-5 py-4 text-slate-100 placeholder-slate-500
               focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 transition text-base shadow-xl"
@@ -393,12 +417,37 @@ export default function NewTrade({ onSelectTicker }) {
             <p className="text-slate-500 text-sm">
               No results for <span className="text-slate-300 font-medium">"{query}"</span>
             </p>
+            {canOpenTyped && (
+              <button
+                type="button"
+                onClick={openTypedTicker}
+                className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600/20 border border-brand-500/40
+                  text-sm font-medium text-brand-300 hover:bg-brand-600/30 hover:text-brand-200 transition"
+              >
+                Open <span className="font-mono font-bold">{typedTicker}</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
+        )}
+
+        {canOpenTyped && results.length > 0 && (
+          <button
+            type="button"
+            onClick={openTypedTicker}
+            className="w-full flex items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-slate-800 border border-dashed
+              border-brand-500/40 text-left hover:bg-slate-700 hover:border-brand-400/60 transition"
+          >
+            <span className="text-sm text-slate-400">
+              Open typed symbol <span className="font-mono font-bold text-brand-400">{typedTicker}</span>
+            </span>
+            <ArrowRight className="w-4 h-4 text-brand-400 shrink-0" />
+          </button>
         )}
 
         {!query.trim() && !hasFilter && (
           <p className="text-xs text-slate-600 text-center">
-            Try <span className="text-slate-500">AAPL</span>, <span className="text-slate-500">MSFT</span>, or use the dropdowns to browse by sector.
+            Try <span className="text-slate-500">AAPL</span>, <span className="text-slate-500">MSFT</span>, or type a symbol and press Enter (e.g. <span className="text-slate-500">BTCUSD</span>).
           </p>
         )}
 
