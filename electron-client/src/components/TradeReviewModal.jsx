@@ -420,8 +420,8 @@ function applyRR(chart, rr) {
 const EXIT_METHOD_META = {
   bracket_tp:    { label: "Bracket TP",    cls: "text-emerald-400 bg-emerald-900/30 border-emerald-700/50", desc: "Exchange filled your take-profit limit order" },
   bracket_sl:    { label: "Bracket SL",    cls: "text-red-400    bg-red-900/30    border-red-700/50",    desc: "Exchange filled your stop-loss order" },
-  auto_close_tp: { label: "Auto-Close TP", cls: "text-amber-400  bg-amber-900/30  border-amber-700/50",  desc: "System sent a market order after 3 consecutive TP breaches" },
-  auto_close_sl: { label: "Auto-Close SL", cls: "text-orange-400 bg-orange-900/30 border-orange-700/50", desc: "System sent a market order after 3 consecutive SL breaches" },
+  auto_close_tp: { label: "Auto-Close TP", cls: "text-amber-400  bg-amber-900/30  border-amber-700/50",  desc: "System sent a market order after a closed 5m bar closed beyond target" },
+  auto_close_sl: { label: "Auto-Close SL", cls: "text-orange-400 bg-orange-900/30 border-orange-700/50", desc: "System sent a market order after a closed 5m bar closed beyond stop" },
   manual:        { label: "Manual",        cls: "text-slate-300  bg-slate-800/60  border-slate-600/50",  desc: "Closed manually via Close Trade button" },
 };
 

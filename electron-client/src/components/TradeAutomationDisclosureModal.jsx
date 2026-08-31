@@ -68,10 +68,10 @@ export default function TradeAutomationDisclosureModal({ onAcknowledge }) {
             accent="border-sky-500/50"
             title="How the automation works"
             items={[
-              "The TradeFinder server polls Alpaca bid/ask (and last trade as fallback) for every open position once per minute during market hours.",
-              "Each observation is saved. If the price is inside your brackets, the breach counter is reset to zero. The system will not fire a market order from a single out-of-range reading.",
-              "Only after 2 consecutive 60-second observations all outside the brackets (~2 minutes of sustained breach) does the system proceed to send a market close order. This window is intentional — it gives your native bracket order time to fill at the exchange before any automation intervenes.",
-              "When the threshold is met, the system cancels all remaining bracket legs (take-profit and stop-loss) and submits a market order to close the full remaining share quantity — identical to clicking \"Close Trade\" manually from the My Trades panel.",
+              "The TradeFinder server waits for each clock-aligned 5-minute Alpaca bar to close (:00, :05, :10, …), then checks that bar's close vs your stop and target.",
+              "A forming (in-progress) bar is never used. The same completed bar is never counted twice.",
+              "If that closed bar is beyond take-profit or stop-loss, the system cancels remaining bracket legs and sends a market flatten. Your native Alpaca bracket has had the full 5 minutes of that bar to fill first.",
+              "When the threshold is met, the flatten is identical to clicking \"Close Trade\" manually from the My Trades panel.",
             ]}
           />
 
@@ -94,10 +94,10 @@ export default function TradeAutomationDisclosureModal({ onAcknowledge }) {
             accent="border-purple-500/50"
             title="Polling latency & confirmation window"
             items={[
-              "Price checks are not tick-perfect. Because the system requires 2 consecutive out-of-range readings, there is an intentional minimum delay of approximately 2 minutes between the first breach observation and any market order.",
-              "If the price recovers inside the brackets at any point during those 2 minutes, the breach counter resets and the cycle starts over. No market order is sent.",
-              "Price can continue to move against your position during the confirmation window. This is the deliberate trade-off for reducing false triggers.",
-              "Long exits are evaluated against the bid; short exits against the ask — the prices you would actually receive when flattening.",
+              "Checks run a few seconds after each 5-minute clock close so Alpaca can publish the completed bar — not on a random 60-second timer.",
+              "If the next 5-minute bar closes back inside your brackets, no market order is sent.",
+              "Price can still move between the bar close and the market flatten fill (slippage).",
+              "Long and short breaches both use the bar close vs your stop and target levels.",
             ]}
           />
 

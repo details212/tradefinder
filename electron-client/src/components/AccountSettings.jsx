@@ -789,13 +789,13 @@ function AutoCloseBeyondTpSection() {
       ) : (
         <div className="flex flex-col gap-4">
           <p className="text-xs text-slate-500 leading-relaxed">
-            When the actionable Alpaca price (bid for longs, ask for shorts) moves past your
+            When the <em>close</em> of a completed 5-minute Alpaca bar (checked at
+            :00, :05, :10, … plus a few seconds for the bar to publish) moves past your
             take-profit <em>or</em> stop-loss level while the position is still open, automatically
             cancel the bracket legs and send a
             <span className="text-slate-400"> market </span>
             order to flatten all shares—same behavior as closing a trade manually from My Trades.
-            Prices are fetched directly from Alpaca every minute. The check runs about once per
-            minute while the app server is running.
+            The check runs while the app server is running.
           </p>
           <div className="flex items-center justify-between gap-4 py-1">
             <span className="text-sm text-slate-300">Auto-close with market order past take profit or stop loss</span>
@@ -817,9 +817,9 @@ function AutoCloseBeyondTpSection() {
             </button>
           </div>
           <p className="text-[11px] text-slate-600 leading-relaxed">
-            Checks use Alpaca bid/ask, not delayed snapshot feeds. Review live and paper behavior
-            before relying on this for real money. Requires Alpaca credentials and an open trade
-            recorded in TradeFinder.
+            Breach checks use the close of the last completed 5-minute bar (not live bid/ask
+            snapshots). Review live and paper behavior before relying on this for real money.
+            Requires Alpaca credentials and an open trade recorded in TradeFinder.
           </p>
           <StatusBanner status={status} />
         </div>

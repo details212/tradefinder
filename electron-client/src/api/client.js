@@ -16,7 +16,7 @@ api.interceptors.request.use(async (config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
   const clientVersion = window.APP_VERSION;
-  if (clientVersion) {
+  if (clientVersion && !import.meta.env.DEV) {
     config.headers["X-Client-Version"] = clientVersion;
   }
   try {

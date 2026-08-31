@@ -41,6 +41,10 @@ function App() {
   const navigate = useNavigate();
 
   const applyRequiredVersion = useCallback((required, dlUrl) => {
+    // Dev server (vite) uses package.json as-is; dist:win bumps version + updates server.
+    // Skip the gate locally so UI work isn't blocked by a production version mismatch.
+    if (import.meta.env.DEV) return false;
+
     const client = window.APP_VERSION || "0.0.0";
     if (required && isOutdated(client, required)) {
       setClientVersion(client);
