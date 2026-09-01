@@ -1414,7 +1414,7 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                       <p className="text-white font-bold text-sm">{isMarket ? "Market Order" : "Bracket Limit"}</p>
                       <p className="text-slate-400 text-[11px] mt-0.5">
                         {ticker} &nbsp;·&nbsp; <span className={dirColor}>{dirLabel}</span>
-                        {isMarket ? " · market fill, then stop/target" : ""}
+                        {isMarket ? " · market fill (stop/target used by auto-close only)" : ""}
                       </p>
                     </div>
                     <button onClick={() => setOrderType(null)} className="text-slate-500 hover:text-slate-300 transition">

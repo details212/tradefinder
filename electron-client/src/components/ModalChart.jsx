@@ -1828,6 +1828,7 @@ export default function ModalChart({ ticker, barTime, threshold, height, bias, o
                       <p className="text-slate-400 text-[11px] mt-0.5">
                         {ticker} &nbsp;·&nbsp;
                         <span className={dirColor}>{dirLabel}</span>
+                        {isMarket ? " · market fill (stop/target used by auto-close only)" : ""}
                       </p>
                     </div>
                     <button

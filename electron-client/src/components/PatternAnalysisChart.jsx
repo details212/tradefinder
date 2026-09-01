@@ -1748,7 +1748,7 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
               <div className={`flex items-center justify-between px-4 py-3 border-b border-slate-700 ${isMarket ? "bg-blue-900/40" : "bg-yellow-900/20"}`}>
                 <div>
                   <p className="text-white font-bold text-sm">{isMarket ? "Market Order" : "Bracket Limit"}</p>
-                  <p className="text-slate-400 text-[11px] mt-0.5">{ticker} · <span className="text-emerald-400">▲ Long</span>{isMarket ? " · market fill, then stop/target" : ""}</p>
+                  <p className="text-slate-400 text-[11px] mt-0.5">{ticker} · <span className="text-emerald-400">▲ Long</span>{isMarket ? " · market fill (stop/target used by auto-close only)" : ""}</p>
                 </div>
                 <button onClick={() => setOrderType(null)} className="text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
               </div>
