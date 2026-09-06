@@ -108,7 +108,15 @@ function buildOptions(ticker, ohlcv, barTimeMs) {
     xAxis: {
       type: "datetime", ordinal: true,
       lineColor: "#334155", tickColor: "#334155",
-      labels: { style: { color: "#94a3b8", fontSize: "10px", textOutline: "none" }, formatter() { return etTime.dateFormat("%b %e %H:%M", this.value); } },
+      // Pin to a single label row. Without this, Highcharts auto-computes
+      // staggerLines per update() call and — across repeated data-source
+      // swaps with slightly different tick counts — can ratchet up to 2+
+      // rows, which steals height from the panes above it on every toggle.
+      labels: {
+        staggerLines: 1,
+        style: { color: "#94a3b8", fontSize: "10px", textOutline: "none" },
+        formatter() { return etTime.dateFormat("%b %e %H:%M", this.value); },
+      },
       plotLines: [],
       plotBands: [],
     },
@@ -444,6 +452,8 @@ function ExitMethodBadge({ method }) {
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const [bars,      setBars]      = useState([]);
+  const [barSource, setBarSource] = useState("polygon"); // "polygon" | "alpaca"
+  const [sourceLoading, setSourceLoading] = useState(false);
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState(null);
   const [rr,        setRr]        = useState(null);
@@ -555,6 +565,8 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   const chartRef    = useRef(null);
   const rrRef       = useRef(null);
   const containerRef = useRef(null);
+  const chartHRef   = useRef(null);
+  const barCacheRef = useRef({ key: "", polygon: null, alpaca: null });
 
   const ticker    = order.ticker;
   const { quote: liveQuote, fetching: quoteFetching, refetch: refetchQuote } = useFreshAlpacaQuote(ticker, !!ticker);
@@ -570,13 +582,21 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     { label: "All", days: null },
   ];
 
-  // Measure chart container height
+  // Measure chart container height. Bucketed to the nearest 8px so that any
+  // sub-pixel size change caused by the chart's *own* reflow (different label
+  // widths between Polygon/Alpaca data, scrollbar rounding, etc.) can't
+  // re-trigger this observer and creep the height down on every toggle.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const BUCKET = 8;
     const obs = new ResizeObserver(entries => {
-      const h = entries[0]?.contentRect.height;
-      if (h) setChartH(Math.floor(h));
+      const raw = entries[0]?.contentRect.height || 0;
+      if (raw <= 0) return;
+      const bucket = Math.round(raw / BUCKET) * BUCKET;
+      if (chartHRef.current === bucket) return;
+      chartHRef.current = bucket;
+      setChartH(bucket);
     });
     obs.observe(el);
     return () => obs.disconnect();
@@ -652,9 +672,27 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
 
   // Fetch bars — for closed trades use a tight window around the trade;
   // for open trades fall back to a 28-day rolling window.
+  // Closed reviews can toggle source=polygon (default) vs source=alpaca on the same 5m window.
   const fetchBars = useCallback(() => {
     if (!ticker) return;
-    setLoading(true); setError(null);
+
+    const cacheKey = `${ticker}|${order.is_open}|${order.created_at}|${order.synced_at}|${order.closed_at}`;
+    if (barCacheRef.current.key !== cacheKey) {
+      barCacheRef.current = { key: cacheKey, polygon: null, alpaca: null };
+    }
+
+    const source = order.is_open ? "polygon" : barSource;
+    const cached = barCacheRef.current[source];
+    if (cached?.length) {
+      setError(null);
+      setBars(cached);
+      return;
+    }
+
+    const swapping = barCacheRef.current.polygon != null || barCacheRef.current.alpaca != null;
+    if (swapping) setSourceLoading(true);
+    else setLoading(true);
+    setError(null);
 
     const fmt  = d => d.toISOString().slice(0, 10);
     const today = new Date();
@@ -681,17 +719,29 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       to = today;
     }
 
-    stockApi.history(ticker, { multiplier: 5, timespan: "minute", from: fmt(from), to: fmt(to), limit: 5000 })
+    stockApi.history(ticker, {
+      multiplier: 5,
+      timespan: "minute",
+      from: fmt(from),
+      to: fmt(to),
+      limit: 5000,
+      source,
+    })
       .then(r => {
         const raw = (r.data.bars || []).sort((a, b) => a.t - b.t);
         let mapped = raw.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
         const closeMs = resolveChartCloseTime(order);
         if (closeMs != null) mapped = mapped.filter(b => b.t <= closeMs);
+        if (mapped.length) barCacheRef.current[source] = mapped;
         setBars(mapped);
+        if (!mapped.length) setError(`No ${source === "alpaca" ? "Alpaca" : "Polygon"} 5m bars for this window`);
       })
-      .catch(() => setError("Failed to load chart data"))
-      .finally(() => setLoading(false));
-  }, [ticker, order.is_open, order.created_at, order.synced_at, order.closed_at]);
+      .catch(err => setError(err?.response?.data?.error || "Failed to load chart data"))
+      .finally(() => {
+        setLoading(false);
+        setSourceLoading(false);
+      });
+  }, [ticker, order.is_open, order.created_at, order.synced_at, order.closed_at, barSource]);
 
   useEffect(() => { fetchBars(); }, [fetchBars]);
 
@@ -790,16 +840,23 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     yAxis.setExtremes(low - pad, high + pad, true, false);
   }, [rr]);
 
+  // Force the exact measured height every time the data (bars) or container size
+  // changes. reflow() alone can no-op if Highcharts thinks the container size
+  // hasn't changed since its own last internal check — setSize() bypasses that
+  // and forces every multi-pane yAxis (main / volume) to fully recompute its
+  // pixel geometry against our authoritative chartH, so panes can't drift
+  // smaller across repeated data-source swaps.
   useEffect(() => {
     const chart = chartRef.current?.chart;
-    if (!chart || !bars.length) return;
-    chart.reflow();
+    if (!chart || !bars.length || !chartH) return;
+    const width = containerRef.current?.clientWidth;
+    chart.setSize(width || undefined, chartH, false);
     {
       const preset = ZOOM_PRESETS.find(p => p.label === activeZoom);
       if (preset) applyZoom(preset);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, barTimeMs]);
+  }, [bars, barTimeMs, chartH]);
 
   // Keep rrRef in sync
   useEffect(() => { rrRef.current = rr; }, [rr]);
@@ -1111,7 +1168,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
         )}
 
         {/* ── Toolbar ── */}
-        <div className="flex items-center gap-3 px-3 py-1.5 border-b border-slate-800 bg-slate-900/60 shrink-0">
+        <div className="flex items-center gap-3 px-3 py-1.5 border-b border-slate-800 bg-slate-900/60 shrink-0 flex-nowrap overflow-x-auto">
           {/* Zoom presets */}
           <div className="flex items-center rounded overflow-hidden border border-slate-700 shrink-0">
             {ZOOM_PRESETS.map((preset, i) => (
@@ -1126,6 +1183,48 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
               </button>
             ))}
           </div>
+
+          {/* Closed-trade feed toggle — same 5m window, Polygon vs Alpaca */}
+          {!order.is_open && (
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center rounded overflow-hidden border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setBarSource("polygon")}
+                  className={`px-2.5 py-1 text-xs font-semibold transition ${
+                    barSource === "polygon"
+                      ? "bg-violet-700/40 text-violet-300"
+                      : "bg-slate-800 text-slate-500 hover:text-slate-200"
+                  }`}
+                >
+                  Polygon
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBarSource("alpaca")}
+                  className={`px-2.5 py-1 text-xs font-semibold transition border-l border-slate-700 ${
+                    barSource === "alpaca"
+                      ? "bg-amber-700/40 text-amber-300"
+                      : "bg-slate-800 text-slate-500 hover:text-slate-200"
+                  }`}
+                >
+                  Alpaca
+                </button>
+              </div>
+              {sourceLoading && <Loader2 className="w-3 h-3 animate-spin text-slate-500" />}
+              {bars.length > 0 && (
+                <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                  5m close{" "}
+                  <span className="font-mono text-slate-300">
+                    ${Number(bars[bars.length - 1].c).toFixed(2)}
+                  </span>
+                  <span className="text-slate-600 ml-1">
+                    {barSource === "alpaca" ? "Alpaca" : "Polygon"}
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Fit R/R — expand Y-axis to show full stop→target range */}
           {rr && (
@@ -1610,21 +1709,30 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
         )}
 
         {/* ── Chart ── */}
-        <div ref={containerRef} className="flex-1 min-h-0 overflow-hidden">
+        <div ref={containerRef} className="relative flex-1 min-h-0 overflow-hidden">
           {(loading || chartH == null) && !error && (
-            <div className="h-full flex items-center justify-center gap-2 text-slate-400">
+            <div className="absolute inset-0 flex items-center justify-center gap-2 text-slate-400">
               <Loader2 className="w-5 h-5 animate-spin" />
               <span className="text-sm">Loading chart…</span>
             </div>
           )}
           {error && (
-            <div className="h-full flex items-center justify-center gap-2 text-red-400">
+            <div className="absolute inset-0 flex items-center justify-center gap-2 text-red-400">
               <AlertCircle className="w-4 h-4" />
               <span className="text-sm">{error}</span>
             </div>
           )}
           {ready && (
             <HighchartsReact
+              // Force a full unmount/remount (fresh Highcharts.Chart instance) whenever
+              // the bar source or ticker changes. Repeatedly calling chart.update() on
+              // the SAME instance across Polygon/Alpaca toggles was letting some piece
+              // of Highcharts' internal layout state (axis label metrics / margins)
+              // creep across renders, which was cumulatively shrinking the pane area
+              // and pushing everything up on every toggle. A clean remount recomputes
+              // all chart geometry from scratch against the actual container size, so
+              // there's nothing left over from the previous instance to drift.
+              key={`${ticker}-${barSource}`}
               ref={chartRef}
               highcharts={Highcharts}
               constructorType="stockChart"
