@@ -4,6 +4,7 @@ import {
   User, Lock, TrendingUp, ShieldAlert, Zap, Radio, Lightbulb,
   CheckCircle, AlertCircle, Loader2, Save, RefreshCw, DollarSign, Wallet,
   AtSign, XCircle, Mail, Send, MapPin, Phone, Trash2, Volume2, VolumeX,
+  AlertTriangle,
 } from "lucide-react";
 
 // ── Small reusable status banner ──────────────────────────────────────────────
@@ -828,6 +829,174 @@ function AutoCloseBeyondTpSection() {
   );
 }
 
+// ── Close unmanaged Alpaca activity (server-side, opt-in, not recommended) ────
+const PREF_CLOSE_NON_CLIENT = "close_non_client_alpaca";
+
+function CloseNonClientAlpacaSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const [acked, setAcked] = useState(false);
+
+  useEffect(() => {
+    preferencesApi
+      .get()
+      .then((r) => {
+        const v = r.data.preferences?.[PREF_CLOSE_NON_CLIENT];
+        setEnabled(v === true || String(v).toLowerCase() === "true" || v === "1");
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save(next) {
+    setSaving(true);
+    setStatus(null);
+    try {
+      await preferencesApi.update({ [PREF_CLOSE_NON_CLIENT]: next ? "true" : "false" });
+      setEnabled(next);
+      setConfirming(false);
+      setAcked(false);
+      setStatus({
+        type: "success",
+        message: next
+          ? "Enabled. Foreign Alpaca orders will be flattened every 15 minutes."
+          : "Disabled. Only trades placed in TradeFinder are left unmanaged.",
+      });
+    } catch {
+      setStatus({ type: "error", message: "Failed to save. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleToggle(next) {
+    setStatus(null);
+    if (!next) {
+      save(false);
+      return;
+    }
+    setAcked(false);
+    setConfirming(true);
+  }
+
+  return (
+    <div className="bg-red-950/20 border border-red-800/40 rounded-xl p-6">
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-red-400 mb-2">
+        <ShieldAlert className="w-4 h-4" />
+        Close unmanaged Alpaca orders
+        <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-900/60 border border-red-700/60 text-red-300">
+          Not recommended
+        </span>
+      </h2>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-sm mt-4">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4 mt-3">
+          <div className="flex items-start gap-2.5 px-3 py-3 rounded-lg bg-red-950/40 border border-red-800/50">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-red-200 leading-relaxed">
+              <span className="font-semibold text-red-100">Leave this off unless you fully understand the cost.</span>{" "}
+              When enabled, the server silently cancels working Alpaca orders and market-flattens
+              open positions that were <em>not</em> opened from this client. Those exchange fills
+              are <span className="font-semibold">not written back as TradeFinder trades</span>.
+              Your win rate, P/L, closed-trade count, and R-multiples will{" "}
+              <span className="font-semibold">no longer match Alpaca / exchange totals</span>.
+              That drift cannot be reconciled automatically.
+            </p>
+          </div>
+
+          <p className="text-xs text-slate-500 leading-relaxed">
+            The check runs about every 15 minutes while the app server is up. Client-originated
+            tickets (and their bracket / take-profit / stop legs) are left alone. Extra size in the
+            same symbol as an open TradeFinder trade is also left alone, because flattening the
+            whole position would close your recorded trade too.
+          </p>
+
+          <div className="flex items-center justify-between gap-4 py-1">
+            <span className="text-sm text-slate-300">
+              Force-close Alpaca activity not opened in TradeFinder
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              disabled={saving || confirming}
+              onClick={() => handleToggle(!enabled)}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-50 ${
+                enabled ? "bg-red-600" : "bg-slate-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                  enabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          {confirming && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-900/30 border border-red-700/50">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-red-300 leading-relaxed">
+                  <span className="font-semibold">This is not recommended.</span> Flattened
+                  foreign orders will move your exchange balance without appearing in My Trades.
+                  Account metrics will be misaligned with exchange totals, including realized P/L
+                  and position counts. Do not enable this if you place trades outside TradeFinder
+                  that you still want to keep, or if you rely on TradeFinder totals matching Alpaca.
+                </p>
+              </div>
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={acked}
+                  onChange={(e) => setAcked(e.target.checked)}
+                  disabled={saving}
+                  className="mt-0.5 w-4 h-4 accent-red-600 cursor-pointer shrink-0"
+                />
+                <span className="text-xs text-slate-300 leading-relaxed">
+                  I understand this will force my TradeFinder account metrics to be misaligned
+                  with exchange totals, and I want to enable it anyway.
+                </span>
+              </label>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={!acked || saving}
+                  onClick={() => save(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
+                  Enable anyway
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setConfirming(false); setAcked(false); }}
+                  className="text-xs text-slate-400 hover:text-slate-200 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Default is off. Requires Alpaca credentials. Disable this if you trade from the Alpaca
+            dashboard, another app, or a second strategy on the same account.
+          </p>
+          <StatusBanner status={status} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Risk management section ───────────────────────────────────────────────────
 function RiskManagementSection({ portfolioValue }) {
   const [mode,    setMode]    = useState("dollar");   // "dollar" | "percent"
@@ -1476,6 +1645,7 @@ export default function AccountSettings({ user, onUserUpdated }) {
           onRefresh={loadAccount}
         />
         <AutoCloseBeyondTpSection />
+        <CloseNonClientAlpacaSection />
         <LiveStreamSettingsSection />
         <TradeIdeasSection />
         <RiskManagementSection portfolioValue={account?.portfolio_value ?? null} />
