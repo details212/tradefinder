@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { stockApi, alpacaApi, tradeIdeasApi, preferencesApi } from "../api/client";
+import { stockApi, alpacaApi, tradeIdeasApi, preferencesApi, authApi } from "../api/client";
 import { fetchAlpacaQuotes, fetchAlpacaQuote } from "../utils/fetchAlpacaQuote";
 import LiveStreamBar from "./LiveStreamBar";
 import StockDetail from "./StockDetail";
@@ -134,6 +134,19 @@ const LIVE_STREAM_MINUTES  = 15;
 const LIVE_STREAM_MIN_INFO = 3;
 const STREAM_NEW_FLASH_MS  = 60_000;
 
+function isClientOutdated(client, required) {
+  if (!client || !required) return false;
+  const pa = String(client).replace(/^v/i, "").split(".").map(Number);
+  const pb = String(required).replace(/^v/i, "").split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const va = pa[i] ?? 0;
+    const vb = pb[i] ?? 0;
+    if (va < vb) return true;
+    if (va > vb) return false;
+  }
+  return false;
+}
+
 /** Play a soft two-tone ascending chime via the Web Audio API. No audio file required. */
 function playStreamChime() {
   try {
@@ -176,6 +189,8 @@ export default function Dashboard({ user, onLogout }) {
   const [activeView,             setActiveView]             = useState("stocks");
   const [brokerStatus,           setBrokerStatus]           = useState(null); // null | { ok, paper }
   const [patternAnalysisEnabled, setPatternAnalysisEnabled] = useState(false);
+  const [clientOutdated, setClientOutdated] = useState(false);
+  const [upgradeUrl, setUpgradeUrl] = useState("");
   /** Sidebar → Trade Ideas chart modal (key bumps so same ticker re-opens) */
   const [tradeIdeasOpenChart, setTradeIdeasOpenChart] = useState(null);
   /** Sidebar → Pattern Analysis chart modal */
@@ -419,6 +434,29 @@ export default function Dashboard({ user, onLogout }) {
     };
   }, [fetchWatchlist]);
 
+  useEffect(() => {
+    // Vite bakes window.APP_VERSION into the bundle from package.json at dev
+    // server startup — it does not live-reload if package.json is bumped
+    // afterward (e.g. a release commit) while the dev server keeps running.
+    // That produces a false "outdated" reading purely from server staleness,
+    // not a real version mismatch. Skip the check entirely in dev.
+    if (import.meta.env.DEV) return;
+
+    let cancelled = false;
+    authApi.clientVersion()
+      .then((r) => {
+        if (cancelled) return;
+        const required = r.data?.required_version;
+        const client = window.APP_VERSION || "0.0.0";
+        if (isClientOutdated(client, required)) {
+          setClientOutdated(true);
+          setUpgradeUrl((r.data?.download_url || "").trim());
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-slate-900 overflow-hidden">
 
@@ -437,11 +475,37 @@ export default function Dashboard({ user, onLogout }) {
       {/* Sidebar */}
       <aside className="w-72 flex flex-col border-r border-slate-800 bg-slate-900 shrink-0">
         {/* App header */}
-        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-800">
-          <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0">
-            <img src={logo} alt="TradeFinder" className="w-full h-full object-cover" />
+        <div className="flex flex-col px-5 py-4 border-b border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0">
+              <img src={logo} alt="TradeFinder" className="w-full h-full object-cover" />
+            </div>
+            <span className="font-bold text-white tracking-tight">TradeFinder</span>
           </div>
-          <span className="font-bold text-white tracking-tight">TradeFinder</span>
+          <div className="mt-2.5 w-full rounded-lg bg-brand-600/20 border border-brand-500/50 px-3 py-1.5 text-center">
+            <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-400/80">
+              Version
+            </span>
+            <span className="block text-xl font-black font-mono tabular-nums tracking-wide text-white leading-tight">
+              {window.APP_VERSION || "—"}
+            </span>
+            {clientOutdated && (
+              upgradeUrl ? (
+                <a
+                  href={upgradeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="tf-upgrade-flash mt-1 block text-sm font-black uppercase tracking-widest text-amber-300 hover:text-amber-200"
+                >
+                  Upgrade
+                </a>
+              ) : (
+                <span className="tf-upgrade-flash mt-1 block text-sm font-black uppercase tracking-widest text-amber-300">
+                  Upgrade
+                </span>
+              )
+            )}
+          </div>
         </div>
 
         {/* User info */}

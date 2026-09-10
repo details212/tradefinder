@@ -15,7 +15,7 @@ export function compactTicker(ticker) {
 export function exitTypeOf(method) {
   if (method === "bracket_tp" || method === "auto_close_tp") return "target";
   if (method === "bracket_sl" || method === "auto_close_sl") return "stop";
-  if (method === "manual") return "manual";
+  if (method === "scalp_tp" || method === "scalp_sl" || method === "manual") return "manual";
   return null;
 }
 

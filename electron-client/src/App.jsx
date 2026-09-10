@@ -2,26 +2,10 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import Login from "./components/Login";
 import Dashboard from "./components/Dashboard";
-import UpdateModal from "./components/UpdateModal";
 import TradeAutomationDisclosureModal from "./components/TradeAutomationDisclosureModal";
 import { authApi, preferencesApi } from "./api/client";
 
-/** Compare two semver strings. Returns true if `a` is strictly older than `b`. */
-function isOutdated(a, b) {
-  if (!a || !b) return false;
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    const va = pa[i] ?? 0;
-    const vb = pb[i] ?? 0;
-    if (va < vb) return true;
-    if (va > vb) return false;
-  }
-  return false;
-}
-
 const SESSION_MS = 12 * 60 * 60 * 1000; // 12 hours — non-remember sessions only
-const VERSION_POLL_MS = 5 * 60 * 1000;  // re-check while the app stays open
 
 function App() {
   const [token,    setToken]    = useState(null);
@@ -29,55 +13,15 @@ function App() {
   const [checking, setChecking] = useState(true);
   const logoutTimerRef = useRef(null);
 
-  // Version-gate state
-  const [updateNeeded,  setUpdateNeeded]  = useState(false);
-  const [clientVersion, setClientVersion] = useState("");
-  const [reqVersion,    setReqVersion]    = useState("");
-  const [downloadUrl,   setDownloadUrl]   = useState("");
-
   // Trade-automation disclosure modal (shown every login when feature is on)
   const [showAutomationDisclosure, setShowAutomationDisclosure] = useState(false);
 
   const navigate = useNavigate();
 
-  const applyRequiredVersion = useCallback((required, dlUrl) => {
-    // Dev server (vite) uses package.json as-is; dist:win bumps version + updates server.
-    // Skip the gate locally so UI work isn't blocked by a production version mismatch.
-    if (import.meta.env.DEV) return false;
-
-    const client = window.APP_VERSION || "0.0.0";
-    if (required && isOutdated(client, required)) {
-      setClientVersion(client);
-      setReqVersion(required);
-      setDownloadUrl(dlUrl || "");
-      setUpdateNeeded(true);
-      return true;
-    }
-    return false;
-  }, []);
-
-  /** Public version check — does not depend on login or remember-me. */
-  const checkForUpdate = useCallback(async () => {
-    try {
-      const res = await authApi.clientVersion();
-      return applyRequiredVersion(res.data.required_version, res.data.download_url);
-    } catch {
-      return false;
-    }
-  }, [applyRequiredVersion]);
-
-  // Always check version on launch, then restore remember-me if still allowed
   useEffect(() => {
     let cancelled = false;
 
     async function boot() {
-      const blocked = await checkForUpdate();
-      if (cancelled) return;
-      if (blocked) {
-        setChecking(false);
-        return;
-      }
-
       const remember = localStorage.getItem("tf_remember_me") === "true";
       const storedToken = localStorage.getItem("tf_token");
 
@@ -98,19 +42,9 @@ function App() {
       try {
         const res = await authApi.me();
         if (cancelled) return;
-        if (applyRequiredVersion(res.data.required_version, res.data.download_url)) {
-          return;
-        }
         setToken(storedToken);
         setUser(res.data.user);
-      } catch (err) {
-        if (err.response?.status === 426) {
-          applyRequiredVersion(
-            err.response.data?.required_version,
-            err.response.data?.download_url,
-          );
-          return;
-        }
+      } catch {
         localStorage.removeItem("tf_token");
         localStorage.removeItem("tf_user");
         localStorage.removeItem("tf_remember_me");
@@ -121,39 +55,9 @@ function App() {
 
     boot();
     return () => { cancelled = true; };
-  }, [checkForUpdate, applyRequiredVersion]);
+  }, []);
 
-  // Keep checking while the app is open (remember-me sessions can last 7 days)
-  useEffect(() => {
-    const id = setInterval(checkForUpdate, VERSION_POLL_MS);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") checkForUpdate();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [checkForUpdate]);
-
-  useEffect(() => {
-    const onRequired = (e) => {
-      applyRequiredVersion(e.detail?.required_version, e.detail?.download_url);
-    };
-    window.addEventListener("tf:update-required", onRequired);
-    return () => window.removeEventListener("tf:update-required", onRequired);
-  }, [applyRequiredVersion]);
-
-  /**
-   * Called by Login (and RegisterFlow) after a successful auth response.
-   * The backend now includes `required_version` and `download_url` in the
-   * login/register response so we can gate access before storing the token.
-   */
-  const handleLogin = async (newToken, newUser, requiredVersion, dlUrl, rememberMe = false) => {
-    if (applyRequiredVersion(requiredVersion, dlUrl)) {
-      return;
-    }
-
+  const handleLogin = async (newToken, newUser, rememberMe = false) => {
     localStorage.setItem("tf_token", newToken);
     localStorage.setItem("tf_user", JSON.stringify(newUser));
     localStorage.setItem("tf_remember_me", rememberMe ? "true" : "false");
@@ -227,14 +131,6 @@ function App() {
 
   return (
     <>
-      {updateNeeded && (
-        <UpdateModal
-          clientVersion={clientVersion}
-          requiredVersion={reqVersion}
-          downloadUrl={downloadUrl}
-        />
-      )}
-
       {showAutomationDisclosure && (
         <TradeAutomationDisclosureModal onAcknowledge={handleAutomationAcknowledge} />
       )}

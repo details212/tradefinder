@@ -4,7 +4,7 @@ import {
   User, Lock, TrendingUp, ShieldAlert, Zap, Radio, Lightbulb,
   CheckCircle, AlertCircle, Loader2, Save, RefreshCw, DollarSign, Wallet,
   AtSign, XCircle, Mail, Send, MapPin, Phone, Trash2, Volume2, VolumeX,
-  AlertTriangle,
+  AlertTriangle, Target,
 } from "lucide-react";
 
 // ── Small reusable status banner ──────────────────────────────────────────────
@@ -829,6 +829,226 @@ function AutoCloseBeyondTpSection() {
   );
 }
 
+// ── Scalp profit / loss (server-side, 5-minute Alpaca P/L snapshot) ───────────
+const PREF_SCALP_ENABLED = "scalp_pl_enabled";
+const PREF_SCALP_PROFIT  = "scalp_profit_amt";
+const PREF_SCALP_LOSS    = "scalp_loss_amt";
+
+function ScalpProfitLossSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [profit, setProfit]   = useState("25");
+  const [loss, setLoss]       = useState("25");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [status, setStatus]   = useState(null);
+
+  useEffect(() => {
+    preferencesApi
+      .get()
+      .then((r) => {
+        const p = r.data.preferences ?? {};
+        const v = p[PREF_SCALP_ENABLED];
+        setEnabled(v === true || String(v).toLowerCase() === "true" || v === "1");
+        if (p[PREF_SCALP_PROFIT] != null && p[PREF_SCALP_PROFIT] !== "") {
+          setProfit(String(p[PREF_SCALP_PROFIT]));
+        }
+        if (p[PREF_SCALP_LOSS] != null && p[PREF_SCALP_LOSS] !== "") {
+          setLoss(String(p[PREF_SCALP_LOSS]));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const profitNum = parseFloat(profit);
+  const lossNum   = parseFloat(loss);
+  const profitOk  = Number.isFinite(profitNum) && profitNum >= 0;
+  const lossOk    = Number.isFinite(lossNum) && lossNum >= 0;
+  const anySide   = (profitOk && profitNum > 0) || (lossOk && lossNum > 0);
+
+  async function persist({ nextEnabled, nextProfit, nextLoss }) {
+    setSaving(true);
+    setStatus(null);
+    try {
+      await preferencesApi.update({
+        [PREF_SCALP_ENABLED]: nextEnabled ? "true" : "false",
+        [PREF_SCALP_PROFIT]:  String(nextProfit),
+        [PREF_SCALP_LOSS]:    String(nextLoss),
+      });
+      setEnabled(nextEnabled);
+      setProfit(String(nextProfit));
+      setLoss(String(nextLoss));
+      setStatus({
+        type: "success",
+        message: nextEnabled
+          ? "Saved. Open filled trades will be checked every 5 minutes."
+          : "Saved. Scalp Profit / Loss is off until you enable it.",
+      });
+    } catch {
+      setStatus({ type: "error", message: "Failed to save. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleToggle(next) {
+    if (!next) {
+      const p = profitOk ? profitNum : 0;
+      const l = lossOk ? lossNum : 0;
+      await persist({ nextEnabled: false, nextProfit: p, nextLoss: l });
+      return;
+    }
+    if (next && !anySide) {
+      setStatus({
+        type: "error",
+        message: "Enter a profit and/or loss amount greater than zero before enabling.",
+      });
+      return;
+    }
+    if (!profitOk || !lossOk) {
+      setStatus({ type: "error", message: "Profit and loss amounts must be valid numbers (0 to disable that side)." });
+      return;
+    }
+    await persist({ nextEnabled: next, nextProfit: profitNum, nextLoss: lossNum });
+  }
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (!profitOk || !lossOk) {
+      setStatus({ type: "error", message: "Profit and loss amounts must be valid numbers (0 to disable that side)." });
+      return;
+    }
+    if (enabled && !anySide) {
+      setStatus({
+        type: "error",
+        message: "At least one of profit or loss must be greater than zero while this is enabled.",
+      });
+      return;
+    }
+    await persist({ nextEnabled: enabled, nextProfit: profitNum, nextLoss: lossNum });
+  }
+
+  const inputCls = "bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/40 transition w-full pl-7";
+
+  return (
+    <Section icon={Target} title="Scalp Profit / Loss">
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <form onSubmit={handleSave} className="flex flex-col gap-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Every 5 minutes (at :00, :05, :10, …) the server asks Alpaca for the live
+            mark-to-market P/L on each <em>open TradeFinder trade</em> that has already filled.
+            If that snapshot reaches your dollar target, the same market flatten used by
+            Close Trade is sent — bracket legs are canceled first, then the position is closed.
+          </p>
+
+          <div className="flex flex-col gap-2 px-3 py-3 rounded-lg bg-slate-900/50 border border-slate-700/50">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">How a check works</p>
+            <ul className="flex flex-col gap-1.5 text-xs text-slate-400 leading-relaxed list-disc pl-4">
+              <li>
+                Example: profit <span className="text-emerald-400">$25</span> and loss{" "}
+                <span className="text-red-400">$25</span> — close when snap P/L is{" "}
+                <span className="text-slate-200">≥ +$25</span> or{" "}
+                <span className="text-slate-200">≤ −$25</span>.
+              </li>
+              <li>
+                P/L is the filled trade vs Alpaca’s current price (Alpaca’s position snapshot
+                when this is your only open ticket in that symbol). Unfilled working orders are ignored.
+              </li>
+              <li>
+                Set either side to <span className="text-slate-300">0</span> to turn that side off
+                (profit-only or stop-only).
+              </li>
+              <li>
+                This is independent of the chart take-profit / stop-loss prices and of
+                “auto-close past take profit or stop loss.” Either feature can fire first.
+              </li>
+            </ul>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 py-1">
+            <span className="text-sm text-slate-300">Enable 5-minute scalp P/L closes</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              disabled={saving}
+              onClick={() => handleToggle(!enabled)}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/50 disabled:opacity-50 ${
+                enabled ? "bg-brand-600" : "bg-slate-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                  enabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1.5">Close when profit reaches</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500/80 text-sm">$</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={profit}
+                  onChange={(e) => { setProfit(e.target.value); setStatus(null); }}
+                  placeholder="25.00"
+                  disabled={saving}
+                  className={inputCls}
+                />
+              </div>
+              <p className="text-[11px] text-slate-600 mt-1">Take profit. 0 = do not close on gains.</p>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1.5">Close when loss reaches</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-red-400/80 text-sm">$</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={loss}
+                  onChange={(e) => { setLoss(e.target.value); setStatus(null); }}
+                  placeholder="25.00"
+                  disabled={saving}
+                  className={inputCls}
+                />
+              </div>
+              <p className="text-[11px] text-slate-600 mt-1">Stop loss (absolute dollars). 0 = do not close on losses.</p>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Checks are snapshots, not tick-by-tick. Price can move through your number between
+            5-minute polls, and the flatten is a market order — fill is not guaranteed at $25
+            even. Requires Alpaca credentials and an open filled trade in TradeFinder. Paper and
+            live use the same logic.
+          </p>
+
+          <StatusBanner status={status} />
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="self-start flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save thresholds
+          </button>
+        </form>
+      )}
+    </Section>
+  );
+}
+
 // ── Close unmanaged Alpaca activity (server-side, opt-in, not recommended) ────
 const PREF_CLOSE_NON_CLIENT = "close_non_client_alpaca";
 
@@ -1645,6 +1865,7 @@ export default function AccountSettings({ user, onUserUpdated }) {
           onRefresh={loadAccount}
         />
         <AutoCloseBeyondTpSection />
+        <ScalpProfitLossSection />
         <CloseNonClientAlpacaSection />
         <LiveStreamSettingsSection />
         <TradeIdeasSection />

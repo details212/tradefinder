@@ -62,13 +62,58 @@ export function parseTs(v) {
   return Number.isNaN(d.getTime()) ? null : d.getTime();
 }
 
-export const EXIT_LABELS = {
-  bracket_tp: "Bracket TP",
-  bracket_sl: "Bracket SL",
-  auto_close_tp: "Auto TP",
-  auto_close_sl: "Auto SL",
-  manual: "Manual",
+/** Unique exit-method copy. `code` is what we store on orders.exit_method. */
+export const EXIT_METHOD_INFO = {
+  bracket_tp: {
+    label: "Bracket TP",
+    message: "Closed by the Alpaca bracket take-profit limit.",
+    cls: "text-emerald-400 bg-emerald-900/30 border-emerald-700/50",
+  },
+  bracket_sl: {
+    label: "Bracket SL",
+    message: "Closed by the Alpaca bracket stop-loss.",
+    cls: "text-red-400 bg-red-900/30 border-red-700/50",
+  },
+  auto_close_tp: {
+    label: "Auto TP",
+    message: "Closed by Trade automation after a completed 5-minute bar closed beyond target.",
+    cls: "text-amber-400 bg-amber-900/30 border-amber-700/50",
+  },
+  auto_close_sl: {
+    label: "Auto SL",
+    message: "Closed by Trade automation after a completed 5-minute bar closed beyond stop.",
+    cls: "text-orange-400 bg-orange-900/30 border-orange-700/50",
+  },
+  scalp_tp: {
+    label: "Scalp P/L profit",
+    message: "Closed by Scalp Profit / Loss: the 5-minute Alpaca snapshot P/L reached your profit threshold.",
+    cls: "text-emerald-300 bg-teal-950/50 border-teal-700/60",
+  },
+  scalp_sl: {
+    label: "Scalp P/L loss",
+    message: "Closed by Scalp Profit / Loss: the 5-minute Alpaca snapshot P/L reached your loss threshold.",
+    cls: "text-rose-300 bg-rose-950/50 border-rose-700/60",
+  },
+  manual: {
+    label: "Manual",
+    message: "Closed manually with Close Trade.",
+    cls: "text-slate-300 bg-slate-800/60 border-slate-600/50",
+  },
 };
+
+export const EXIT_LABELS = Object.fromEntries(
+  Object.entries(EXIT_METHOD_INFO).map(([code, info]) => [code, info.label]),
+);
+
+export function exitMethodLabel(method) {
+  if (!method) return "—";
+  return EXIT_METHOD_INFO[method]?.label ?? method;
+}
+
+export function exitMethodMessage(method) {
+  if (!method) return null;
+  return EXIT_METHOD_INFO[method]?.message ?? null;
+}
 
 function num(v) {
   if (v == null || v === "") return null;

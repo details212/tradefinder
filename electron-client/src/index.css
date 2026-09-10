@@ -81,3 +81,12 @@
 .oob-card-flash {
   animation: oob-card-flash 1.1s ease-in-out infinite;
 }
+
+/* Sidebar version — client is behind required build */
+@keyframes tf-upgrade-flash {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
+}
+.tf-upgrade-flash {
+  animation: tf-upgrade-flash 0.8s ease-in-out infinite;
+}

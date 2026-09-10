@@ -19,6 +19,8 @@ import {
   analyzeClosedTrades,
   compareAlpacaDetail,
   EXIT_LABELS,
+  exitMethodLabel,
+  exitMethodMessage,
   isRealizedClose,
   summarizeAudits,
 } from "../utils/closedTradeAudit";
@@ -162,7 +164,9 @@ function AlpacaVerify({ row }) {
   const matchMethod = !d.inferredMethod || d.inferredMethod === row.order.exit_method
     || (d.inferredMethod === "manual" && (row.order.exit_method === "manual"
       || row.order.exit_method === "auto_close_tp"
-      || row.order.exit_method === "auto_close_sl"));
+      || row.order.exit_method === "auto_close_sl"
+      || row.order.exit_method === "scalp_tp"
+      || row.order.exit_method === "scalp_sl"));
 
   return (
     <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-950/40 px-3 py-2">
@@ -232,6 +236,24 @@ function ExpandedRow({ row, onReview }) {
           <DigestRow label="Fill" value={row.fill != null ? `$${row.fill.toFixed(2)}` : "—"} color={slipCls(row.entrySlipPerShare)} />
           <DigestRow label="Stop" value={row.stop != null ? `$${row.stop.toFixed(2)}` : "—"} />
           <DigestRow label="Target" value={row.target != null ? `$${row.target.toFixed(2)}` : "—"} />
+          <DigestRow
+            label="Exit method"
+            value={exitMethodLabel(row.order.exit_method)}
+            color={
+              row.order.exit_method === "scalp_tp" || row.order.exit_method === "scalp_sl"
+                ? "text-teal-300"
+                : "text-slate-200"
+            }
+          />
+          {exitMethodMessage(row.order.exit_method) && (
+            <p className={`mt-2 text-[11px] leading-snug rounded-lg px-2.5 py-2 border ${
+              row.order.exit_method === "scalp_tp" || row.order.exit_method === "scalp_sl"
+                ? "text-teal-200 bg-teal-950/40 border-teal-800/50"
+                : "text-slate-400 bg-slate-900/50 border-slate-700/50"
+            }`}>
+              {exitMethodMessage(row.order.exit_method)}
+            </p>
+          )}
           <DigestRow
             label={row.order.exit_price != null ? "Exit fill" : "Inferred exit"}
             value={row.exitPrice != null ? `$${row.exitPrice.toFixed(2)}` : "—"}
@@ -521,7 +543,7 @@ export default function ClosedTradesPanel({ onClose }) {
           </p>
         ) : (
           <div className="min-w-0 overflow-x-auto">
-            <div className="grid grid-cols-[5.2rem_1.6rem_4.2rem_4.4rem_4.4rem_4.4rem_5rem_4.8rem_minmax(7rem,1fr)_5.4rem] gap-x-2 px-4 py-2 border-y border-slate-800/80">
+            <div className="grid grid-cols-[5.2rem_1.6rem_4.2rem_4.4rem_4.4rem_4.4rem_7.2rem_4.8rem_minmax(7rem,1fr)_5.4rem] gap-x-2 px-4 py-2 border-y border-slate-800/80">
               <SortTh id="ticker" label="Ticker" sort={sort} onSort={onSort} />
               <span />
               <SortTh id="fill" label="Fill" sort={sort} onSort={onSort} />
@@ -542,7 +564,7 @@ export default function ClosedTradesPanel({ onClose }) {
                     <button
                       type="button"
                       onClick={() => setExpandedId(open ? null : r.order.id)}
-                      className={`w-full grid grid-cols-[5.2rem_1.6rem_4.2rem_4.4rem_4.4rem_4.4rem_5rem_4.8rem_minmax(7rem,1fr)_5.4rem] gap-x-2 px-4 py-2 items-center text-left hover:bg-slate-800/40 transition ${
+                      className={`w-full grid grid-cols-[5.2rem_1.6rem_4.2rem_4.4rem_4.4rem_4.4rem_7.2rem_4.8rem_minmax(7rem,1fr)_5.4rem] gap-x-2 px-4 py-2 items-center text-left hover:bg-slate-800/40 transition ${
                         r.severity === 3 ? "bg-red-950/20" : r.severity === 2 ? "bg-amber-950/10" : ""
                       }`}
                     >
@@ -570,8 +592,15 @@ export default function ClosedTradesPanel({ onClose }) {
                       <span className={`text-[11px] font-mono tabular-nums ${slipCls(r.exitSlipPerShare)}`}>
                         {r.exitSlipPerShare != null ? `${signedN(r.exitSlipPerShare, 2)}` : "—"}
                       </span>
-                      <span className="text-[10px] text-slate-400 truncate">
-                        {r.order.exit_method ? (EXIT_LABELS[r.order.exit_method] ?? r.order.exit_method) : "—"}
+                      <span
+                        className={`text-[10px] truncate ${
+                          r.order.exit_method === "scalp_tp" || r.order.exit_method === "scalp_sl"
+                            ? "text-teal-300 font-semibold"
+                            : "text-slate-400"
+                        }`}
+                        title={exitMethodMessage(r.order.exit_method) || exitMethodLabel(r.order.exit_method)}
+                      >
+                        {exitMethodLabel(r.order.exit_method)}
                       </span>
                       <span className={`text-[11px] font-mono font-semibold tabular-nums ${plCls(r.pl)}`}>
                         {signed$(r.pl)}

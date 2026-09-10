@@ -54,11 +54,9 @@ function RegisterFlow({ onSuccess, onBack }) {
       onSuccess(
         storedToken,
         meRes.data.user,
-        meRes.data.required_version,
-        meRes.data.download_url,
       );
     } catch {
-      onSuccess(localStorage.getItem("tf_token"), null, null, null);
+      onSuccess(localStorage.getItem("tf_token"), null);
     }
   }
 
@@ -125,7 +123,7 @@ function RegisterFlow({ onSuccess, onBack }) {
         setStep(4);
       } else {
         // Stripe not configured; proceed directly to dashboard
-        onSuccess(res.data.token, res.data.user, res.data.required_version, res.data.download_url);
+        onSuccess(res.data.token, res.data.user);
       }
     } catch (err) {
       setError(err.response?.data?.error ?? "Failed to create account.");
@@ -602,7 +600,7 @@ export default function Login({ onLogin }) {
     setLoading(true);
     try {
       const res = await authApi.login(username, password, useRemember);
-      onLogin(res.data.token, res.data.user, res.data.required_version, res.data.download_url, useRemember);
+      onLogin(res.data.token, res.data.user, useRemember);
     } catch (err) {
       if (err.response?.status === 402) {
         const { client_secret, publishable_key, message } = err.response.data || {};

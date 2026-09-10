@@ -12,6 +12,7 @@ import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
 import { Loader2, AlertCircle, X, TrendingUp, TrendingDown, RefreshCw, LogOut, ShieldCheck, ShieldAlert, Pencil, Check } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 import { compactTicker } from "../utils/tradeExecution";
+import { EXIT_METHOD_INFO, exitMethodMessage } from "../utils/closedTradeAudit";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
 
@@ -425,26 +426,24 @@ function applyRR(chart, rr) {
 }
 
 // ── Exit method badge ─────────────────────────────────────────────────────────
-const EXIT_METHOD_META = {
-  bracket_tp:    { label: "Bracket TP",    cls: "text-emerald-400 bg-emerald-900/30 border-emerald-700/50", desc: "Exchange filled your take-profit limit order" },
-  bracket_sl:    { label: "Bracket SL",    cls: "text-red-400    bg-red-900/30    border-red-700/50",    desc: "Exchange filled your stop-loss order" },
-  auto_close_tp: { label: "Auto-Close TP", cls: "text-amber-400  bg-amber-900/30  border-amber-700/50",  desc: "System sent a market order after a closed 5m bar closed beyond target" },
-  auto_close_sl: { label: "Auto-Close SL", cls: "text-orange-400 bg-orange-900/30 border-orange-700/50", desc: "System sent a market order after a closed 5m bar closed beyond stop" },
-  manual:        { label: "Manual",        cls: "text-slate-300  bg-slate-800/60  border-slate-600/50",  desc: "Closed manually via Close Trade button" },
-};
-
 function ExitMethodBadge({ method }) {
-  const meta = method ? EXIT_METHOD_META[method] : null;
+  const meta = method ? EXIT_METHOD_INFO[method] : null;
   if (!meta) {
     return <span className="text-slate-600 text-xs italic">Unknown</span>;
   }
+  const message = exitMethodMessage(method);
   return (
-    <span
-      title={meta.desc}
-      className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-semibold ${meta.cls}`}
-    >
-      {meta.label}
-    </span>
+    <div className="flex flex-col gap-1.5 max-w-[16rem]">
+      <span
+        title={message || meta.message}
+        className={`inline-flex items-center self-start px-2 py-0.5 rounded border text-[11px] font-semibold ${meta.cls}`}
+      >
+        {meta.label}
+      </span>
+      {message && (
+        <p className="text-[11px] leading-snug text-slate-400">{message}</p>
+      )}
+    </div>
   );
 }
 
@@ -964,7 +963,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     const m = order.exit_method;
     if (m === "bracket_tp"    || m === "auto_close_tp") return "target";
     if (m === "bracket_sl"    || m === "auto_close_sl") return "stop";
-    if (m === "manual") return "manual";
+    if (m === "scalp_tp" || m === "scalp_sl" || m === "manual") return "manual";
 
     // Fallback: derive from exit-price proximity for legacy rows that
     // pre-date exit_method tracking.
