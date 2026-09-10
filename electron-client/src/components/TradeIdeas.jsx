@@ -628,6 +628,9 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   const [quickOpenResult,  setQuickOpenResult]  = useState({});   // ticker → { ok, message } (fades out)
   const [riskPrefs,      setRiskPrefs]      = useState(null);    // { risk_mode, risk_value } from Account Settings
   const [portfolioValue, setPortfolioValue] = useState(null);    // numeric string from Alpaca (for % risk sizing)
+  // Quick Open fires a bracket-less market order (no stop/target) — only offer it
+  // when Scalp Profit / Loss is on, so there's still some automated exit watching it.
+  const [scalpPlEnabled, setScalpPlEnabled] = useState(false);
   const [showPrevDays,   setShowPrevDays]   = useState(false);
   /** Minimum MA alignment score (Info column) to show; 0 = no filter. Resets to user default when switching strategy. */
   const [minInfoScore,    setMinInfoScore]   = useState(3);
@@ -668,6 +671,8 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
         }
         if (p.tradeideas_direction) setDirectionFilter(p.tradeideas_direction);
         if (p.risk_mode && p.risk_value) setRiskPrefs(p);
+        const s = p.scalp_pl_enabled;
+        setScalpPlEnabled(s === true || String(s).toLowerCase() === "true" || s === "1");
       })
       .catch(() => {});
   }, []);
@@ -1189,7 +1194,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                         <th className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
                           {COL_META[col]?.label ?? col}
                         </th>
-                        {col === "ticker" && (
+                        {col === "ticker" && scalpPlEnabled && (
                           <th className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
                             Quick Open
                           </th>
@@ -1218,7 +1223,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                     <React.Fragment key={`${row.ticker}-${rowDate}-${i}`}>
                       {showDayBreak && (
                         <tr key={`break-${rowDate}`} className="bg-slate-800/70">
-                          <td colSpan={columns.length + 3} className="py-2 text-center text-xs font-semibold text-slate-400 tracking-wider uppercase">
+                          <td colSpan={columns.length + (scalpPlEnabled ? 3 : 2)} className="py-2 text-center text-xs font-semibold text-slate-400 tracking-wider uppercase">
                             {dateLabel}
                           </td>
                         </tr>
@@ -1260,7 +1265,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                             />
                           )}
                         </td>
-                        {isTickerCol && (
+                        {isTickerCol && scalpPlEnabled && (
                           <td className="px-3 py-2 whitespace-nowrap">
                             {(() => {
                               const busy   = !!quickOpenLoading[row.ticker];
