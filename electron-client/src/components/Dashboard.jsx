@@ -133,6 +133,7 @@ const LIVE_STREAM_POLL_MS       = 60_000;
 const LIVE_STREAM_MINUTES  = 15;
 const LIVE_STREAM_MIN_INFO = 3;
 const STREAM_NEW_FLASH_MS  = 60_000;
+const CLIENT_VERSION_POLL_MS    = 30 * 60_000; // re-check for a version bump every 30 min while open
 
 function isClientOutdated(client, required) {
   if (!client || !required) return false;
@@ -443,18 +444,24 @@ export default function Dashboard({ user, onLogout }) {
     if (import.meta.env.DEV) return;
 
     let cancelled = false;
-    authApi.clientVersion()
-      .then((r) => {
-        if (cancelled) return;
-        const required = r.data?.required_version;
-        const client = window.APP_VERSION || "0.0.0";
-        if (isClientOutdated(client, required)) {
-          setClientOutdated(true);
-          setUpgradeUrl((r.data?.download_url || "").trim());
-        }
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
+    const checkVersion = () => {
+      authApi.clientVersion()
+        .then((r) => {
+          if (cancelled) return;
+          const required = r.data?.required_version;
+          const client = window.APP_VERSION || "0.0.0";
+          if (isClientOutdated(client, required)) {
+            setClientOutdated(true);
+            setUpgradeUrl((r.data?.download_url || "").trim());
+          }
+        })
+        .catch(() => {});
+    };
+    checkVersion();
+    // Re-check periodically so a version bump on the server reaches clients
+    // that are already open, not just ones launched after the bump.
+    const id = setInterval(checkVersion, CLIENT_VERSION_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   return (

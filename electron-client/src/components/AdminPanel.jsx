@@ -321,12 +321,51 @@ export default function AdminPanel({ user }) {
   const OPEN_ORDERS_PER_PAGE   = 24;
   const CLOSED_ORDERS_PER_PAGE = 20;
 
+  // Hide unfilled dead orders
+  const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
+  const isDeadOrder = (o) => {
+    if (!DEAD_STATUSES.has(o.status)) return false;
+    if (o.exit_method || o.closed_at || o.filled_avg_price != null) return false;
+    return true;
+  };
+  const visibleOrders = useMemo(
+    () => orders.filter(o => !isDeadOrder(o)),
+    [orders]
+  );
+
+  const tabOrders = useMemo(() => {
+    const isOpenTab = ordersFilter === "open";
+    let list = visibleOrders.filter(o => isOpenTab ? o.is_open && !isRealizedClose(o) : isRealizedClose(o));
+    const needle = closedSymbolQuery.trim().toUpperCase();
+    if (!isOpenTab && needle) {
+      const needleCompact = compactTicker(needle);
+      list = list.filter((o) => {
+        const sym = String(o.ticker || "").toUpperCase();
+        return sym.includes(needle) || compactTicker(sym).includes(needleCompact);
+      });
+    }
+    return list;
+  }, [visibleOrders, ordersFilter, closedSymbolQuery]);
+
+  // The exact page of open-trade cards currently rendered (see OpenTradesCards below).
+  const pagedOpenOrders = useMemo(() => {
+    if (ordersFilter !== "open") return [];
+    return tabOrders
+      .slice()
+      .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
+      .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE);
+  }, [tabOrders, ordersFilter, ordersPage]);
+
+  // Lazy-load quotes only for the open-trade cards actually on screen right now
+  // (the current page), instead of every open position at once — avoids firing
+  // one big batch of Alpaca quote requests the instant the Main page loads,
+  // and the request naturally shrinks/grows as the user pages through trades.
   const openOrderTickers = useMemo(() => {
     const s = new Set(
-      orders.filter(o => o.is_open).map(o => String(o.ticker || "").trim().toUpperCase()).filter(Boolean)
+      pagedOpenOrders.map(o => String(o.ticker || "").trim().toUpperCase()).filter(Boolean)
     );
     return [...s].sort();
-  }, [orders]);
+  }, [pagedOpenOrders]);
 
   const { quotes: liveQuotes, refetch: refetchOpenQuotes } = useFreshAlpacaQuotes(
     openOrderTickers,
@@ -372,32 +411,6 @@ export default function AdminPanel({ user }) {
       clearInterval(id);
     };
   }, [syncOrders]);
-
-  // Hide unfilled dead orders
-  const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
-  const isDeadOrder = (o) => {
-    if (!DEAD_STATUSES.has(o.status)) return false;
-    if (o.exit_method || o.closed_at || o.filled_avg_price != null) return false;
-    return true;
-  };
-  const visibleOrders = useMemo(
-    () => orders.filter(o => !isDeadOrder(o)),
-    [orders]
-  );
-
-  const tabOrders = useMemo(() => {
-    const isOpenTab = ordersFilter === "open";
-    let list = visibleOrders.filter(o => isOpenTab ? o.is_open && !isRealizedClose(o) : isRealizedClose(o));
-    const needle = closedSymbolQuery.trim().toUpperCase();
-    if (!isOpenTab && needle) {
-      const needleCompact = compactTicker(needle);
-      list = list.filter((o) => {
-        const sym = String(o.ticker || "").toUpperCase();
-        return sym.includes(needle) || compactTicker(sym).includes(needleCompact);
-      });
-    }
-    return list;
-  }, [visibleOrders, ordersFilter, closedSymbolQuery]);
 
   const PANEL_TABS = [
     { id: "trades",        label: "My Trades" },
@@ -536,10 +549,7 @@ export default function AdminPanel({ user }) {
             <>
               {ordersFilter === "open" ? (
                 <OpenTradesCards
-                  orders={tabOrders
-                    .slice()
-                    .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
-                    .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE)}
+                  orders={pagedOpenOrders}
                   liveQuotes={liveQuotes}
                   onDetail={openDetail}
                   onChart={setReviewOrder}
