@@ -209,6 +209,39 @@ function clearGreyElems() {
   rrGreyElems = [];
 }
 
+// Vertical "trade started" marker — independent of stop/target so it also shows
+// for market orders placed with no bracket (which have no R/R zone to draw).
+function drawEntryStartLine(chart, entryTime) {
+  if (!chart || entryTime == null) return;
+  const xPx = chart.xAxis[0].toPixels(entryTime, false);
+  if (xPx < chart.plotLeft || xPx > chart.plotLeft + chart.plotWidth) return;
+  rrGreyElems.push(chart.renderer.path()
+    .attr({
+      d: `M ${xPx} ${chart.plotTop} L ${xPx} ${chart.plotTop + chart.plotHeight}`,
+      stroke: "rgba(255,255,255,0.25)", "stroke-width": 1, "stroke-dasharray": "3,3", zIndex: 6,
+    }).add());
+  rrGreyElems.push(chart.renderer.text("Start", xPx + 4, chart.plotTop + 12)
+    .attr({ zIndex: 7 })
+    .css({ color: "rgba(255,255,255,0.4)", fontSize: "9px", fontWeight: "600" }).add());
+}
+
+// Vertical "trade ended" marker — fallback for market orders with no stop/target,
+// where drawColoredZones (which already draws its own richer close marker for
+// bracket trades) never runs.
+function drawTradeEndLine(chart, closeTime) {
+  if (!chart || closeTime == null) return;
+  const xPx = chart.xAxis[0].toPixels(closeTime, false);
+  if (xPx < chart.plotLeft || xPx > chart.plotLeft + chart.plotWidth) return;
+  rrGreyElems.push(chart.renderer.path()
+    .attr({
+      d: `M ${xPx} ${chart.plotTop} L ${xPx} ${chart.plotTop + chart.plotHeight}`,
+      stroke: "rgba(255,255,255,0.25)", "stroke-width": 1, "stroke-dasharray": "3,3", zIndex: 6,
+    }).add());
+  rrGreyElems.push(chart.renderer.text("✕ Closed", xPx + 4, chart.plotTop + 12)
+    .attr({ zIndex: 7 })
+    .css({ color: "rgba(255,255,255,0.4)", fontSize: "9px", fontWeight: "600" }).add());
+}
+
 function applyClipsAtEntry(chart, entryTime) {
   if (!entryTime) return;
   const svg = chart.container.querySelector("svg");
@@ -563,7 +596,19 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
 
   const chartRef    = useRef(null);
   const rrRef       = useRef(null);
+  const entryLineTimeRef = useRef(null);
+  const closeLineTimeRef = useRef(null);
   const containerRef = useRef(null);
+
+  // Trade-start / trade-end times for the vertical markers — resolved independently
+  // of rr so they still show for market orders with no stop/target (no bracket).
+  const entryLineTime = useMemo(() => resolveChartEntryTime(order, bars), [order, bars]);
+  const closeLineTime = useMemo(() => {
+    const ct = resolveChartCloseTime(order);
+    if (ct == null) return null;
+    const BAR_MS = 5 * 60 * 1000;
+    return Math.floor(ct / BAR_MS) * BAR_MS;
+  }, [order]);
   const chartHRef   = useRef(null);
   const barCacheRef = useRef({ key: "", polygon: null, alpaca: null });
 
@@ -704,12 +749,15 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
       from = new Date(entryRaw);
       from.setDate(from.getDate() - 1);
 
-      // Anchor the end on the close date plus 1 calendar day (capped at today)
-      const closeRaw = order.synced_at
-        ? (order.synced_at.endsWith("Z") ? order.synced_at : order.synced_at + "Z")
-        : entryRaw;
+      // Anchor the end on the close date (closed_at is authoritative — same
+      // priority as resolveChartCloseTime; synced_at is only a fallback for
+      // legacy rows and can drift days/weeks past the real close as background
+      // sync keeps re-touching it, which used to pull in far more bars than
+      // the chart needed). No padding: the close instant falls within this
+      // calendar day, and the post-fetch filter below trims to the exact minute.
+      const closeRawSrc = order.closed_at ?? order.synced_at ?? entryRaw;
+      const closeRaw = closeRawSrc.endsWith("Z") ? closeRawSrc : closeRawSrc + "Z";
       to = new Date(closeRaw);
-      to.setDate(to.getDate() + 1);
       if (to > today) to = today;
     } else {
       // Open trade — rolling 28-day window
@@ -857,15 +905,20 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars, barTimeMs, chartH]);
 
-  // Keep rrRef in sync
+  // Keep rrRef / entryLineTimeRef / closeLineTimeRef in sync
   useEffect(() => { rrRef.current = rr; }, [rr]);
+  useEffect(() => { entryLineTimeRef.current = entryLineTime; }, [entryLineTime]);
+  useEffect(() => { closeLineTimeRef.current = closeLineTime; }, [closeLineTime]);
 
   // Draw R/R levels and auto-expand Y-axis to show full drawing
   useEffect(() => {
     const chart = chartRef.current?.chart;
     applyRR(chart, rr);
     expandYAxisForRR(chart, rr);
-  }, [rr, bars]);
+    drawEntryStartLine(chart, entryLineTime);
+    // Bracket trades already get a richer close marker from drawColoredZones.
+    if (!rr?.stop || !rr?.target) drawTradeEndLine(chart, closeLineTime);
+  }, [rr, bars, entryLineTime, closeLineTime]);
 
   // Re-clip + redraw on render (zoom / scroll)
   useEffect(() => {
@@ -873,10 +926,15 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     if (!chart) return;
     const onRender = () => {
       const cur = rrRef.current;
-      if (!cur?.entryTime) return;
-      applyClipsAtEntry(chart, cur.entryTime);
-      drawGreyLeftLines(chart, cur);
-      drawColoredZones(chart, cur);
+      if (cur?.entryTime) {
+        applyClipsAtEntry(chart, cur.entryTime);
+        drawGreyLeftLines(chart, cur);
+        drawColoredZones(chart, cur);
+      } else {
+        clearGreyElems();
+      }
+      drawEntryStartLine(chart, entryLineTimeRef.current);
+      if (!cur?.stop || !cur?.target) drawTradeEndLine(chart, closeLineTimeRef.current);
     };
     Highcharts.addEvent(chart, "render", onRender);
     return () => Highcharts.removeEvent(chart, "render", onRender);
@@ -963,7 +1021,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     const m = order.exit_method;
     if (m === "bracket_tp"    || m === "auto_close_tp") return "target";
     if (m === "bracket_sl"    || m === "auto_close_sl") return "stop";
-    if (m === "scalp_tp" || m === "scalp_sl" || m === "manual") return "manual";
+    if (m === "scalp_tp" || m === "scalp_sl" || m === "manual" || m === "session_close") return "manual";
 
     // Fallback: derive from exit-price proximity for legacy rows that
     // pre-date exit_method tracking.

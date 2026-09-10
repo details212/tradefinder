@@ -166,7 +166,8 @@ function AlpacaVerify({ row }) {
       || row.order.exit_method === "auto_close_tp"
       || row.order.exit_method === "auto_close_sl"
       || row.order.exit_method === "scalp_tp"
-      || row.order.exit_method === "scalp_sl"));
+      || row.order.exit_method === "scalp_sl"
+      || row.order.exit_method === "session_close"));
 
   return (
     <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-950/40 px-3 py-2">

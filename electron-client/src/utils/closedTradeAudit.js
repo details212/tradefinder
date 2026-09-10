@@ -99,6 +99,11 @@ export const EXIT_METHOD_INFO = {
     message: "Closed manually with Close Trade.",
     cls: "text-slate-300 bg-slate-800/60 border-slate-600/50",
   },
+  session_close: {
+    label: "Session close",
+    message: "Closed by Close All Trades — 5 minutes before the regular session close.",
+    cls: "text-sky-300 bg-sky-950/50 border-sky-700/60",
+  },
 };
 
 export const EXIT_LABELS = Object.fromEntries(

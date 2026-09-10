@@ -4,7 +4,7 @@ import {
   User, Lock, TrendingUp, ShieldAlert, Zap, Radio, Lightbulb,
   CheckCircle, AlertCircle, Loader2, Save, RefreshCw, DollarSign, Wallet,
   AtSign, XCircle, Mail, Send, MapPin, Phone, Trash2, Volume2, VolumeX,
-  AlertTriangle, Target,
+  AlertTriangle, Target, Clock,
 } from "lucide-react";
 
 // ── Small reusable status banner ──────────────────────────────────────────────
@@ -821,6 +821,164 @@ function AutoCloseBeyondTpSection() {
             Breach checks use the close of the last completed 5-minute bar (not live bid/ask
             snapshots). Review live and paper behavior before relying on this for real money.
             Requires Alpaca credentials and an open trade recorded in TradeFinder.
+          </p>
+          <StatusBanner status={status} />
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── Close all trades before the session ends (server-side) ───────────────────
+const PREF_CLOSE_ALL_BEFORE_SESSION_END = "close_all_before_session_end";
+
+function CloseAllTradesSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    preferencesApi
+      .get()
+      .then((r) => {
+        const v = r.data.preferences?.[PREF_CLOSE_ALL_BEFORE_SESSION_END];
+        setEnabled(v === true || String(v).toLowerCase() === "true" || v === "1");
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleToggle() {
+    const next = !enabled;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await preferencesApi.update({ [PREF_CLOSE_ALL_BEFORE_SESSION_END]: next ? "true" : "false" });
+      setEnabled(next);
+      setStatus({ type: "success", message: "Preference saved." });
+    } catch {
+      setStatus({ type: "error", message: "Failed to save. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section icon={Clock} title="Close all trades">
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            At <span className="text-slate-400">3:55 PM ET</span>—5 minutes before the regular
+            trading session closes—market-flatten every open TradeFinder trade, so nothing is
+            left held overnight. Runs Monday–Friday while the app server is running.
+          </p>
+          <div className="flex items-center justify-between gap-4 py-1">
+            <span className="text-sm text-slate-300">Close all open trades 5 minutes before session end</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              disabled={saving}
+              onClick={handleToggle}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/50 disabled:opacity-50 ${
+                enabled ? "bg-brand-600" : "bg-slate-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                  enabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Does not account for market holidays or early-close days — the check always fires at
+            3:55 PM ET on weekdays.
+          </p>
+          <StatusBanner status={status} />
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── Close all trades before the weekend (server-side, Fridays only) ──────────
+const PREF_CLOSE_ALL_BEFORE_WEEKEND = "close_all_before_weekend";
+
+function CloseAllTradesBeforeWeekendSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    preferencesApi
+      .get()
+      .then((r) => {
+        const v = r.data.preferences?.[PREF_CLOSE_ALL_BEFORE_WEEKEND];
+        setEnabled(v === true || String(v).toLowerCase() === "true" || v === "1");
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleToggle() {
+    const next = !enabled;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await preferencesApi.update({ [PREF_CLOSE_ALL_BEFORE_WEEKEND]: next ? "true" : "false" });
+      setEnabled(next);
+      setStatus({ type: "success", message: "Preference saved." });
+    } catch {
+      setStatus({ type: "error", message: "Failed to save. Please try again." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section icon={Clock} title="Close all trades before the weekend">
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Every <span className="text-slate-400">Friday at 3:55 PM ET</span>—5 minutes before
+            the regular trading session closes—market-flatten every open TradeFinder trade, so
+            nothing is held over the weekend. Independent of the daily "Close all trades" setting
+            above — enable this one on its own if you're fine holding overnight Monday–Thursday
+            but not over the weekend.
+          </p>
+          <div className="flex items-center justify-between gap-4 py-1">
+            <span className="text-sm text-slate-300">Close all open trades every Friday before the weekend</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              disabled={saving}
+              onClick={handleToggle}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/50 disabled:opacity-50 ${
+                enabled ? "bg-brand-600" : "bg-slate-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                  enabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Does not account for market holidays — the check fires at 3:55 PM ET on whichever day
+            is Friday on the calendar, regardless of early closes.
           </p>
           <StatusBanner status={status} />
         </div>
@@ -1865,6 +2023,8 @@ export default function AccountSettings({ user, onUserUpdated }) {
           onRefresh={loadAccount}
         />
         <AutoCloseBeyondTpSection />
+        <CloseAllTradesSection />
+        <CloseAllTradesBeforeWeekendSection />
         <ScalpProfitLossSection />
         <CloseNonClientAlpacaSection />
         <LiveStreamSettingsSection />
