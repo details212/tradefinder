@@ -225,18 +225,48 @@ function drawEntryStartLine(chart, entryTime) {
     .css({ color: "rgba(255,255,255,0.4)", fontSize: "9px", fontWeight: "600" }).add());
 }
 
-// Vertical "trade ended" marker — fallback for market orders with no stop/target,
-// where drawColoredZones (which already draws its own richer close marker for
-// bracket trades) never runs.
-function drawTradeEndLine(chart, closeTime) {
+// Vertical "trade ended" marker (+ exit price line) — fallback for market
+// orders with no stop/target, where drawColoredZones (which already draws its
+// own version of both for bracket trades) never runs.
+function drawTradeEndLine(chart, closeTime, rr, isLong) {
   if (!chart || closeTime == null) return;
   const xPx = chart.xAxis[0].toPixels(closeTime, false);
   if (xPx < chart.plotLeft || xPx > chart.plotLeft + chart.plotWidth) return;
+  const chartRight = chart.plotLeft + chart.plotWidth;
+
   rrGreyElems.push(chart.renderer.path()
     .attr({
       d: `M ${xPx} ${chart.plotTop} L ${xPx} ${chart.plotTop + chart.plotHeight}`,
       stroke: "rgba(255,255,255,0.25)", "stroke-width": 1, "stroke-dasharray": "3,3", zIndex: 6,
     }).add());
+
+  const ep = rr?.exitPrice;
+  const entry = rr?.entry;
+  if (ep != null && entry != null) {
+    const epY = chart.yAxis[0].toPixels(Number(ep), false);
+    const isWin = isLong ? Number(ep) > entry : Number(ep) < entry;
+    const epColor = isWin ? "#34d399" : "#f87171";
+    if (epY >= chart.plotTop && epY <= chart.plotTop + chart.plotHeight) {
+      // Dotted line from close marker to chart right
+      rrGreyElems.push(chart.renderer.path()
+        .attr({
+          d: `M ${xPx} ${epY} L ${chartRight} ${epY}`,
+          stroke: epColor, "stroke-width": 1, "stroke-dasharray": "4,3", zIndex: 6,
+        }).add());
+      // Exit label
+      const qty = rr?.qty ?? 1;
+      const pl = (isLong ? 1 : -1) * (Number(ep) - entry) * qty;
+      const plStr = `${pl >= 0 ? "+" : ""}$${Math.abs(pl).toFixed(2)}`;
+      rrGreyElems.push(chart.renderer.text(
+        `Exit $${Number(ep).toFixed(2)}  ${plStr}`,
+        xPx + 5, epY - 4,
+      )
+        .attr({ zIndex: 7 })
+        .css({ color: epColor, fontSize: "10px", fontWeight: "bold",
+          backgroundColor: "rgba(15,23,42,0.88)", padding: "2px 6px", borderRadius: "3px" }).add());
+    }
+  }
+
   rrGreyElems.push(chart.renderer.text("✕ Closed", xPx + 4, chart.plotTop + 12)
     .attr({ zIndex: 7 })
     .css({ color: "rgba(255,255,255,0.4)", fontSize: "9px", fontWeight: "600" }).add());
@@ -651,10 +681,13 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
   // the bar the user clicked.  We need the bar's close to reproduce the original drawing.
   // Falls back to order.entry_price when bars haven't loaded or entry_time is absent.
   useEffect(() => {
-    if (!order.stop_price) return;
-
-    const stop    = Number(order.stop_price);
-    const rrRatio = Number(order.rr_ratio ?? 2);
+    // Plain market orders with no bracket (e.g. Trade Ideas "Quick Open") have
+    // no stop/target at all — still build rr so entry/exit/timeline data shows,
+    // just leave stop/target/rrRatio null. Panels that need an R/R plan (Setup,
+    // Round-trip Slippage, the R/R zone drawing) check for that themselves.
+    const hasStop = order.stop_price != null;
+    const stop    = hasStop ? Number(order.stop_price) : null;
+    const rrRatio = hasStop ? Number(order.rr_ratio ?? 2) : null;
 
     const entryTime = resolveChartEntryTime(order, bars);
     const storedClickOffChart = Boolean(
@@ -679,7 +712,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     // (chartEntry ≠ the smartEntry used when placing the order) that makes the
     // displayed target lower than the real TP, causing confusing "it should have
     // closed" situations.  Only fall back to reconstruction for legacy rows.
-    const target = order.target_price
+    const target = !hasStop ? null : order.target_price
       ? Number(order.target_price)
       : parseFloat((entry + (entry - stop) * rrRatio).toFixed(2));
 
@@ -917,8 +950,8 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
     expandYAxisForRR(chart, rr);
     drawEntryStartLine(chart, entryLineTime);
     // Bracket trades already get a richer close marker from drawColoredZones.
-    if (!rr?.stop || !rr?.target) drawTradeEndLine(chart, closeLineTime);
-  }, [rr, bars, entryLineTime, closeLineTime]);
+    if (!rr?.stop || !rr?.target) drawTradeEndLine(chart, closeLineTime, rr, isLong);
+  }, [rr, bars, entryLineTime, closeLineTime, isLong]);
 
   // Re-clip + redraw on render (zoom / scroll)
   useEffect(() => {
@@ -934,7 +967,7 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
         clearGreyElems();
       }
       drawEntryStartLine(chart, entryLineTimeRef.current);
-      if (!cur?.stop || !cur?.target) drawTradeEndLine(chart, closeLineTimeRef.current);
+      if (!cur?.stop || !cur?.target) drawTradeEndLine(chart, closeLineTimeRef.current, cur, isLong);
     };
     Highcharts.addEvent(chart, "render", onRender);
     return () => Highcharts.removeEvent(chart, "render", onRender);
@@ -1483,16 +1516,20 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
                     {rr.exitPrice != null ? `$${Number(rr.exitPrice).toFixed(2)}` : "—"}
                   </span>
                 </div>
-                <div className="border-t border-slate-800/80 my-0.5" />
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-slate-600">
-                    Stop <span className="font-mono text-red-800">${rr.stop.toFixed(2)}</span>
-                  </span>
-                  <span className="text-slate-700">·</span>
-                  <span className="text-[10px] text-slate-600">
-                    Target <span className="font-mono text-emerald-800">${rr.target.toFixed(2)}</span>
-                  </span>
-                </div>
+                {rr.stop != null && rr.target != null && (
+                  <>
+                    <div className="border-t border-slate-800/80 my-0.5" />
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-slate-600">
+                        Stop <span className="font-mono text-red-800">${rr.stop.toFixed(2)}</span>
+                      </span>
+                      <span className="text-slate-700">·</span>
+                      <span className="text-[10px] text-slate-600">
+                        Target <span className="font-mono text-emerald-800">${rr.target.toFixed(2)}</span>
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -1538,37 +1575,40 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
               </div>
             </div>
 
-            {/* Setup reference */}
-            <div className="flex flex-col justify-center px-5 py-3 shrink-0">
-              <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500 mb-2">Setup</span>
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="w-14 text-[10px] text-slate-500">R/R</span>
-                  <span className="font-mono font-bold text-white text-sm">
-                    {rrAtFill != null ? `${rrAtFill}R` : "—"}
-                  </span>
-                  {rrAtFill != null && rr.fillPrice != null && Math.abs(rr.fillPrice - rr.entry) > 0.005 && (
-                    <span className="text-[10px] text-slate-500">at fill</span>
-                  )}
-                  {plannedRR != null && rrAtFill != null && Math.abs(plannedRR - rrAtFill) > 0.05 && (
-                    <span className="text-[10px] text-slate-600">· {plannedRR}R planned</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-14 text-[10px] text-slate-500">Qty</span>
-                  <span className="font-mono text-slate-300">{rr.qty}</span>
-                </div>
-                {rr.threshold != null && (
+            {/* Setup reference — needs a stop/target R/R plan; plain market
+                orders with no bracket have nothing to show here. */}
+            {rr.stop != null && rr.target != null && (
+              <div className="flex flex-col justify-center px-5 py-3 shrink-0">
+                <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500 mb-2">Setup</span>
+                <div className="flex flex-col gap-1.5">
                   <div className="flex items-center gap-2">
-                    <span className="w-14 text-[10px] text-slate-500">Ref</span>
-                    <span className="font-mono text-fuchsia-400">${Number(rr.threshold).toFixed(2)}</span>
+                    <span className="w-14 text-[10px] text-slate-500">R/R</span>
+                    <span className="font-mono font-bold text-white text-sm">
+                      {rrAtFill != null ? `${rrAtFill}R` : "—"}
+                    </span>
+                    {rrAtFill != null && rr.fillPrice != null && Math.abs(rr.fillPrice - rr.entry) > 0.005 && (
+                      <span className="text-[10px] text-slate-500">at fill</span>
+                    )}
+                    {plannedRR != null && rrAtFill != null && Math.abs(plannedRR - rrAtFill) > 0.05 && (
+                      <span className="text-[10px] text-slate-600">· {plannedRR}R planned</span>
+                    )}
                   </div>
-                )}
+                  <div className="flex items-center gap-2">
+                    <span className="w-14 text-[10px] text-slate-500">Qty</span>
+                    <span className="font-mono text-slate-300">{rr.qty}</span>
+                  </div>
+                  {rr.threshold != null && (
+                    <div className="flex items-center gap-2">
+                      <span className="w-14 text-[10px] text-slate-500">Ref</span>
+                      <span className="font-mono text-fuchsia-400">${Number(rr.threshold).toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Slippage */}
-            {slippage && (
+            {/* Slippage — same R/R-plan requirement as Setup above. */}
+            {slippage && rr.stop != null && rr.target != null && (
               <div className="flex flex-col justify-center px-5 py-3 shrink-0 min-w-[210px]">
                 <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500 mb-2">
                   Round-trip Slippage
@@ -1671,18 +1711,24 @@ export default function TradeReviewModal({ order, onClose, onTradeClosed }) {
             {rr.fillPrice != null && Math.abs(rr.fillPrice - rr.entry) > 0.005 && (
               <span className="text-slate-500">Fill <span className="font-mono text-yellow-400">${rr.fillPrice.toFixed(2)}</span></span>
             )}
-            <span className="text-slate-500">Stop  <span className="font-mono font-bold text-red-400">${rr.stop.toFixed(2)}</span></span>
-            <span className="text-slate-500">Target <span className="font-mono font-bold text-emerald-400">${rr.target.toFixed(2)}</span></span>
-            <span className="text-slate-500">
-              R/R{" "}
-              <span className="font-mono font-bold text-white">{rrAtFill != null ? `${rrAtFill}R` : "—"}</span>
-              {rrAtFill != null && rr.fillPrice != null && Math.abs(rr.fillPrice - rr.entry) > 0.005 && (
-                <span className="text-[10px] text-slate-500 ml-1">at fill</span>
-              )}
-              {plannedRR != null && rrAtFill != null && Math.abs(plannedRR - rrAtFill) > 0.05 && (
-                <span className="text-slate-600 ml-1">· {plannedRR}R planned</span>
-              )}
-            </span>
+            {rr.stop != null && (
+              <span className="text-slate-500">Stop  <span className="font-mono font-bold text-red-400">${rr.stop.toFixed(2)}</span></span>
+            )}
+            {rr.target != null && (
+              <span className="text-slate-500">Target <span className="font-mono font-bold text-emerald-400">${rr.target.toFixed(2)}</span></span>
+            )}
+            {rr.stop != null && rr.target != null && (
+              <span className="text-slate-500">
+                R/R{" "}
+                <span className="font-mono font-bold text-white">{rrAtFill != null ? `${rrAtFill}R` : "—"}</span>
+                {rrAtFill != null && rr.fillPrice != null && Math.abs(rr.fillPrice - rr.entry) > 0.005 && (
+                  <span className="text-[10px] text-slate-500 ml-1">at fill</span>
+                )}
+                {plannedRR != null && rrAtFill != null && Math.abs(plannedRR - rrAtFill) > 0.05 && (
+                  <span className="text-slate-600 ml-1">· {plannedRR}R planned</span>
+                )}
+              </span>
+            )}
             <span className="text-slate-500">Qty <span className="font-mono text-slate-300">{rr.qty}</span></span>
             {rr.threshold != null && (
               <span className="text-slate-500">Ref <span className="font-mono text-fuchsia-400">${Number(rr.threshold).toFixed(2)}</span></span>
