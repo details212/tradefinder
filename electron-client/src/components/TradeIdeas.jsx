@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { tradeIdeasApi, stockApi, alpacaApi, preferencesApi } from "../api/client";
 import { fetchAlpacaQuote } from "../utils/fetchAlpacaQuote";
-import LiveAlpacaPrice from "./LiveAlpacaPrice";
+import { deriveRiskQty } from "../utils/qtyInput";
 import {
   Lightbulb, TrendingUp, TrendingDown, RefreshCw,
   ChevronRight, AlertCircle, Loader2, ArrowUpRight,
-  Star, StarOff, X, Info,
+  Star, StarOff, X, Info, Zap,
 } from "lucide-react";
 import ModalChart from "./ModalChart";
 import LorentzianStatsPopover from "./LorentzianStatsPopover";
@@ -15,7 +15,6 @@ import { fmtEtString } from "../utils/timeUtils";
 const COL_META = {
   // shared
   ticker:                { label: "Ticker",         fmt: "ticker"  },
-  _live:                 { label: "Live",           fmt: "live"    },
   // strategy 1
   bar_time:              { label: "Bar Time",       fmt: "dt"      },
   close:                 { label: "Close",          fmt: "price"   },
@@ -82,11 +81,11 @@ const COL_META = {
   low:                   { label: "Low",            fmt: "price"   },
 };
 
-// Defines display order; shared cols (ticker, _live, bar_time…) appear once —
+// Defines display order; shared cols (ticker, bar_time…) appear once —
 // the ordering logic deduplicates before rendering.
 const PREFERRED_ORDER = [
   // shared / strategy 1
-  "ticker", "_live", "signal_direction", "bar_time", "close",
+  "ticker", "signal_direction", "bar_time", "close",
   // strategy 6 aliases for bar_time / close
   "entry_time", "entry_price",
   "computed_at",
@@ -205,7 +204,7 @@ function barTimeForWatchlistApi(row) {
   return String(t);
 }
 
-function Cell({ col, value, liveTicker, dimmed, companyName }) {
+function Cell({ col, value, dimmed, companyName }) {
   const meta = COL_META[col] || { fmt: "raw" };
   switch (meta.fmt) {
     case "ticker":
@@ -221,17 +220,6 @@ function Cell({ col, value, liveTicker, dimmed, companyName }) {
           )}
         </span>
       );
-    case "live":
-      return liveTicker
-        ? (
-          <LiveAlpacaPrice
-            ticker={liveTicker}
-            className="font-semibold text-cyan-400"
-            loadingClassName="text-slate-600 text-xs animate-pulse"
-            emptyClassName="text-slate-600 text-xs"
-          />
-        )
-        : <span className="text-slate-600 text-xs">—</span>;
     case "price": {
       return <span className="text-slate-200 tabular-nums">{fmtPrice(value)}</span>;
     }
@@ -636,6 +624,10 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   const [loadingResult,  setLoadingResult]  = useState(false);
   const [error,          setError]          = useState(null);
   const [wlLoading,      setWlLoading]      = useState({});
+  const [quickOpenLoading, setQuickOpenLoading] = useState({});   // ticker → bool while order is submitting
+  const [quickOpenResult,  setQuickOpenResult]  = useState({});   // ticker → { ok, message } (fades out)
+  const [riskPrefs,      setRiskPrefs]      = useState(null);    // { risk_mode, risk_value } from Account Settings
+  const [portfolioValue, setPortfolioValue] = useState(null);    // numeric string from Alpaca (for % risk sizing)
   const [showPrevDays,   setShowPrevDays]   = useState(false);
   /** Minimum MA alignment score (Info column) to show; 0 = no filter. Resets to user default when switching strategy. */
   const [minInfoScore,    setMinInfoScore]   = useState(3);
@@ -675,9 +667,70 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
           setMinInfoScore(n);
         }
         if (p.tradeideas_direction) setDirectionFilter(p.tradeideas_direction);
+        if (p.risk_mode && p.risk_value) setRiskPrefs(p);
       })
       .catch(() => {});
   }, []);
+
+  // Portfolio value (used for % risk sizing on Quick Open)
+  useEffect(() => {
+    alpacaApi.test()
+      .then(r => { if (r.data.ok) setPortfolioValue(r.data.portfolio_value ?? null); })
+      .catch(() => {});
+  }, []);
+
+  /** Quick Open — fires a market order in the direction of the row's bias. */
+  const handleQuickOpen = useCallback(async (row, strategy) => {
+    const ticker = row?.ticker;
+    if (!ticker || openTickers.has(ticker) || quickOpenLoading[ticker]) return;
+
+    const bias = rowIsLong(row, strategy) ? "long" : "short";
+    setQuickOpenLoading((prev) => ({ ...prev, [ticker]: true }));
+    setQuickOpenResult((prev) => ({ ...prev, [ticker]: null }));
+
+    let entryPrice = row.close ?? row.first_entry ?? row.entry_price ?? null;
+    try {
+      const q = await fetchAlpacaQuote(ticker);
+      if (q?.price) entryPrice = q.price;
+    } catch { /* fall back to the row's reference price */ }
+
+    const qty = (entryPrice ? deriveRiskQty(entryPrice, riskPrefs, portfolioValue) : null) ?? 10;
+
+    const showResult = (result) => {
+      setQuickOpenResult((prev) => ({ ...prev, [ticker]: result }));
+      setTimeout(() => {
+        setQuickOpenResult((prev) => (prev[ticker] === result ? { ...prev, [ticker]: null } : prev));
+      }, 4000);
+    };
+
+    try {
+      const res = await alpacaApi.placeOrder({
+        ticker,
+        direction:       bias,
+        order_type:      "market",
+        order_class:     "simple",
+        qty,
+        entry_price:     entryPrice ?? null,
+        bias,
+        bar_time:        barTimeForWatchlistApi(row),
+        threshold:       rowThreshold(row),
+        trade_idea_name: strategy?.name ?? null,
+      });
+      window.dispatchEvent(new CustomEvent("tf:trade-opened"));
+      alpacaApi.openTickers()
+        .then(r => setOpenTickers(new Set(r.data.tickers ?? [])))
+        .catch(() => {});
+      showResult({ ok: true, message: res.data.message || "Order sent" });
+    } catch (err) {
+      const msg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        "Order failed";
+      showResult({ ok: false, message: msg });
+    } finally {
+      setQuickOpenLoading((prev) => ({ ...prev, [ticker]: false }));
+    }
+  }, [openTickers, quickOpenLoading, riskPrefs, portfolioValue]);
 
   // Compute chart height when modal opens: modal is 95vh, header ~56px
   useEffect(() => {
@@ -847,7 +900,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
       .then((r) => {
         const raw = r.data.columns || [];
         const ordered = [...new Set([
-          ...PREFERRED_ORDER.filter((c) => raw.includes(c) || c === "_live"),
+          ...PREFERRED_ORDER.filter((c) => raw.includes(c)),
           ...raw.filter((c) => !PREFERRED_ORDER.includes(c)),
         ])].filter((c) => !isColumnHidden(c, strategy.id));
         setColumns(ordered);
@@ -1132,9 +1185,16 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-slate-900 border-b border-slate-800">
                     {columns.map((col) => (
-                      <th key={col} className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
-                        {COL_META[col]?.label ?? col}
-                      </th>
+                      <React.Fragment key={col}>
+                        <th className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                          {COL_META[col]?.label ?? col}
+                        </th>
+                        {col === "ticker" && (
+                          <th className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                            Quick Open
+                          </th>
+                        )}
+                      </React.Fragment>
                     ))}
                     <th className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
                       Watch
@@ -1158,7 +1218,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                     <React.Fragment key={`${row.ticker}-${rowDate}-${i}`}>
                       {showDayBreak && (
                         <tr key={`break-${rowDate}`} className="bg-slate-800/70">
-                          <td colSpan={columns.length + 2} className="py-2 text-center text-xs font-semibold text-slate-400 tracking-wider uppercase">
+                          <td colSpan={columns.length + 3} className="py-2 text-center text-xs font-semibold text-slate-400 tracking-wider uppercase">
                             {dateLabel}
                           </td>
                         </tr>
@@ -1172,8 +1232,8 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                         const isTickerCol  = col === "ticker";
                         const inOpenTrade  = isTickerCol && openTickers.has(row.ticker);
                         return (
+                        <React.Fragment key={col}>
                         <td
-                          key={col}
                           className={`px-3 py-2 whitespace-nowrap${isTickerCol && !inOpenTrade ? " cursor-pointer" : ""}${inOpenTrade ? " cursor-not-allowed opacity-50" : ""}`}
                           onClick={isTickerCol && !inOpenTrade ? () => setChartModal({
                             ticker:       row.ticker,
@@ -1188,7 +1248,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                               <Cell
                                 col={col}
                                 value={row[col]}
-                                liveTicker={col === "_live" ? row.ticker : undefined}
                                 companyName={col === "ticker" ? (tickerNames[row.ticker] ?? null) : null}
                                 dimmed
                               />
@@ -1197,11 +1256,48 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                             <Cell
                               col={col}
                               value={row[col]}
-                              liveTicker={col === "_live" ? row.ticker : undefined}
                               companyName={col === "ticker" ? (tickerNames[row.ticker] ?? null) : null}
                             />
                           )}
                         </td>
+                        {isTickerCol && (
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {(() => {
+                              const busy   = !!quickOpenLoading[row.ticker];
+                              const result = quickOpenResult[row.ticker];
+                              const rowLong = rowIsLong(row, activeStrategy);
+                              if (result) {
+                                return (
+                                  <span className={`text-[11px] font-semibold ${result.ok ? "text-green-400" : "text-red-400"}`}>
+                                    {result.ok ? "✓ Order sent" : result.message}
+                                  </span>
+                                );
+                              }
+                              return (
+                                <button
+                                  onClick={() => handleQuickOpen(row, activeStrategy)}
+                                  disabled={inOpenTrade || busy}
+                                  title={inOpenTrade
+                                    ? "Position already open"
+                                    : `Send a ${rowLong ? "buy" : "sell"} market order for ${row.ticker}`}
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border transition ${
+                                    inOpenTrade
+                                      ? "border-slate-700 text-slate-600 cursor-not-allowed"
+                                      : busy
+                                        ? "border-slate-600 text-slate-400 cursor-wait"
+                                        : rowLong
+                                          ? "border-green-700 text-green-400 hover:bg-green-900/30"
+                                          : "border-red-700 text-red-400 hover:bg-red-900/30"
+                                  }`}
+                                >
+                                  {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                                  Quick Open
+                                </button>
+                              );
+                            })()}
+                          </td>
+                        )}
+                        </React.Fragment>
                         );
                       })}
                       <td className="px-3 py-2">
