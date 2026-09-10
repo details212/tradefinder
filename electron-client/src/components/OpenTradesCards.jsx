@@ -206,8 +206,15 @@ function OpenTradeCard({ order, quote, onDetail, onChart, daysOpen }) {
       <div className="mt-auto flex items-center justify-between gap-2 px-3.5 py-2.5 border-t border-slate-800/60">
         <div className="min-w-0">
           {inBounds === null ? (
-            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
-              Awaiting quote
+            <span
+              className="text-[11px] font-bold uppercase tracking-wide text-slate-500"
+              title={
+                stopPx == null || targetPx == null
+                  ? "This order has no stop-loss/target set (e.g. a Quick Open market order), so there's nothing to check bounds against."
+                  : "Waiting on a live quote to check trade bounds."
+              }
+            >
+              {stopPx == null || targetPx == null ? "No stop/target set" : "Awaiting quote"}
             </span>
           ) : inBounds ? (
             <span className="text-xs font-bold uppercase tracking-wide text-emerald-400">
