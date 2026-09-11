@@ -4,7 +4,7 @@ import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
 import { entrySlippagePerShare, adverseSlipColor, executionFromTrade, compactTicker } from "../utils/tradeExecution";
 import { isRealizedClose } from "../utils/closedTradeAudit";
 import TradeReviewModal from "./TradeReviewModal";
-import OpenTradesCards from "./OpenTradesCards";
+import OpenTradesCards, { OpenTradesGauges } from "./OpenTradesCards";
 import AnalyticsPanel from "./AnalyticsPanel";
 import StrategyPerformancePanel from "./StrategyPerformancePanel";
 import ManualTradesPanel from "./ManualTradesPanel";
@@ -356,16 +356,15 @@ export default function AdminPanel({ user }) {
       .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE);
   }, [tabOrders, ordersFilter, ordersPage]);
 
-  // Lazy-load quotes only for the open-trade cards actually on screen right now
-  // (the current page), instead of every open position at once — avoids firing
-  // one big batch of Alpaca quote requests the instant the Main page loads,
-  // and the request naturally shrinks/grows as the user pages through trades.
+  // Quotes for every open ticker so book gauges stay live across pages.
+  // Unique symbols are typically far fewer than the open-trade count.
   const openOrderTickers = useMemo(() => {
+    if (ordersFilter !== "open") return [];
     const s = new Set(
-      pagedOpenOrders.map(o => String(o.ticker || "").trim().toUpperCase()).filter(Boolean)
+      tabOrders.map(o => String(o.ticker || "").trim().toUpperCase()).filter(Boolean)
     );
     return [...s].sort();
-  }, [pagedOpenOrders]);
+  }, [tabOrders, ordersFilter]);
 
   const { quotes: liveQuotes, refetch: refetchOpenQuotes } = useFreshAlpacaQuotes(
     openOrderTickers,
@@ -548,13 +547,20 @@ export default function AdminPanel({ user }) {
           ) : (
             <>
               {ordersFilter === "open" ? (
-                <OpenTradesCards
-                  orders={pagedOpenOrders}
-                  liveQuotes={liveQuotes}
-                  onDetail={openDetail}
-                  onChart={setReviewOrder}
-                  daysOpenFn={tradingDaysOpen}
-                />
+                <>
+                  <OpenTradesGauges
+                    orders={tabOrders}
+                    closedOrders={visibleOrders.filter((o) => isRealizedClose(o))}
+                    liveQuotes={liveQuotes}
+                  />
+                  <OpenTradesCards
+                    orders={pagedOpenOrders}
+                    liveQuotes={liveQuotes}
+                    onDetail={openDetail}
+                    onChart={setReviewOrder}
+                    daysOpenFn={tradingDaysOpen}
+                  />
+                </>
               ) : (
                 <>
                   {/* ── Closed trades headers ── */}

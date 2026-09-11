@@ -175,6 +175,9 @@ export const settingsApi = {
 // POST   /api/broker/alpaca/order   → place bracket order; returns { message, order, alpaca_raw }
 // GET    /api/broker/alpaca/orders  → list persisted orders for current user (newest first)
 //          optional ?ticker=AAPL to filter
+// Shared promise for an orders sync that is already running — see syncOrders below.
+let syncOrdersInFlight = null;
+
 export const alpacaApi = {
   get:        ()            => api.get("/api/broker/alpaca"),
   save:       (data)        => api.put("/api/broker/alpaca", data),
@@ -187,9 +190,21 @@ export const alpacaApi = {
   closeTrade:      (dbOrderId)   => api.post(`/api/broker/alpaca/order/${dbOrderId}/close`),
   patchLevels:     (dbOrderId, data) => api.patch(`/api/broker/alpaca/order/${dbOrderId}/levels`, data),
   getOrderDetail:  (alpacaId)    => api.get(`/api/broker/alpaca/order/${alpacaId}`),
-  getOrders:       (ticker = "") => api.get("/api/broker/alpaca/orders", { params: ticker ? { ticker } : {} }),
-  getClosedOrders: ()               => api.get("/api/broker/alpaca/orders", { params: { closed: "1" } }),
-  syncOrders:           ()               => api.post("/api/broker/alpaca/orders/sync", null, { timeout: 120_000 }),
+  getOrders:       (ticker = "") => api.get("/api/broker/alpaca/orders", { params: ticker ? { ticker } : {}, timeout: 60_000 }),
+  getClosedOrders: ()               => api.get("/api/broker/alpaca/orders", { params: { closed: "1" }, timeout: 60_000 }),
+  // A sync is a heavy server-side pass. The Trading Panel polls it on a timer and
+  // the Closed Trades panel fires its own — without this guard those overlap and
+  // pile up on the server's small worker pool, starving plain reads until they
+  // hit their timeout ("Could not load or sync orders"). Callers already in
+  // flight share the one request instead of queueing another.
+  syncOrders:           ()               => {
+    if (!syncOrdersInFlight) {
+      syncOrdersInFlight = api
+        .post("/api/broker/alpaca/orders/sync", null, { timeout: 120_000 })
+        .finally(() => { syncOrdersInFlight = null; });
+    }
+    return syncOrdersInFlight;
+  },
   openTickers:          ()               => api.get("/api/broker/alpaca/orders/open-tickers"),
 };
 

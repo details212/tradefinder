@@ -1,3 +1,4 @@
+import { useId, useMemo } from "react";
 import {
   BarChart2,
   Search,
@@ -5,6 +6,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { exitPrice } from "../utils/alpacaPrices";
+import { parseTs } from "../utils/closedTradeAudit";
 
 function fmt$(v, digits = 2) {
   if (v == null || Number.isNaN(v)) return "—";
@@ -45,6 +47,334 @@ function rColor(r) {
   if (r > 0.005) return "text-emerald-400";
   if (r < -0.005) return "text-red-400";
   return "text-slate-400";
+}
+
+function plColor(v) {
+  if (v == null || Number.isNaN(v)) return "text-slate-400";
+  if (v > 0.005) return "text-emerald-400";
+  if (v < -0.005) return "text-red-400";
+  return "text-slate-400";
+}
+
+function orderMark(order, quote) {
+  return (
+    exitPrice(order.direction, quote) ??
+    (order.current_price != null ? Number(order.current_price) : null)
+  );
+}
+
+function orderPl(order, quote) {
+  const fillPx = order.filled_avg_price ?? order.entry_price;
+  const livePx = orderMark(order, quote);
+  const qty = order.qty != null ? Number(order.qty) : null;
+  if (fillPx != null && livePx != null && qty != null && !Number.isNaN(qty)) {
+    const dir = order.direction === "long" ? 1 : -1;
+    return dir * (Number(livePx) - Number(fillPx)) * qty;
+  }
+  if (order.unrealized_pl == null) return null;
+  const v = Number(order.unrealized_pl);
+  return Number.isNaN(v) ? null : v;
+}
+
+function clamp01(v) {
+  if (v == null || Number.isNaN(v)) return 0.5;
+  return Math.min(1, Math.max(0, v));
+}
+
+function etDayKey(ms) {
+  return new Date(ms).toLocaleDateString("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function isTodayEt(dateVal) {
+  const ms = parseTs(dateVal);
+  if (ms == null) return false;
+  return etDayKey(ms) === etDayKey(Date.now());
+}
+
+function computeDayPl(closedOrders) {
+  let realized = 0;
+  let realizedCount = 0;
+  let wins = 0;
+  let losses = 0;
+  for (const o of closedOrders) {
+    if (!isTodayEt(o.closed_at ?? o.synced_at)) continue;
+    if (o.unrealized_pl == null) continue;
+    const v = Number(o.unrealized_pl);
+    if (Number.isNaN(v)) continue;
+    realized += v;
+    realizedCount += 1;
+    if (v > 0.005) wins += 1;
+    else if (v < -0.005) losses += 1;
+  }
+  return { realized, realizedCount, wins, losses };
+}
+
+function fmtHold(ms) {
+  if (ms == null || Number.isNaN(ms) || ms < 0) return "—";
+  const min = ms / 60000;
+  if (min < 1) return "<1m";
+  if (min < 60) return `${Math.round(min)}m`;
+  const hours = min / 60;
+  if (hours < 24) {
+    const h = Math.floor(hours);
+    const m = Math.round(min - h * 60);
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  const days = hours / 24;
+  if (days < 10) {
+    const d = Math.floor(days);
+    const h = Math.round((days - d) * 24);
+    return h ? `${d}d ${h}h` : `${d}d`;
+  }
+  return `${days.toFixed(1)}d`;
+}
+
+const HOLD_WARN_MS = 4 * 24 * 3600 * 1000;
+
+function computeOpenBookMetrics(orders, liveQuotes) {
+  let pl = 0;
+  let plCount = 0;
+  let risk = 0;
+  let reward = 0;
+  let winners = 0;
+  let losers = 0;
+  let longs = 0;
+  let shorts = 0;
+  let holdSum = 0;
+  let holdCount = 0;
+  let longestHold = 0;
+  const now = Date.now();
+
+  for (const o of orders) {
+    if (o.direction === "short") shorts += 1;
+    else longs += 1;
+
+    const tUpper = o.ticker ? String(o.ticker).trim().toUpperCase() : "";
+    const quote = tUpper ? liveQuotes[tUpper] : null;
+    const riskAmt = o.risk_amt != null ? Number(o.risk_amt) : null;
+    const rewardAmt = o.reward_amt != null ? Number(o.reward_amt) : null;
+    const tradePl = orderPl(o, quote);
+
+    if (tradePl != null) {
+      pl += tradePl;
+      plCount += 1;
+      if (tradePl > 0.005) winners += 1;
+      else if (tradePl < -0.005) losers += 1;
+    }
+    if (riskAmt != null && !Number.isNaN(riskAmt) && riskAmt > 0) risk += riskAmt;
+    if (rewardAmt != null && !Number.isNaN(rewardAmt) && rewardAmt > 0) reward += rewardAmt;
+
+    const openMs = parseTs(o.created_at);
+    if (openMs != null && now >= openMs) {
+      const hold = now - openMs;
+      holdSum += hold;
+      holdCount += 1;
+      if (hold > longestHold) longestHold = hold;
+    }
+  }
+
+  const count = orders.length;
+  return {
+    count,
+    pl: plCount ? pl : null,
+    risk,
+    reward,
+    winners,
+    losers,
+    longs,
+    shorts,
+    inProfitPct: count ? (winners / count) * 100 : null,
+    avgHoldMs: holdCount ? holdSum / holdCount : null,
+    longestHoldMs: holdCount ? longestHold : null,
+  };
+}
+
+/** Semicircle needle gauge. `t` is 0 (left) … 1 (right). */
+function ArcGauge({ label, valueText, valueClass, sub, t, minLabel, maxLabel, track, zeroT, title }) {
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const cx = 80;
+  const cy = 78;
+  const r = 56;
+  const needleR = 48;
+  const clamped = clamp01(t);
+  const angle = Math.PI * (1 - clamped);
+  const nx = cx + needleR * Math.cos(angle);
+  const ny = cy - needleR * Math.sin(angle);
+  const zeroAngle = zeroT == null ? null : Math.PI * (1 - clamp01(zeroT));
+  const zx = zeroAngle == null ? null : cx + (r + 1) * Math.cos(zeroAngle);
+  const zy = zeroAngle == null ? null : cy - (r + 1) * Math.sin(zeroAngle);
+  const zix = zeroAngle == null ? null : cx + (r - 8) * Math.cos(zeroAngle);
+  const ziy = zeroAngle == null ? null : cy - (r - 8) * Math.sin(zeroAngle);
+  const stops = track ?? [
+    { offset: "0%", color: "#f87171" },
+    { offset: "50%", color: "#94a3b8" },
+    { offset: "100%", color: "#34d399" },
+  ];
+
+  return (
+    <div
+      className="rounded-xl border border-slate-700/70 bg-slate-900/50 px-3 pt-3 pb-2.5 flex flex-col items-center min-w-0"
+      title={title}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 self-start">
+        {label}
+      </p>
+      <svg viewBox="0 0 160 96" className="w-full max-w-[200px] -mt-1" aria-hidden="true">
+        <defs>
+          <linearGradient id={`g-${uid}`} x1="0%" y1="0%" x2="100%" y2="0%">
+            {stops.map((s) => (
+              <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+            ))}
+          </linearGradient>
+        </defs>
+        <path
+          d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
+          fill="none"
+          stroke={`url(#g-${uid})`}
+          strokeWidth="10"
+          strokeLinecap="round"
+          opacity="0.9"
+        />
+        <path
+          d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
+          fill="none"
+          stroke="#0f172a"
+          strokeWidth="2"
+          strokeLinecap="round"
+          opacity="0.25"
+        />
+        {zx != null && (
+          <line x1={zix} y1={ziy} x2={zx} y2={zy} stroke="#94a3b8" strokeWidth="1.5" />
+        )}
+        <line
+          x1={cx}
+          y1={cy}
+          x2={nx}
+          y2={ny}
+          stroke="#e2e8f0"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+        <circle cx={cx} cy={cy} r="4.5" fill="#e2e8f0" />
+        <circle cx={cx} cy={cy} r="2" fill="#0f172a" />
+      </svg>
+      <p className={`text-lg font-bold font-mono tabular-nums leading-none -mt-1 ${valueClass ?? "text-slate-200"}`}>
+        {valueText}
+      </p>
+      {sub && <p className="text-[11px] text-slate-500 mt-1 text-center leading-snug">{sub}</p>}
+      {(minLabel || maxLabel) && (
+        <div className="flex items-center justify-between w-full mt-1.5 text-[9px] font-medium text-slate-600 tabular-nums">
+          <span>{minLabel}</span>
+          <span>{maxLabel}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function OpenTradesGauges({ orders, closedOrders = [], liveQuotes = {} }) {
+  const metrics = useMemo(
+    () => computeOpenBookMetrics(orders, liveQuotes),
+    [orders, liveQuotes],
+  );
+  const day = useMemo(
+    () => computeDayPl(closedOrders),
+    [closedOrders],
+  );
+
+  if (!orders.length) return null;
+
+  const absPl = Math.abs(metrics.pl ?? 0);
+  const plMin = metrics.risk > 0 ? -metrics.risk : -Math.max(absPl, 1);
+  const plMax = metrics.reward > 0 ? metrics.reward : Math.max(metrics.risk, absPl, 1);
+  const plT = metrics.pl == null ? 0.5 : (metrics.pl - plMin) / (plMax - plMin || 1);
+
+  const dayAbs = Math.abs(day.realized);
+  const dayScale = Math.max(dayAbs, 1);
+  const dayT = (day.realized - (-dayScale)) / (2 * dayScale);
+
+  const holdScale = Math.max(metrics.longestHoldMs || 0, HOLD_WARN_MS);
+  const holdT = metrics.avgHoldMs == null ? 0 : metrics.avgHoldMs / holdScale;
+  const holdHot = metrics.avgHoldMs != null && metrics.avgHoldMs >= HOLD_WARN_MS;
+
+  const winT = metrics.count ? metrics.winners / metrics.count : 0;
+  const sideSub = `${metrics.longs} long · ${metrics.shorts} short`;
+
+  return (
+    <div className="px-4 pt-4 pb-3 border-b border-slate-800/60">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <ArcGauge
+          label="Open P/L"
+          valueText={fmtPl(metrics.pl)}
+          valueClass={plColor(metrics.pl)}
+          sub={`${metrics.count} open · ${sideSub}`}
+          t={plT}
+          minLabel={metrics.risk > 0 ? `-${fmt$(metrics.risk, 0)} risk` : "loss"}
+          maxLabel={metrics.reward > 0 ? `+${fmt$(metrics.reward, 0)} tgt` : "gain"}
+          zeroT={(0 - plMin) / (plMax - plMin || 1)}
+          title="Unrealized P/L across all open trades. Needle is scaled from total stop risk to total target reward."
+        />
+        <ArcGauge
+          label="Day P/L"
+          valueText={fmtPl(day.realized)}
+          valueClass={plColor(day.realized)}
+          sub={
+            day.realizedCount > 0
+              ? `${day.realizedCount} closed today · ${day.wins}W / ${day.losses}L`
+              : "No closes today"
+          }
+          t={dayT}
+          minLabel={`-${fmt$(dayScale, 0)}`}
+          maxLabel={`+${fmt$(dayScale, 0)}`}
+          zeroT={0.5}
+          title="Realized P/L from trades closed today (US/Eastern). Open trades are not included."
+        />
+        <ArcGauge
+          label="Avg Hold"
+          valueText={fmtHold(metrics.avgHoldMs)}
+          valueClass={holdHot ? "text-yellow-400" : "text-slate-200"}
+          sub={metrics.longestHoldMs != null ? `longest ${fmtHold(metrics.longestHoldMs)}` : "Time in trade"}
+          t={holdT}
+          minLabel="now"
+          maxLabel={fmtHold(holdScale)}
+          track={[
+            { offset: "0%", color: "#53c3ff" },
+            { offset: "55%", color: "#34d399" },
+            { offset: "100%", color: "#fbbf24" },
+          ]}
+          title="Average time open trades have been held, from fill/placement to now. Needle reaches the right at 4 days (or the longest hold, if greater)."
+        />
+        <ArcGauge
+          label="In Profit"
+          valueText={metrics.inProfitPct == null ? "—" : `${Math.round(metrics.inProfitPct)}%`}
+          valueClass={
+            metrics.inProfitPct == null
+              ? "text-slate-400"
+              : metrics.inProfitPct >= 50
+                ? "text-emerald-400"
+                : metrics.inProfitPct > 0
+                  ? "text-yellow-400"
+                  : "text-red-400"
+          }
+          sub={`${metrics.winners} up · ${metrics.losers} down`}
+          t={winT}
+          minLabel="0%"
+          maxLabel="100%"
+          track={[
+            { offset: "0%", color: "#f87171" },
+            { offset: "50%", color: "#fbbf24" },
+            { offset: "100%", color: "#34d399" },
+          ]}
+          title="Share of open trades currently in profit."
+        />
+      </div>
+    </div>
+  );
 }
 
 /** True when last mark is between stop and target (inclusive). */
