@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { alpacaApi } from "../api/client";
 import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
 import { entrySlippagePerShare, adverseSlipColor, executionFromTrade, compactTicker } from "../utils/tradeExecution";
-import { isRealizedClose } from "../utils/closedTradeAudit";
+import { isRealizedClose, exitMethodLabel } from "../utils/closedTradeAudit";
 import TradeReviewModal from "./TradeReviewModal";
 import OpenTradesCards, { OpenTradesGauges } from "./OpenTradesCards";
 import AnalyticsPanel from "./AnalyticsPanel";
@@ -17,7 +17,7 @@ import {
   BarChart2,
   HardDrive, Wifi, Loader2,
   TrendingUp, TrendingDown, Search, X,
-  ShieldCheck, ShieldAlert, ChevronDown,
+  ShieldCheck, ShieldAlert, ChevronDown, FileDown,
 } from "lucide-react";
 
 // Count weekdays (Mon–Fri) between a start date and now, inclusive of the start day.
@@ -37,6 +37,86 @@ function tradingDaysOpen(startDate) {
     cur.setDate(cur.getDate() + 1);
   }
   return days;
+}
+
+function csvEscape(v) {
+  if (v == null || v === "") return "";
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function closedTradeExportRow(o) {
+  const exec = executionFromTrade(o);
+  const entryLim = exec.limitPrice;
+  const fillPx = exec.fillPrice;
+  const stopPx = o.stop_price != null ? Number(o.stop_price) : null;
+  const targetPx = o.target_price != null ? Number(o.target_price) : null;
+  const riskAmt = o.risk_amt != null
+    ? Number(o.risk_amt)
+    : (entryLim != null && stopPx != null ? Math.abs(entryLim - stopPx) * (o.qty ?? 1) : null);
+  const rrEff = o.rr_ratio_effective ?? o.rr_ratio;
+  const pl = o.unrealized_pl != null ? Number(o.unrealized_pl) : null;
+  const slip = entrySlippagePerShare({
+    limitPrice: entryLim,
+    fillPrice: fillPx,
+    direction: o.direction,
+    isMarket: exec.isMarket,
+  });
+  const rResult = pl != null && riskAmt != null && riskAmt > 0 ? pl / riskAmt : null;
+  return [
+    o.ticker ?? "",
+    o.paper_mode ? "paper" : "live",
+    o.direction ?? "",
+    o.trade_idea_name ?? "Manual",
+    o.order_type ?? "",
+    o.qty ?? "",
+    entryLim,
+    fillPx,
+    slip,
+    stopPx,
+    targetPx,
+    riskAmt,
+    rrEff != null ? Number(rrEff) : "",
+    pl,
+    rResult,
+    o.exit_method ? exitMethodLabel(o.exit_method) : "",
+    o.exit_price != null ? Number(o.exit_price) : "",
+    o.status ?? "",
+    o.created_at ?? "",
+    o.closed_at ?? o.synced_at ?? "",
+  ];
+}
+
+const CLOSED_EXPORT_HEADERS = [
+  "Ticker", "Mode", "Direction", "Strategy", "Order type", "Qty",
+  "Entry", "Fill", "Slippage", "Stop", "Target", "Risk $", "Plan R",
+  "P/L", "R result", "Exit method", "Exit price", "Status", "Opened", "Closed",
+];
+
+function downloadClosedTradesCsv(orders, symbolQuery = "") {
+  const rows = orders
+    .slice()
+    .sort((a, b) => new Date(b.closed_at ?? b.synced_at ?? b.created_at ?? 0) - new Date(a.closed_at ?? a.synced_at ?? a.created_at ?? 0))
+    .map(closedTradeExportRow);
+  const lines = [
+    CLOSED_EXPORT_HEADERS.map(csvEscape).join(","),
+    ...rows.map((r) => r.map(csvEscape).join(",")),
+  ];
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const day = new Date().toISOString().slice(0, 10);
+  const needle = String(symbolQuery || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  const filename = needle
+    ? `tradefinder-closed-trades-${needle}-${day}.csv`
+    : `tradefinder-closed-trades-${day}.csv`;
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objUrl);
 }
 
 // ── Tiny reusable atoms ───────────────────────────────────────────────────────
@@ -497,8 +577,8 @@ export default function AdminPanel({ user }) {
           />
 
           {ordersFilter === "closed" && (
-            <div className="px-5 py-2.5 border-b border-slate-800/40">
-              <div className="relative max-w-xs">
+            <div className="px-5 py-2.5 border-b border-slate-800/40 flex items-center justify-between gap-3">
+              <div className="relative max-w-xs flex-1">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
                 <input
                   type="text"
@@ -524,6 +604,16 @@ export default function AdminPanel({ user }) {
                   </button>
                 )}
               </div>
+              <button
+                type="button"
+                disabled={tabOrders.length === 0}
+                onClick={() => downloadClosedTradesCsv(tabOrders, closedSymbolQuery)}
+                title={tabOrders.length === 0 ? "No closed trades to export" : `Export ${tabOrders.length} closed trade${tabOrders.length === 1 ? "" : "s"} to CSV`}
+                className="inline-flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg border border-slate-700 text-[11px] font-medium text-slate-300 hover:text-slate-100 hover:bg-slate-700/50 hover:border-slate-600 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                Export CSV
+              </button>
             </div>
           )}
 
