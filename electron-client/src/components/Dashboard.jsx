@@ -827,7 +827,7 @@ export default function Dashboard({ user, onLogout }) {
             >
               <div className={`h-full ${rightFlyout === "closed" ? "w-[min(56rem,calc(100vw-20rem))]" : "w-80"}`}>
                 {rightFlyout === "system" && (
-                  <SystemPanel onClose={() => setRightFlyout(null)} />
+                  <SystemPanel user={user} onClose={() => setRightFlyout(null)} />
                 )}
                 {rightFlyout === "closed" && (
                   <ClosedTradesPanel onClose={() => setRightFlyout(null)} />

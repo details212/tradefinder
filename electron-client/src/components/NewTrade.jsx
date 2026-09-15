@@ -63,7 +63,7 @@ function SectorHeatmap({ onSectorClick }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8 text-slate-500 gap-2 text-sm">
-        <Loader2 className="w-4 h-4 animate-spin" /> Fetching live sector data from Polygon…
+        <Loader2 className="w-4 h-4 animate-spin" /> Fetching live sector data…
       </div>
     );
   }

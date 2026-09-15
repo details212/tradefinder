@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import api, { authApi, resourcesApi } from "../api/client";
+import api, { authApi, resourcesApi, stockApi } from "../api/client";
 import {
   Globe, RefreshCw, Clock, ChevronRight, ChevronDown,
-  Loader2, Server, BarChart2, TrendingUp, X, XCircle,
+  Loader2, Server, BarChart2, TrendingUp, X, XCircle, Radio,
 } from "lucide-react";
 
 const PING_INTERVAL_MS   = 10_000;
@@ -235,7 +235,75 @@ function AccordionCard({ icon: Icon, title, action, defaultOpen = false, childre
   );
 }
 
-export default function SystemPanel({ onClose }) {
+function ChartDataFeedCard({ canEdit: canEditHint }) {
+  const [feed, setFeed] = useState(null);
+  const [canEdit, setCanEdit] = useState(!!canEditHint);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    stockApi.marketDataFeed()
+      .then((r) => {
+        const next = r.data.feed === "alpaca" ? "alpaca" : "polygon";
+        setFeed(next);
+        if (typeof r.data.can_edit === "boolean") setCanEdit(r.data.can_edit);
+      })
+      .catch(() => setFeed("polygon"));
+  }, []);
+
+  const select = async (next) => {
+    if (!canEdit || next === feed || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const r = await stockApi.setMarketDataFeed(next);
+      setFeed(r.data.feed === "alpaca" ? "alpaca" : "polygon");
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not update feed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <AccordionCard icon={Radio} title="Chart data" defaultOpen>
+      <div className="px-4 py-3 flex flex-col gap-2.5">
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          {canEdit
+            ? "Server-wide switch for every user: charts, quotes, heatmap, news, downloads, indicators, and auto-close. Polygon-only extras (full financial statements) are hidden on Alpaca."
+            : "Server-wide market-data provider for every user. Only an administrator can change this."}
+        </p>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded overflow-hidden border border-slate-700">
+            {["polygon", "alpaca"].map((id) => (
+              <button
+                key={id}
+                type="button"
+                disabled={!canEdit || saving || feed == null}
+                onClick={() => select(id)}
+                className={`px-3 py-1.5 text-xs font-semibold transition first:border-0 border-l border-slate-700 ${
+                  feed === id
+                    ? id === "alpaca"
+                      ? "bg-amber-700/40 text-amber-300"
+                      : "bg-violet-700/40 text-violet-300"
+                    : "bg-slate-800 text-slate-500 hover:text-slate-200 disabled:hover:text-slate-500"
+                } disabled:opacity-60 disabled:cursor-not-allowed`}
+              >
+                {id === "polygon" ? "Polygon" : "Alpaca SIP"}
+              </button>
+            ))}
+          </div>
+          {(saving || feed == null) && (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500" />
+          )}
+        </div>
+        {error && <p className="text-[11px] text-red-400">{error}</p>}
+      </div>
+    </AccordionCard>
+  );
+}
+
+export default function SystemPanel({ onClose, user }) {
   const [loginEvents,        setLoginEvents]        = useState([]);
   const [loginEventsLoading, setLoginEventsLoading] = useState(true);
 
@@ -297,6 +365,8 @@ export default function SystemPanel({ onClose }) {
 
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
           <ConnectionCard />
+
+          <ChartDataFeedCard canEdit={!!user?.is_admin} />
 
           <AccordionCard
             icon={Clock}
@@ -391,6 +461,7 @@ export default function SystemPanel({ onClose }) {
                 [
                   { key: "flask",   label: "Tradefinder Data Center", icon: Server     },
                   { key: "polygon", label: "Tick Data Farm",          icon: BarChart2  },
+                  { key: "alpaca_data", label: "Alpaca SIP Data",     icon: Radio      },
                   { key: "alpaca",  label: "Exchange Connection",     icon: TrendingUp },
                   { key: "yahoo",   label: "Yahoo Finance",           icon: Globe      },
                 ].map(({ key, label, icon: Icon }) => {

@@ -117,6 +117,10 @@ export const stockApi = {
   history: (ticker, params = {}) =>
     api.get(`/api/stocks/${encodeURIComponent(ticker)}/history`, { params, timeout: 75000 }),
 
+  // Global OHLCV feed (polygon | alpaca) — PUT is admin-only
+  marketDataFeed: () => api.get("/api/stocks/market-data-feed"),
+  setMarketDataFeed: (feed) => api.put("/api/stocks/market-data-feed", { feed }),
+
   // Technicals: indicator = sma | ema | rsi | macd
   indicator: (ticker, indicator, params = {}) =>
     api.get(`/api/stocks/${ticker}/indicators/${indicator}`, { params }),
