@@ -8,7 +8,15 @@ import Highcharts from "highcharts";
 import HighchartsReact from "highcharts-react-official";
 import { BarChart2 } from "lucide-react";
 import { alpacaApi } from "../api/client";
-import { formatSinceLabel, historySinceParam, historyToCurve } from "../utils/alpacaPortfolio";
+import {
+  formatSinceLabel,
+  hasTradeOnYmd,
+  historySinceParam,
+  historyToCurve,
+  historyUntilParam,
+  isRegularEquitySessionYmd,
+  todaySessionYmd,
+} from "../utils/alpacaPortfolio";
 import { entrySlippagePerShare, executionFromTrade } from "../utils/tradeExecution";
 
 // ── Highcharts dark theme ─────────────────────────────────────────────────────
@@ -131,13 +139,24 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
   );
 
   const since = useMemo(() => historySinceParam(pnlPeriod, orders), [pnlPeriod, orders]);
+  const until = useMemo(() => historyUntilParam(pnlPeriod, orders), [pnlPeriod, orders]);
+  const tradedToday = useMemo(() => {
+    const today = todaySessionYmd();
+    return isRegularEquitySessionYmd(today) && hasTradeOnYmd(orders, today);
+  }, [orders]);
 
   useEffect(() => {
     if (!showPnl) return undefined;
     if (loading && !orders.length) return undefined;
+    if (pnlPeriod === "day" && !tradedToday) {
+      setAlpacaHist({ ok: true, timestamps: [], profit_loss: [], equity: [] });
+      setAlpacaErr(null);
+      setAlpacaLoading(false);
+      return undefined;
+    }
     let cancelled = false;
     setAlpacaLoading(true);
-    alpacaApi.portfolioHistory(pnlPeriod, since)
+    alpacaApi.portfolioHistory(pnlPeriod, since, until)
       .then((r) => {
         if (cancelled) return;
         if (r.data?.ok) {
@@ -158,9 +177,9 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
         if (!cancelled) setAlpacaLoading(false);
       });
     return () => { cancelled = true; };
-  }, [showPnl, pnlPeriod, since, loading, orders.length]);
+  }, [showPnl, pnlPeriod, since, until, tradedToday, loading, orders.length]);
 
-  const alpacaCurve = useMemo(() => historyToCurve(alpacaHist), [alpacaHist]);
+  const alpacaCurve = useMemo(() => historyToCurve(alpacaHist, until), [alpacaHist, until]);
 
   useEffect(() => {
     if (!pnlFill) {

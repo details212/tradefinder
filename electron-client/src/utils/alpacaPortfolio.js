@@ -36,15 +36,57 @@ function monthShort(ym) {
   });
 }
 
+function tradeTimes(order) {
+  const times = [];
+  const openMs = parseTs(order?.created_at);
+  const closeMs = parseTs(order?.closed_at);
+  if (openMs != null) times.push(openMs);
+  if (closeMs != null) times.push(closeMs);
+  return times;
+}
+
 /** Eastern civil date of the oldest TradeFinder ticket (YYYY-MM-DD). */
 export function oldestTradeYmd(orders) {
   let min = null;
   for (const o of orders ?? []) {
-    const ms = parseTs(o.created_at);
-    if (ms == null) continue;
-    if (min == null || ms < min) min = ms;
+    for (const ms of tradeTimes(o)) {
+      if (min == null || ms < min) min = ms;
+    }
   }
   return min == null ? null : ymdKey(etYmd(min));
+}
+
+/** Eastern civil date of the newest TradeFinder open or close. */
+export function newestTradeYmd(orders) {
+  let max = null;
+  for (const o of orders ?? []) {
+    for (const ms of tradeTimes(o)) {
+      if (max == null || ms > max) max = ms;
+    }
+  }
+  return max == null ? null : ymdKey(etYmd(max));
+}
+
+export function todaySessionYmd(now = Date.now()) {
+  return ymdKey(etYmd(now));
+}
+
+export function isRegularEquitySessionYmd(ymd) {
+  if (!ymd) return false;
+  const [y, m, d] = String(ymd).split("-").map(Number);
+  if (!y || !m || !d) return false;
+  const dow = etWeekday({ y, m, d });
+  return dow !== 0 && dow !== 6;
+}
+
+export function hasTradeOnYmd(orders, ymd) {
+  if (!ymd) return false;
+  for (const o of orders ?? []) {
+    for (const ms of tradeTimes(o)) {
+      if (ymdKey(etYmd(ms)) === ymd) return true;
+    }
+  }
+  return false;
 }
 
 function periodStartYmdEt(period, now = Date.now()) {
@@ -75,6 +117,16 @@ export function historySinceParam(period, orders) {
   const start = periodStartYmdEt(period);
   if (!start) return null;
   return oldest > start ? oldest : null;
+}
+
+/** Stop Alpaca history on the last ticket day so idle days do not look like trades. */
+export function historyUntilParam(period, orders) {
+  const newest = newestTradeYmd(orders);
+  if (!newest) return null;
+  const today = todaySessionYmd();
+  if (newest >= today) return null;
+  if (period === "day") return newest;
+  return newest;
 }
 
 export function formatSinceLabel(ymd) {
@@ -111,7 +163,7 @@ function walkHistory(hist, onPoint) {
 }
 
 /** Incremental bars + period net (last Alpaca profit_loss). */
-export function historyToNet(hist, period) {
+export function historyToNet(hist, period, untilYmd = null) {
   const tf = String(hist?.timeframe || "").toLowerCase();
   const isIntraday = tf !== "" && tf !== "1d";
   const nowKey = ymdKey(etYmd(Date.now()));
@@ -120,8 +172,9 @@ export function historyToNet(hist, period) {
   let lastPl = null;
 
   walkHistory(hist, ({ i, n, ms, pl }) => {
-    lastPl = pl;
     const ymd = etYmd(ms);
+    if (untilYmd && ymdKey(ymd) > untilYmd) return;
+    lastPl = pl;
     const incremental = pl - prev;
     prev = pl;
     let label = "";
@@ -158,13 +211,14 @@ export function historyToNet(hist, period) {
 }
 
 /** Cumulative P/L + dollar drawdown from the same Alpaca series. */
-export function historyToCurve(hist) {
+export function historyToCurve(hist, untilYmd = null) {
   const points = [];
   let lastPl = null;
   let peakEq = null;
   let peakPl = 0;
 
   walkHistory(hist, ({ ms, pl, equity }) => {
+    if (untilYmd && ymdKey(etYmd(ms)) > untilYmd) return;
     lastPl = pl;
     let drawdown;
     if (equity != null) {
@@ -181,8 +235,8 @@ export function historyToCurve(hist) {
 }
 
 /** Daily equity / return series for Performance metrics (period=all). */
-export function historyToAccountSeries(hist) {
-  const { netPl, points } = historyToCurve(hist);
+export function historyToAccountSeries(hist, untilYmd = null) {
+  const { netPl, points } = historyToCurve(hist, untilYmd);
   const baseRaw = hist?.base_value == null ? null : Number(hist.base_value);
   const baseValue = baseRaw != null && !Number.isNaN(baseRaw) && baseRaw > 0 ? baseRaw : null;
   const equityPoints = [];

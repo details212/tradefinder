@@ -5,7 +5,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { BarChart2, Shield, TrendingDown, Activity, ListOrdered, Scale, CalendarCheck, CircleDollarSign, GitCompareArrows } from "lucide-react";
 import { alpacaApi, stockApi } from "../api/client";
-import { formatSinceLabel, historySinceParam, historyToAccountSeries } from "../utils/alpacaPortfolio";
+import { formatSinceLabel, historySinceParam, historyToAccountSeries, historyUntilParam } from "../utils/alpacaPortfolio";
 import {
   fmt$,
   fmtPct,
@@ -76,12 +76,13 @@ export default function PerformancePanel({ orders, loading }) {
   }, []);
 
   const since = useMemo(() => historySinceParam("all", orders), [orders]);
+  const until = useMemo(() => historyUntilParam("all", orders), [orders]);
 
   useEffect(() => {
     if (loading && !orders.length) return undefined;
     let cancelled = false;
     setAlpacaLoading(true);
-    alpacaApi.portfolioHistory("all", since)
+    alpacaApi.portfolioHistory("all", since, until)
       .then((r) => {
         if (cancelled) return;
         if (r.data?.ok) {
@@ -102,11 +103,11 @@ export default function PerformancePanel({ orders, loading }) {
         if (!cancelled) setAlpacaLoading(false);
       });
     return () => { cancelled = true; };
-  }, [loading, since, orders.length]);
+  }, [loading, since, until, orders.length]);
 
   const accountSeries = useMemo(
-    () => (alpacaHist ? historyToAccountSeries(alpacaHist) : null),
-    [alpacaHist],
+    () => (alpacaHist ? historyToAccountSeries(alpacaHist, until) : null),
+    [alpacaHist, until],
   );
 
   const closed = useMemo(() =>
