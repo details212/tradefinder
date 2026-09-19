@@ -10,6 +10,8 @@ import {
 import ModalChart from "./ModalChart";
 import LorentzianStatsPopover from "./LorentzianStatsPopover";
 import { fmtEtString } from "../utils/timeUtils";
+import { blockEquityOrders, equityMarketClosedMessage } from "../utils/equityMarketHours";
+import { useEquityMarketOpen } from "../hooks/useEquityMarketOpen";
 
 // ── Column display config ─────────────────────────────────────────────────────
 const COL_META = {
@@ -631,6 +633,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   // Quick Open fires a bracket-less market order (no stop/target) — only offer it
   // when Scalp Profit / Loss is on, so there's still some automated exit watching it.
   const [scalpPlEnabled, setScalpPlEnabled] = useState(false);
+  const { isOpen: equityMarketOpen, nextOpen: equityNextOpen } = useEquityMarketOpen();
   const [showPrevDays,   setShowPrevDays]   = useState(false);
   /** Minimum MA alignment score (Info column) to show; 0 = no filter. Resets to user default when switching strategy. */
   const [minInfoScore,    setMinInfoScore]   = useState(3);
@@ -689,6 +692,18 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     const ticker = row?.ticker;
     if (!ticker || openTickers.has(ticker) || quickOpenLoading[ticker]) return;
 
+    const showResult = (result) => {
+      setQuickOpenResult((prev) => ({ ...prev, [ticker]: result }));
+      setTimeout(() => {
+        setQuickOpenResult((prev) => (prev[ticker] === result ? { ...prev, [ticker]: null } : prev));
+      }, 4000);
+    };
+
+    if (blockEquityOrders(ticker, equityMarketOpen)) {
+      showResult({ ok: false, message: equityMarketClosedMessage(equityNextOpen) });
+      return;
+    }
+
     const bias = rowIsLong(row, strategy) ? "long" : "short";
     setQuickOpenLoading((prev) => ({ ...prev, [ticker]: true }));
     setQuickOpenResult((prev) => ({ ...prev, [ticker]: null }));
@@ -700,13 +715,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     } catch { /* fall back to the row's reference price */ }
 
     const qty = (entryPrice ? deriveRiskQty(entryPrice, riskPrefs, portfolioValue) : null) ?? 10;
-
-    const showResult = (result) => {
-      setQuickOpenResult((prev) => ({ ...prev, [ticker]: result }));
-      setTimeout(() => {
-        setQuickOpenResult((prev) => (prev[ticker] === result ? { ...prev, [ticker]: null } : prev));
-      }, 4000);
-    };
 
     try {
       const res = await alpacaApi.placeOrder({
@@ -735,7 +743,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     } finally {
       setQuickOpenLoading((prev) => ({ ...prev, [ticker]: false }));
     }
-  }, [openTickers, quickOpenLoading, riskPrefs, portfolioValue]);
+  }, [openTickers, quickOpenLoading, riskPrefs, portfolioValue, equityMarketOpen, equityNextOpen]);
 
   // Compute chart height when modal opens: modal is 95vh, header ~56px
   useEffect(() => {
@@ -1271,6 +1279,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                               const busy   = !!quickOpenLoading[row.ticker];
                               const result = quickOpenResult[row.ticker];
                               const rowLong = rowIsLong(row, activeStrategy);
+                              const marketBlocked = blockEquityOrders(row.ticker, equityMarketOpen);
                               if (result) {
                                 return (
                                   <span className={`text-[11px] font-semibold ${result.ok ? "text-green-400" : "text-red-400"}`}>
@@ -1281,12 +1290,14 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                               return (
                                 <button
                                   onClick={() => handleQuickOpen(row, activeStrategy)}
-                                  disabled={inOpenTrade || busy}
+                                  disabled={inOpenTrade || busy || marketBlocked}
                                   title={inOpenTrade
                                     ? "Position already open"
-                                    : `Send a ${rowLong ? "buy" : "sell"} market order for ${row.ticker}`}
+                                    : marketBlocked
+                                      ? equityMarketClosedMessage(equityNextOpen)
+                                      : `Send a ${rowLong ? "buy" : "sell"} market order for ${row.ticker}`}
                                   className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border transition ${
-                                    inOpenTrade
+                                    inOpenTrade || marketBlocked
                                       ? "border-slate-700 text-slate-600 cursor-not-allowed"
                                       : busy
                                         ? "border-slate-600 text-slate-400 cursor-wait"

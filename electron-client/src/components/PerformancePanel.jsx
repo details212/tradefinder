@@ -5,6 +5,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { BarChart2, Shield, TrendingDown, Activity, ListOrdered, Scale, CalendarCheck, CircleDollarSign, GitCompareArrows } from "lucide-react";
 import { alpacaApi, stockApi } from "../api/client";
+import { formatSinceLabel, historySinceParam, historyToAccountSeries } from "../utils/alpacaPortfolio";
 import {
   fmt$,
   fmtPct,
@@ -64,12 +65,49 @@ function toDateKey(ms) {
 export default function PerformancePanel({ orders, loading }) {
   const [portfolioValue, setPortfolioValue] = useState(null);
   const [benchmarkBars, setBenchmarkBars] = useState(null);
+  const [alpacaHist, setAlpacaHist] = useState(null);
+  const [alpacaErr, setAlpacaErr] = useState(null);
+  const [alpacaLoading, setAlpacaLoading] = useState(true);
 
   useEffect(() => {
     alpacaApi.test()
       .then((r) => { if (r.data.ok) setPortfolioValue(r.data.portfolio_value ?? null); })
       .catch(() => {});
   }, []);
+
+  const since = useMemo(() => historySinceParam("all", orders), [orders]);
+
+  useEffect(() => {
+    if (loading && !orders.length) return undefined;
+    let cancelled = false;
+    setAlpacaLoading(true);
+    alpacaApi.portfolioHistory("all", since)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.data?.ok) {
+          setAlpacaHist(r.data);
+          setAlpacaErr(null);
+        } else {
+          setAlpacaHist(null);
+          setAlpacaErr(r.data?.error || "Alpaca history unavailable");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAlpacaHist(null);
+          setAlpacaErr("Could not load Alpaca P/L");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAlpacaLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [loading, since, orders.length]);
+
+  const accountSeries = useMemo(
+    () => (alpacaHist ? historyToAccountSeries(alpacaHist) : null),
+    [alpacaHist],
+  );
 
   const closed = useMemo(() =>
     orders.filter(o => !o.is_open && o.unrealized_pl != null && o.synced_at),
@@ -82,28 +120,25 @@ export default function PerformancePanel({ orders, loading }) {
   );
 
   const metrics = useMemo(() =>
-    computePerformanceMetrics({ closedTrades: closed, openTrades: open, portfolioValue }),
-    [closed, open, portfolioValue]
+    computePerformanceMetrics({ closedTrades: closed, openTrades: open, portfolioValue, accountSeries }),
+    [closed, open, portfolioValue, accountSeries]
   );
 
   useEffect(() => {
-    if (!closed.length) {
+    const fromMs = accountSeries?.firstMs;
+    const toMs = accountSeries?.lastMs ?? Date.now();
+    if (!fromMs) {
       setBenchmarkBars(null);
       return;
     }
-
-    const times = closed.flatMap((o) => [o.created_at, o.closed_at, o.synced_at].filter(Boolean));
-    if (!times.length) return;
-
-    const parsed = times.map((d) => new Date(d).getTime()).filter((t) => !Number.isNaN(t));
-    const from = toDateKey(Math.min(...parsed));
-    const to = toDateKey(Math.max(...parsed, Date.now()));
+    const from = toDateKey(fromMs);
+    const to = toDateKey(Math.max(toMs, Date.now()));
     if (!from || !to) return;
 
     stockApi.history("SPY", { from, to, timespan: "day", limit: "5000" })
       .then((r) => setBenchmarkBars(r.data.bars ?? []))
       .catch(() => setBenchmarkBars(null));
-  }, [closed]);
+  }, [accountSeries?.firstMs, accountSeries?.lastMs]);
 
   const riskMetrics = useMemo(() =>
     computeRiskAdjustedMetrics({
@@ -112,8 +147,9 @@ export default function PerformancePanel({ orders, loading }) {
       netPL: metrics.netPL,
       cagr: metrics.cagr,
       benchmarkBars,
+      accountSeries,
     }),
-    [closed, portfolioValue, metrics.netPL, metrics.cagr, benchmarkBars]
+    [closed, portfolioValue, metrics.netPL, metrics.cagr, benchmarkBars, accountSeries]
   );
 
   const drawdownMetrics = useMemo(() =>
@@ -121,8 +157,9 @@ export default function PerformancePanel({ orders, loading }) {
       closedTrades: closed,
       portfolioValue,
       netPL: metrics.netPL,
+      accountSeries,
     }),
-    [closed, portfolioValue, metrics.netPL]
+    [closed, portfolioValue, metrics.netPL, accountSeries]
   );
 
   const volatilityMetrics = useMemo(() =>
@@ -131,8 +168,9 @@ export default function PerformancePanel({ orders, loading }) {
       portfolioValue,
       netPL: metrics.netPL,
       benchmarkBars,
+      accountSeries,
     }),
-    [closed, portfolioValue, metrics.netPL, benchmarkBars]
+    [closed, portfolioValue, metrics.netPL, benchmarkBars, accountSeries]
   );
 
   const tradeStats = useMemo(() =>
@@ -146,13 +184,14 @@ export default function PerformancePanel({ orders, loading }) {
       closedTrades: closed,
       portfolioValue,
       netPL: metrics.netPL,
+      accountSeries,
     }),
-    [orders, closed, portfolioValue, metrics.netPL]
+    [orders, closed, portfolioValue, metrics.netPL, accountSeries]
   );
 
   const consistencyMetrics = useMemo(() =>
-    computeConsistencyMetrics({ closedTrades: closed }),
-    [closed]
+    computeConsistencyMetrics({ closedTrades: closed, accountSeries }),
+    [closed, accountSeries]
   );
 
   const costsMetrics = useMemo(() =>
@@ -160,8 +199,9 @@ export default function PerformancePanel({ orders, loading }) {
       closedTrades: closed,
       portfolioValue,
       netPL: metrics.netPL,
+      accountSeries,
     }),
-    [closed, portfolioValue, metrics.netPL]
+    [closed, portfolioValue, metrics.netPL, accountSeries]
   );
 
   const benchmarkMetrics = useMemo(() =>
@@ -170,11 +210,12 @@ export default function PerformancePanel({ orders, loading }) {
       portfolioValue,
       netPL: metrics.netPL,
       benchmarkBars,
+      accountSeries,
     }),
-    [closed, portfolioValue, metrics.netPL, benchmarkBars]
+    [closed, portfolioValue, metrics.netPL, benchmarkBars, accountSeries]
   );
 
-  if (loading) {
+  if (loading && alpacaLoading) {
     return (
       <div className="flex items-center justify-center h-48 text-slate-400 text-sm">
         Loading performance…
@@ -182,12 +223,14 @@ export default function PerformancePanel({ orders, loading }) {
     );
   }
 
-  if (!closed.length && !open.length) {
+  if (!closed.length && !open.length && !accountSeries && !alpacaLoading) {
     return (
       <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-10 text-center">
         <BarChart2 className="w-10 h-10 text-slate-500 mx-auto mb-3" />
         <p className="text-slate-400 font-medium">No trade data yet</p>
-        <p className="text-slate-500 text-xs mt-1">Performance metrics will appear after trades are placed and synced</p>
+        <p className="text-slate-500 text-xs mt-1">
+          {alpacaErr || "Performance metrics will appear after Alpaca history or trades are available"}
+        </p>
       </div>
     );
   }
@@ -208,35 +251,45 @@ export default function PerformancePanel({ orders, loading }) {
         <div className="pb-2 border-b border-slate-800/60">
           <h3 className="text-sm font-semibold text-slate-200">Key Metrics</h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            {metrics.closedCount} closed trade{metrics.closedCount !== 1 ? "s" : ""}
+            {metrics.fromAlpaca
+              ? `Alpaca ${metrics.paper ? "paper" : "live"} · since first TradeFinder trade${alpacaHist?.since ? ` (${formatSinceLabel(alpacaHist.since)})` : ""}`
+              : alpacaErr || "Alpaca history unavailable — ticket totals only"}
+            {metrics.closedCount > 0 && <> · {metrics.closedCount} TradeFinder close{metrics.closedCount !== 1 ? "s" : ""}</>}
             {metrics.openCount > 0 && <> · {metrics.openCount} open now</>}
-            {portfolioValue == null && <> · Connect Alpaca for return metrics</>}
           </p>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MetricCard
-            label="Net P&L (realized + unrealized)"
+            label="Net P&L"
             value={`${netPos ? "+" : ""}${fmt$(metrics.netPL)}`}
-            sub={`Realized ${fmt$(metrics.realizedPL)} · Unrealized ${fmt$(metrics.unrealizedPL)}`}
+            sub={
+              metrics.fromAlpaca
+                ? `Alpaca ${metrics.paper ? "paper" : "live"}${alpacaHist?.since ? ` · since ${formatSinceLabel(alpacaHist.since)}` : " · all-time"}`
+                : `Ticket realized ${fmt$(metrics.realizedPL)} · unrealized ${fmt$(metrics.unrealizedPL)}`
+            }
             color={plColor(metrics.netPL)}
           />
           <MetricCard
             label="Total return (%)"
             value={fmtPct(metrics.totalReturnPct)}
-            sub={portfolioValue != null ? `Based on ${fmt$(Number(portfolioValue) - metrics.netPL)} starting equity` : "Requires Alpaca portfolio value"}
+            sub={
+              metrics.beginningEquity != null
+                ? `Based on ${fmt$(metrics.beginningEquity)} Alpaca starting equity`
+                : "Requires Alpaca portfolio history"
+            }
             color={plColor(metrics.totalReturnPct)}
           />
           <MetricCard
             label="CAGR"
             value={fmtPct(metrics.cagr)}
-            sub="Compound annual growth rate"
+            sub="Compound annual growth rate from Alpaca equity"
             color={plColor(metrics.cagr)}
           />
           <MetricCard
             label="Gross profit / Gross loss"
             value={`${fmt$(metrics.grossProfit)} / ${fmt$(Math.abs(metrics.grossLoss))}`}
-            sub={metrics.closedCount > 0 ? `${metrics.winCount} wins · ${metrics.lossCount} losses` : null}
+            sub={metrics.closedCount > 0 ? `${metrics.winCount} wins · ${metrics.lossCount} losses · TradeFinder tickets` : "TradeFinder tickets"}
             color="text-slate-200"
           />
           <MetricCard
@@ -272,7 +325,7 @@ export default function PerformancePanel({ orders, loading }) {
             <h3 className="text-sm font-semibold text-slate-200">Risk-Adjusted Performance</h3>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            How returns compare to risk taken · {benchmarkNote}
+            Daily Alpaca equity returns vs risk · {benchmarkNote}
           </p>
         </div>
 
@@ -323,7 +376,7 @@ export default function PerformancePanel({ orders, loading }) {
             <h3 className="text-sm font-semibold text-slate-200">Drawdown & Downside Risk</h3>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Peak-to-trough equity declines and tail-loss estimates per closed trade
+            Peak-to-trough from Alpaca equity · VaR from daily account returns
           </p>
         </div>
 
@@ -365,7 +418,7 @@ export default function PerformancePanel({ orders, loading }) {
                 ? `${fmtPct(drawdownMetrics.varPct)} / ${fmtPct(drawdownMetrics.cvarPct)}`
                 : "—"
             }
-            sub="Per-trade return at 95% confidence / expected shortfall"
+            sub="Daily account return at 95% confidence / expected shortfall"
             color="text-red-400"
           />
         </div>
@@ -378,7 +431,7 @@ export default function PerformancePanel({ orders, loading }) {
             <h3 className="text-sm font-semibold text-slate-200">Volatility & Statistical Risk</h3>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Return dispersion and distribution shape · {volatilityBenchmarkNote}
+            Daily Alpaca return dispersion · {volatilityBenchmarkNote}
           </p>
         </div>
 
@@ -400,7 +453,7 @@ export default function PerformancePanel({ orders, loading }) {
                 ? `${fmtPct(volatilityMetrics.downsideDevPct)} / ${fmtPct(volatilityMetrics.downsideDevAnnualPct)}`
                 : "—"
             }
-            sub="Per-trade / annualized vs risk-free threshold"
+            sub="Daily / annualized vs risk-free threshold"
             color="text-red-400"
           />
           <MetricCard
@@ -429,7 +482,8 @@ export default function PerformancePanel({ orders, loading }) {
             <h3 className="text-sm font-semibold text-slate-200">Trade-Level Statistics</h3>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            {tradeStats.closedTrades} closed trade{tradeStats.closedTrades !== 1 ? "s" : ""}
+            TradeFinder tickets only
+            {tradeStats.closedTrades > 0 && <> · {tradeStats.closedTrades} closed</>}
             {tradeStats.openTrades > 0 && <> · {tradeStats.openTrades} open now</>}
           </p>
         </div>
@@ -546,7 +600,7 @@ export default function PerformancePanel({ orders, loading }) {
             <h3 className="text-sm font-semibold text-slate-200">Consistency & Reliability</h3>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            How steadily the system produces results over time
+            Profitable weeks/months from Alpaca daily P/L · SQN and R from TradeFinder tickets
           </p>
         </div>
 
@@ -558,7 +612,7 @@ export default function PerformancePanel({ orders, loading }) {
                 ? `${fmtPct(consistencyMetrics.profitableWeeksPct, 0)} / ${fmtPct(consistencyMetrics.profitableMonthsPct, 0)}`
                 : "—"
             }
-            sub="% of calendar weeks / months with net profit"
+            sub="% of calendar weeks / months with net Alpaca profit"
             color={
               consistencyMetrics.profitableMonthsPct != null && consistencyMetrics.profitableMonthsPct >= 50
                 ? "text-emerald-400"
@@ -652,8 +706,8 @@ export default function PerformancePanel({ orders, loading }) {
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
             {benchmarkMetrics.benchmarked
-              ? `Tracking against ${benchmarkMetrics.benchmarkTicker} over matched trade hold periods`
-              : "Requires SPY history and at least 2 closed trades with hold-period overlap"}
+              ? `Tracking against ${benchmarkMetrics.benchmarkTicker} on matched Alpaca session days`
+              : "Requires SPY history aligned to Alpaca daily equity"}
           </p>
         </div>
 

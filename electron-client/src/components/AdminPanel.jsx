@@ -3,6 +3,7 @@ import { alpacaApi } from "../api/client";
 import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
 import { entrySlippagePerShare, adverseSlipColor, executionFromTrade, compactTicker } from "../utils/tradeExecution";
 import { isRealizedClose, exitMethodLabel } from "../utils/closedTradeAudit";
+import { ticketPl, withTicketPl } from "../utils/ticketPl";
 import TradeReviewModal from "./TradeReviewModal";
 import OpenTradesCards, { OpenTradesGauges } from "./OpenTradesCards";
 import AnalyticsPanel from "./AnalyticsPanel";
@@ -56,7 +57,7 @@ function closedTradeExportRow(o) {
     ? Number(o.risk_amt)
     : (entryLim != null && stopPx != null ? Math.abs(entryLim - stopPx) * (o.qty ?? 1) : null);
   const rrEff = o.rr_ratio_effective ?? o.rr_ratio;
-  const pl = o.unrealized_pl != null ? Number(o.unrealized_pl) : null;
+  const pl = ticketPl(o);
   const slip = entrySlippagePerShare({
     limitPrice: entryLim,
     fillPrice: fillPx,
@@ -408,9 +409,56 @@ export default function AdminPanel({ user }) {
     if (o.exit_method || o.closed_at || o.filled_avg_price != null) return false;
     return true;
   };
+  const openOrderTickers = useMemo(() => {
+    const s = new Set();
+    for (const o of orders) {
+      if (!o.is_open || isRealizedClose(o)) continue;
+      const t = String(o.ticker || "").trim().toUpperCase();
+      if (t) s.add(t);
+    }
+    return [...s].sort();
+  }, [orders]);
+
+  const { quotes: liveQuotes, refetch: refetchOpenQuotes } = useFreshAlpacaQuotes(
+    openOrderTickers,
+    openOrderTickers.length > 0,
+  );
+
+  const [positions, setPositions] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      alpacaApi.positions()
+        .then((r) => {
+          if (cancelled || !r.data?.ok) return;
+          const map = {};
+          for (const p of r.data.positions || []) {
+            const sym = String(p.symbol || "").trim().toUpperCase();
+            if (sym) map[sym] = p;
+          }
+          setPositions(map);
+        })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const pricedOrders = useMemo(
+    () => orders.map((o) => {
+      const t = String(o.ticker || "").trim().toUpperCase();
+      return withTicketPl(o, liveQuotes[t], positions[t]);
+    }),
+    [orders, liveQuotes, positions],
+  );
+
   const visibleOrders = useMemo(
-    () => orders.filter(o => !isDeadOrder(o)),
-    [orders]
+    () => pricedOrders.filter(o => !isDeadOrder(o)),
+    [pricedOrders]
   );
 
   const tabOrders = useMemo(() => {
@@ -435,21 +483,6 @@ export default function AdminPanel({ user }) {
       .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0))
       .slice(ordersPage * OPEN_ORDERS_PER_PAGE, (ordersPage + 1) * OPEN_ORDERS_PER_PAGE);
   }, [tabOrders, ordersFilter, ordersPage]);
-
-  // Quotes for every open ticker so book gauges stay live across pages.
-  // Unique symbols are typically far fewer than the open-trade count.
-  const openOrderTickers = useMemo(() => {
-    if (ordersFilter !== "open") return [];
-    const s = new Set(
-      tabOrders.map(o => String(o.ticker || "").trim().toUpperCase()).filter(Boolean)
-    );
-    return [...s].sort();
-  }, [tabOrders, ordersFilter]);
-
-  const { quotes: liveQuotes, refetch: refetchOpenQuotes } = useFreshAlpacaQuotes(
-    openOrderTickers,
-    ordersFilter === "open" && openOrderTickers.length > 0,
-  );
 
   const syncOrders = useCallback((isBackground = false) => {
     if (!isBackground) setOrdersLoading(true);
@@ -641,6 +674,7 @@ export default function AdminPanel({ user }) {
                   <OpenTradesGauges
                     orders={tabOrders}
                     closedOrders={visibleOrders.filter((o) => isRealizedClose(o))}
+                    allOrders={visibleOrders}
                     liveQuotes={liveQuotes}
                   />
                   <OpenTradesCards
@@ -679,7 +713,7 @@ export default function AdminPanel({ user }) {
                         const stopPx    = o.stop_price   != null ? Number(o.stop_price)       : null;
                         const riskAmt   = o.risk_amt     != null ? Number(o.risk_amt)         : (entryLim != null && stopPx != null ? Math.abs(entryLim - stopPx) * (o.qty ?? 1) : null);
                         const rrEff     = o.rr_ratio_effective ?? o.rr_ratio;
-                        const pl        = o.unrealized_pl != null ? Number(o.unrealized_pl) : null;
+                        const pl        = ticketPl(o);
                         const plPos     = pl != null && pl > 0;
                         const plNeg     = pl != null && pl < 0;
                         const plColor   = plPos ? "text-emerald-400" : plNeg ? "text-red-400" : "text-slate-400";
@@ -812,25 +846,25 @@ export default function AdminPanel({ user }) {
         )}
 
         {activeTab === "performance" && (
-          <PerformancePanel orders={orders} loading={ordersLoading} />
+          <PerformancePanel orders={pricedOrders} loading={ordersLoading} />
         )}
 
         {activeTab === "pnl" && (
           <div className="flex-1 min-h-0 flex flex-col">
-            <AnalyticsPanel orders={orders} loading={ordersLoading} section="pnl" />
+            <AnalyticsPanel orders={pricedOrders} loading={ordersLoading} section="pnl" />
           </div>
         )}
 
         {activeTab === "distribution" && (
-          <AnalyticsPanel orders={orders} loading={ordersLoading} section="distribution" />
+          <AnalyticsPanel orders={pricedOrders} loading={ordersLoading} section="distribution" />
         )}
 
         {activeTab === "strategies" && (
-          <StrategyPerformancePanel orders={orders} loading={ordersLoading} />
+          <StrategyPerformancePanel orders={pricedOrders} loading={ordersLoading} />
         )}
 
         {activeTab === "manual" && (
-          <ManualTradesPanel orders={orders} loading={ordersLoading} />
+          <ManualTradesPanel orders={pricedOrders} loading={ordersLoading} />
         )}
 
       </div>

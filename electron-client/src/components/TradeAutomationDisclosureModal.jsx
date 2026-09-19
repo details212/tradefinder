@@ -95,6 +95,7 @@ export default function TradeAutomationDisclosureModal({ onAcknowledge }) {
             title="Polling latency & confirmation window"
             items={[
               "Checks run a few seconds after each 5-minute clock close so Alpaca can publish the completed bar — not on a random 60-second timer.",
+              "US equity checks pause while the regular session is closed and resume at the next open. Crypto continues around the clock.",
               "If the next 5-minute bar closes back inside your brackets, no market order is sent.",
               "Price can still move between the bar close and the market flatten fill (slippage).",
               "Long and short breaches both use the bar close vs your stop and target levels.",

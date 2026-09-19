@@ -253,7 +253,81 @@ function buildTradeReturnSeries(closedTrades, beginningEquity) {
     : null;
   const tradesPerYear = years && years > 0 ? sorted.length / years : null;
 
-  return { returns, equitySeries, equityPoints, trades, tradesPerYear };
+  return { returns, equitySeries, equityPoints, trades, tradesPerYear, source: "trades" };
+}
+
+function dateKeyEt(ms) {
+  if (!ms || Number.isNaN(ms)) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(ms));
+  const get = (t) => parts.find((p) => p.type === t)?.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function beginningEquityOf({ portfolioValue, netPL, accountSeries }) {
+  if (accountSeries?.baseValue != null && accountSeries.baseValue > 0) {
+    return accountSeries.baseValue;
+  }
+  if (accountSeries?.lastEquity != null && accountSeries.netPl != null) {
+    const start = accountSeries.lastEquity - accountSeries.netPl;
+    if (start > 0) return start;
+  }
+  const pv = portfolioValue != null ? Number(portfolioValue) : null;
+  if (pv != null && !Number.isNaN(pv)) {
+    const start = pv - (netPL ?? 0);
+    return start > 0 ? start : null;
+  }
+  return null;
+}
+
+/** Prefer Alpaca daily equity; fall back to local closed-trade equity path. */
+function resolveReturnSeries({ closedTrades, portfolioValue, netPL, accountSeries }) {
+  if (accountSeries?.equityPoints?.length) {
+    return {
+      returns: accountSeries.returns,
+      equitySeries: accountSeries.equityPoints.map((p) => p.equity),
+      equityPoints: accountSeries.equityPoints,
+      trades: null,
+      tradesPerYear: accountSeries.periodsPerYear || 252,
+      source: "alpaca",
+    };
+  }
+  return buildTradeReturnSeries(
+    closedTrades,
+    beginningEquityOf({ portfolioValue, netPL, accountSeries }),
+  );
+}
+
+function alignedDailyBenchmarkReturns(equityPoints, benchmarkBars) {
+  const portByDate = new Map();
+  for (let i = 1; i < equityPoints.length; i++) {
+    const prev = equityPoints[i - 1].equity;
+    const curr = equityPoints[i].equity;
+    if (!(prev > 0)) continue;
+    const key = dateKeyEt(equityPoints[i].timeMs);
+    if (key) portByDate.set(key, (curr - prev) / prev);
+  }
+  const bench = benchmarkDailyReturns(benchmarkBars);
+  const pairs = [];
+  for (const [key, portfolioReturn] of portByDate) {
+    const benchmarkReturn = bench.get(key);
+    if (benchmarkReturn != null) {
+      pairs.push({ portfolioReturn, benchmarkReturn });
+    }
+  }
+  return pairs;
+}
+
+function benchmarkPairs(series, benchmarkBars) {
+  if (!benchmarkBars?.length) return [];
+  if (series.source === "alpaca") {
+    return alignedDailyBenchmarkReturns(series.equityPoints, benchmarkBars);
+  }
+  return series.trades?.length ? alignedBenchmarkReturns(series.trades, benchmarkBars) : [];
 }
 
 /** Map SPY bar list to { dateKey: dailyReturn }. */
@@ -358,8 +432,7 @@ function annualizeVolatility(periodStd, periodsPerYear) {
 }
 
 /**
- * Risk-adjusted performance ratios from closed trades and optional benchmark bars.
- * Returns are computed per closed trade relative to running equity.
+ * Risk-adjusted performance ratios from Alpaca daily equity when available.
  */
 export function computeRiskAdjustedMetrics({
   closedTrades,
@@ -367,14 +440,15 @@ export function computeRiskAdjustedMetrics({
   netPL,
   cagr,
   benchmarkBars = null,
+  accountSeries = null,
 }) {
-  const pv = portfolioValue != null ? Number(portfolioValue) : null;
-  const beginningEquity = pv != null && !isNaN(pv) ? pv - (netPL ?? 0) : null;
-
-  const { returns, equitySeries, equityPoints, trades, tradesPerYear } = buildTradeReturnSeries(
+  const series = resolveReturnSeries({
     closedTrades,
-    beginningEquity
-  );
+    portfolioValue,
+    netPL,
+    accountSeries,
+  });
+  const { returns, equityPoints, tradesPerYear } = series;
 
   const drawdowns = analyzeDrawdowns(equityPoints);
 
@@ -421,7 +495,7 @@ export function computeRiskAdjustedMetrics({
   let informationRatio = null;
   let benchmarked = false;
 
-  const pairs = benchmarkBars?.length ? alignedBenchmarkReturns(trades, benchmarkBars) : [];
+  const pairs = benchmarkPairs(series, benchmarkBars);
   if (pairs.length >= 2) {
     benchmarked = true;
     const pReturns = pairs.map((p) => p.portfolioReturn);
@@ -455,11 +529,13 @@ export function computeRiskAdjustedMetrics({
 /**
  * Drawdown and downside risk metrics from the equity curve and per-trade returns.
  */
-export function computeDrawdownMetrics({ closedTrades, portfolioValue, netPL }) {
-  const pv = portfolioValue != null ? Number(portfolioValue) : null;
-  const beginningEquity = pv != null && !isNaN(pv) ? pv - (netPL ?? 0) : null;
-
-  const { returns, equityPoints } = buildTradeReturnSeries(closedTrades, beginningEquity);
+export function computeDrawdownMetrics({ closedTrades, portfolioValue, netPL, accountSeries = null }) {
+  const { returns, equityPoints } = resolveReturnSeries({
+    closedTrades,
+    portfolioValue,
+    netPL,
+    accountSeries,
+  });
   const drawdowns = analyzeDrawdowns(equityPoints);
   const { varPct, cvarPct } = computeVaRMetrics(returns);
 
@@ -489,11 +565,15 @@ export function computeVolatilityMetrics({
   portfolioValue,
   netPL,
   benchmarkBars = null,
+  accountSeries = null,
 }) {
-  const pv = portfolioValue != null ? Number(portfolioValue) : null;
-  const beginningEquity = pv != null && !isNaN(pv) ? pv - (netPL ?? 0) : null;
-
-  const { returns, trades, tradesPerYear } = buildTradeReturnSeries(closedTrades, beginningEquity);
+  const series = resolveReturnSeries({
+    closedTrades,
+    portfolioValue,
+    netPL,
+    accountSeries,
+  });
+  const { returns, tradesPerYear } = series;
 
   if (returns.length < 2 || !tradesPerYear) {
     return {
@@ -531,7 +611,7 @@ export function computeVolatilityMetrics({
 
   let beta = null;
   let benchmarked = false;
-  const pairs = benchmarkBars?.length ? alignedBenchmarkReturns(trades, benchmarkBars) : [];
+  const pairs = benchmarkPairs(series, benchmarkBars);
   if (pairs.length >= 2) {
     benchmarked = true;
     beta = computeBeta(
@@ -739,11 +819,12 @@ export function computePositionSizingMetrics({
   closedTrades,
   portfolioValue,
   netPL,
+  accountSeries = null,
 }) {
   const notionals = orders.map(positionNotional).filter((n) => n != null && n > 0);
 
   const pv = portfolioValue != null ? Number(portfolioValue) : null;
-  const beginningEquity = pv != null && !isNaN(pv) ? pv - (netPL ?? 0) : null;
+  const beginningEquity = beginningEquityOf({ portfolioValue, netPL, accountSeries });
 
   const exposure = computeExposureStats(orders, beginningEquity);
 
@@ -828,6 +909,39 @@ function profitablePeriodPct(closedTrades, granularity) {
   return (profitable / groups.size) * 100;
 }
 
+function etMonthKey(ms) {
+  const key = dateKeyEt(ms);
+  return key ? key.slice(0, 7) : null;
+}
+
+function etWeekKey(ms) {
+  const key = dateKeyEt(ms);
+  if (!key) return null;
+  const [y, m, d] = key.split("-").map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  utc.setUTCDate(utc.getUTCDate() - utc.getUTCDay());
+  const yy = utc.getUTCFullYear();
+  const mm = String(utc.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(utc.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function profitableIncrementPct(increments, granularity) {
+  const groups = new Map();
+  for (const row of increments ?? []) {
+    if (row?.ms == null || row.value == null || Number.isNaN(row.value)) continue;
+    const key = granularity === "week" ? etWeekKey(row.ms) : etMonthKey(row.ms);
+    if (!key) continue;
+    groups.set(key, (groups.get(key) ?? 0) + row.value);
+  }
+  if (!groups.size) return null;
+  let profitable = 0;
+  for (const sum of groups.values()) {
+    if (sum > 0) profitable += 1;
+  }
+  return (profitable / groups.size) * 100;
+}
+
 function rMultiplesFor(trades) {
   return trades
     .map((o) => {
@@ -849,13 +963,17 @@ function median(values) {
 }
 
 /** Consistency metrics: periodic profitability, SQN, R distribution, trade cadence. */
-export function computeConsistencyMetrics({ closedTrades }) {
+export function computeConsistencyMetrics({ closedTrades, accountSeries = null }) {
   const closed = closedTrades.filter(
     (o) => o.unrealized_pl != null && !isNaN(Number(o.unrealized_pl))
   );
 
-  const profitableWeeksPct = profitablePeriodPct(closed, "week");
-  const profitableMonthsPct = profitablePeriodPct(closed, "month");
+  const profitableWeeksPct = accountSeries?.incrementalPl?.length
+    ? profitableIncrementPct(accountSeries.incrementalPl, "week")
+    : profitablePeriodPct(closed, "week");
+  const profitableMonthsPct = accountSeries?.incrementalPl?.length
+    ? profitableIncrementPct(accountSeries.incrementalPl, "month")
+    : profitablePeriodPct(closed, "month");
 
   const rList = rMultiplesFor(closed);
   const avgR = rList.length ? mean(rList) : null;
@@ -922,7 +1040,7 @@ function slipFromTrade(o) {
 }
 
 /** Execution costs from fill vs limit on each trade, plus net vs gross return. */
-export function computeCostsMetrics({ closedTrades, portfolioValue, netPL }) {
+export function computeCostsMetrics({ closedTrades, portfolioValue, netPL, accountSeries = null }) {
   const slippageCosts = closedTrades
     .map((o) => entrySlippageDollar(slipFromTrade(o)))
     .filter((v) => v != null && !isNaN(v));
@@ -936,8 +1054,7 @@ export function computeCostsMetrics({ closedTrades, portfolioValue, netPL }) {
   const avgSlippagePerTrade = slippageCosts.length ? mean(slippageCosts) : null;
   const avgSlippagePerShare = slippagePerShare.length ? mean(slippagePerShare) : null;
 
-  const pv = portfolioValue != null ? Number(portfolioValue) : null;
-  const beginningEquity = pv != null && !isNaN(pv) ? pv - (netPL ?? 0) : null;
+  const beginningEquity = beginningEquityOf({ portfolioValue, netPL, accountSeries });
 
   let netReturnPct = null;
   let grossReturnPct = null;
@@ -960,19 +1077,23 @@ export function computeCostsMetrics({ closedTrades, portfolioValue, netPL }) {
 }
 
 /**
- * Benchmark comparison vs SPY using per-trade hold-period returns.
+ * Benchmark comparison vs SPY using Alpaca daily equity when available.
  */
 export function computeBenchmarkMetrics({
   closedTrades,
   portfolioValue,
   netPL,
   benchmarkBars = null,
+  accountSeries = null,
 }) {
-  const pv = portfolioValue != null ? Number(portfolioValue) : null;
-  const beginningEquity = pv != null && !isNaN(pv) ? pv - (netPL ?? 0) : null;
-
-  const { trades, tradesPerYear } = buildTradeReturnSeries(closedTrades, beginningEquity);
-  const pairs = benchmarkBars?.length ? alignedBenchmarkReturns(trades, benchmarkBars) : [];
+  const series = resolveReturnSeries({
+    closedTrades,
+    portfolioValue,
+    netPL,
+    accountSeries,
+  });
+  const { tradesPerYear } = series;
+  const pairs = benchmarkPairs(series, benchmarkBars);
 
   if (pairs.length < 2 || !tradesPerYear) {
     return {
@@ -1021,20 +1142,23 @@ export function computeBenchmarkMetrics({
  * Portfolio-level performance metrics (aligned with leaderboard formulas).
  * `portfolioValue` from Alpaca enables total return and CAGR.
  */
-export function computePerformanceMetrics({ closedTrades, openTrades, portfolioValue }) {
+export function computePerformanceMetrics({ closedTrades, openTrades, portfolioValue, accountSeries = null }) {
   const closedPLs = closedTrades
     .map((o) => Number(o.unrealized_pl))
     .filter((v) => !isNaN(v));
 
-  const realizedPL = closedPLs.reduce((s, v) => s + v, 0);
+  const ticketRealizedPL = closedPLs.reduce((s, v) => s + v, 0);
 
-  const unrealizedPL = openTrades.reduce((s, o) => {
+  const ticketUnrealizedPL = openTrades.reduce((s, o) => {
     if (o.unrealized_pl == null) return s;
     const v = Number(o.unrealized_pl);
     return isNaN(v) ? s : s + v;
   }, 0);
 
-  const netPL = realizedPL + unrealizedPL;
+  const fromAlpaca = accountSeries?.netPl != null && !Number.isNaN(accountSeries.netPl);
+  const netPL = fromAlpaca ? accountSeries.netPl : ticketRealizedPL + ticketUnrealizedPL;
+  const realizedPL = fromAlpaca ? null : ticketRealizedPL;
+  const unrealizedPL = fromAlpaca ? null : ticketUnrealizedPL;
 
   const winners = closedPLs.filter((p) => p > 0);
   const losers = closedPLs.filter((p) => p < 0);
@@ -1058,26 +1182,27 @@ export function computePerformanceMetrics({ closedTrades, openTrades, portfolioV
   const expectancy = closedCount ? realizedPL / closedCount : null;
 
   const pv = portfolioValue != null ? Number(portfolioValue) : null;
+  const endingEquity = (pv != null && !Number.isNaN(pv) && pv > 0)
+    ? pv
+    : accountSeries?.lastEquity;
+  const beginningEquity = beginningEquityOf({ portfolioValue: endingEquity, netPL, accountSeries });
   let totalReturnPct = null;
   let cagr = null;
 
-  if (pv != null && !isNaN(pv)) {
-    const beginningEquity = pv - netPL;
-    if (beginningEquity > 0) {
-      totalReturnPct = (netPL / beginningEquity) * 100;
-
-      const allDates = [...closedTrades, ...openTrades]
-        .map((o) => o.created_at)
-        .filter(Boolean)
-        .map((d) => new Date(d).getTime())
-        .filter((t) => !isNaN(t));
-
-      if (allDates.length) {
-        const years = (Date.now() - Math.min(...allDates)) / (365.25 * 24 * 3600 * 1000);
-        if (years > 0) {
-          cagr = (Math.pow(pv / beginningEquity, 1 / years) - 1) * 100;
-        }
-      }
+  if (beginningEquity != null && beginningEquity > 0 && netPL != null) {
+    totalReturnPct = (netPL / beginningEquity) * 100;
+    const years = accountSeries?.years
+      ?? (() => {
+        const allDates = [...closedTrades, ...openTrades]
+          .map((o) => o.created_at)
+          .filter(Boolean)
+          .map((d) => new Date(d).getTime())
+          .filter((t) => !isNaN(t));
+        if (!allDates.length) return null;
+        return (Date.now() - Math.min(...allDates)) / (365.25 * 24 * 3600 * 1000);
+      })();
+    if (endingEquity != null && endingEquity > 0 && years > 0) {
+      cagr = (Math.pow(endingEquity / beginningEquity, 1 / years) - 1) * 100;
     }
   }
 
@@ -1085,6 +1210,9 @@ export function computePerformanceMetrics({ closedTrades, openTrades, portfolioV
     netPL,
     realizedPL,
     unrealizedPL,
+    fromAlpaca,
+    beginningEquity,
+    paper: accountSeries?.paper ?? null,
     grossProfit,
     grossLoss,
     avgWin,

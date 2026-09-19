@@ -876,12 +876,14 @@ function CloseAllTradesSection({ scalpEnabled }) {
       ) : (
         <div className="flex flex-col gap-4">
           <p className="text-xs text-slate-500 leading-relaxed">
-            At <span className="text-slate-400">3:55 PM ET</span>—5 minutes before the regular
+            At <span className="text-slate-400">3:45 PM ET</span>—15 minutes before the regular
             trading session closes—market-flatten every open TradeFinder trade, so nothing is
-            left held overnight. Runs Monday–Friday while the app server is running.
+            left held overnight. Starts early enough to flatten a large book without hitting
+            Alpaca rate limits in the last minutes of the session. Runs Monday–Friday while
+            the app server is running.
           </p>
           <div className="flex items-center justify-between gap-4 py-1">
-            <span className="text-sm text-slate-300">Close all open trades 5 minutes before session end</span>
+            <span className="text-sm text-slate-300">Close all open trades 15 minutes before session end</span>
             <button
               type="button"
               role="switch"
@@ -906,7 +908,7 @@ function CloseAllTradesSection({ scalpEnabled }) {
           )}
           <p className="text-[11px] text-slate-600 leading-relaxed">
             Does not account for market holidays or early-close days — the check always fires at
-            3:55 PM ET on weekdays.
+            3:45 PM ET on weekdays.
           </p>
           <StatusBanner status={status} />
         </div>
@@ -959,7 +961,7 @@ function CloseAllTradesBeforeWeekendSection() {
       ) : (
         <div className="flex flex-col gap-4">
           <p className="text-xs text-slate-500 leading-relaxed">
-            Every <span className="text-slate-400">Friday at 3:55 PM ET</span>—5 minutes before
+            Every <span className="text-slate-400">Friday at 3:45 PM ET</span>—15 minutes before
             the regular trading session closes—market-flatten every open TradeFinder trade, so
             nothing is held over the weekend. Independent of the daily "Close all trades" setting
             above — enable this one on its own if you're fine holding overnight Monday–Thursday
@@ -985,7 +987,7 @@ function CloseAllTradesBeforeWeekendSection() {
             </button>
           </div>
           <p className="text-[11px] text-slate-600 leading-relaxed">
-            Does not account for market holidays — the check fires at 3:55 PM ET on whichever day
+            Does not account for market holidays — the check fires at 3:45 PM ET on whichever day
             is Friday on the calendar, regardless of early closes.
           </p>
           <StatusBanner status={status} />

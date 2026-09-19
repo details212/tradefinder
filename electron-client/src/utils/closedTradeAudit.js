@@ -101,7 +101,7 @@ export const EXIT_METHOD_INFO = {
   },
   session_close: {
     label: "Session close",
-    message: "Closed by Close All Trades — 5 minutes before the regular session close.",
+    message: "Closed by Close All Trades — 15 minutes before the regular session close.",
     cls: "text-sky-300 bg-sky-950/50 border-sky-700/60",
   },
 };

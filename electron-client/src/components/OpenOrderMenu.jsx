@@ -1,21 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-
-function looksLikeCrypto(ticker) {
-  const raw = String(ticker || "");
-  const compact = raw.replace(/[-/]/g, "").toUpperCase();
-  return /^X:/i.test(raw) || /^(?:[A-Z]{2,})(USD|USDT|USDC|EUR|GBP)$/.test(compact);
-}
+import { looksLikeCrypto } from "../utils/equityMarketHours";
 
 /**
  * Toolbar control: pick a bracket limit or a simple market fill.
  * Crypto has no Alpaca brackets — market only.
  * onSelect("limit" | "market")
  */
-export default function OpenOrderMenu({ onSelect, ticker }) {
+export default function OpenOrderMenu({ onSelect, ticker, disabled = false, disabledTitle }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const crypto = looksLikeCrypto(ticker);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -35,13 +34,19 @@ export default function OpenOrderMenu({ onSelect, ticker }) {
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-semibold bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border border-yellow-500/50 transition shadow-sm animate-pulse"
+        disabled={disabled}
+        title={disabled ? (disabledTitle || "US equity market is closed") : undefined}
+        onClick={() => { if (!disabled) setOpen((v) => !v); }}
+        className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-semibold border transition shadow-sm ${
+          disabled
+            ? "bg-slate-800 text-slate-500 border-slate-600 cursor-not-allowed"
+            : "bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 border-yellow-500/50 animate-pulse"
+        }`}
       >
-        Open Order
-        <ChevronDown className={`w-3 h-3 transition ${open ? "rotate-180" : ""}`} />
+        {disabled ? "Market closed" : "Open Order"}
+        {!disabled && <ChevronDown className={`w-3 h-3 transition ${open ? "rotate-180" : ""}`} />}
       </button>
-      {open && (
+      {open && !disabled && (
         <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-lg border border-slate-600 bg-slate-800 shadow-xl overflow-hidden">
           {!crypto && (
             <button

@@ -1,12 +1,15 @@
-import { useId, useMemo } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   BarChart2,
   Search,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
+import { alpacaApi } from "../api/client";
 import { exitPrice } from "../utils/alpacaPrices";
+import { formatSinceLabel, historySinceParam, historyToNet } from "../utils/alpacaPortfolio";
 import { parseTs } from "../utils/closedTradeAudit";
+import { ticketPl } from "../utils/ticketPl";
 
 function fmt$(v, digits = 2) {
   if (v == null || Number.isNaN(v)) return "—";
@@ -56,24 +59,8 @@ function plColor(v) {
   return "text-slate-400";
 }
 
-function orderMark(order, quote) {
-  return (
-    exitPrice(order.direction, quote) ??
-    (order.current_price != null ? Number(order.current_price) : null)
-  );
-}
-
 function orderPl(order, quote) {
-  const fillPx = order.filled_avg_price ?? order.entry_price;
-  const livePx = orderMark(order, quote);
-  const qty = order.qty != null ? Number(order.qty) : null;
-  if (fillPx != null && livePx != null && qty != null && !Number.isNaN(qty)) {
-    const dir = order.direction === "long" ? 1 : -1;
-    return dir * (Number(livePx) - Number(fillPx)) * qty;
-  }
-  if (order.unrealized_pl == null) return null;
-  const v = Number(order.unrealized_pl);
-  return Number.isNaN(v) ? null : v;
+  return ticketPl(order, quote);
 }
 
 function clamp01(v) {
@@ -81,37 +68,126 @@ function clamp01(v) {
   return Math.min(1, Math.max(0, v));
 }
 
-function etDayKey(ms) {
-  return new Date(ms).toLocaleDateString("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+const NET_PERIODS = [
+  { id: "day", label: "Day" },
+  { id: "week", label: "Week" },
+  { id: "month", label: "Month" },
+  { id: "all", label: "All" },
+];
+
+function PeriodToggle({ value, onChange }) {
+  return (
+    <span className="flex items-center rounded border border-slate-700/70 overflow-hidden shrink-0">
+      {NET_PERIODS.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => onChange(p.id)}
+          className={`px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide transition ${
+            value === p.id
+              ? "bg-brand-500/20 text-brand-400"
+              : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+          }`}
+        >
+          {p.label}
+        </button>
+      ))}
+    </span>
+  );
 }
 
-function isTodayEt(dateVal) {
-  const ms = parseTs(dateVal);
-  if (ms == null) return false;
-  return etDayKey(ms) === etDayKey(Date.now());
+function PnlBarChart({ buckets }) {
+  const [hover, setHover] = useState(null);
+  if (!buckets?.length) return null;
+  const max = Math.max(...buckets.map((b) => Math.abs(b.value)), 1);
+  const tip = hover != null ? buckets[hover] : null;
+
+  return (
+    <div className="w-full mt-1.5" role="img" aria-label="Net P/L bar chart">
+      <div
+        className="relative flex items-stretch gap-px w-full h-12"
+        onMouseLeave={() => setHover(null)}
+      >
+        <div className="absolute left-0 right-0 top-1/2 h-px bg-slate-700 pointer-events-none" />
+        {buckets.map((b, i) => {
+          const pct = (Math.abs(b.value) / max) * 50;
+          const h = Math.abs(b.value) < 0.005 ? 0 : Math.max(pct, 4);
+          const positive = b.value >= 0;
+          const color = b.value > 0.005
+            ? "bg-emerald-400"
+            : b.value < -0.005
+              ? "bg-red-400"
+              : "bg-slate-600";
+          return (
+            <div
+              key={b.key}
+              className="relative flex-1 min-w-0 h-full cursor-crosshair"
+              onMouseEnter={() => setHover(i)}
+            >
+              {h === 0 ? (
+                <div className="absolute left-[15%] right-[15%] top-1/2 -translate-y-1/2 h-px bg-slate-600" />
+              ) : (
+                <div
+                  className={`absolute left-[10%] right-[10%] rounded-[1px] ${color} ${b.isCurrent || hover === i ? "opacity-100" : "opacity-80"}`}
+                  style={positive
+                    ? { bottom: "50%", height: `${h}%` }
+                    : { top: "50%", height: `${h}%` }}
+                />
+              )}
+            </div>
+          );
+        })}
+        {tip && (
+          <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none whitespace-nowrap rounded bg-slate-950/95 border border-slate-700 px-1.5 py-0.5 text-[10px] font-mono tabular-nums text-slate-100 shadow-lg">
+            <span className="text-slate-400 mr-1">{tip.title}</span>
+            <span className={plColor(tip.value)}>{fmtPl(tip.value)}</span>
+          </div>
+        )}
+      </div>
+      <div className="flex w-full mt-0.5">
+        {buckets.map((b) => (
+          <span
+            key={`${b.key}-lbl`}
+            className={`flex-1 min-w-0 text-center text-[8px] leading-none truncate ${
+              b.isCurrent ? "text-slate-400" : "text-slate-600"
+            }`}
+          >
+            {b.label || "\u00a0"}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
-function computeDayPl(closedOrders) {
-  let realized = 0;
-  let realizedCount = 0;
-  let wins = 0;
-  let losses = 0;
-  for (const o of closedOrders) {
-    if (!isTodayEt(o.closed_at ?? o.synced_at)) continue;
-    if (o.unrealized_pl == null) continue;
-    const v = Number(o.unrealized_pl);
-    if (Number.isNaN(v)) continue;
-    realized += v;
-    realizedCount += 1;
-    if (v > 0.005) wins += 1;
-    else if (v < -0.005) losses += 1;
-  }
-  return { realized, realizedCount, wins, losses };
+function NetPlCard({ netPl, period, onPeriod, buckets, loading, error, paper, since }) {
+  return (
+    <div
+      className="rounded-xl border border-slate-700/70 bg-slate-900/50 px-3 pt-3 pb-2 flex flex-col min-w-0 overflow-visible"
+    >
+      <div className="flex items-center justify-between gap-1 min-h-[18px]">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 truncate">
+          Net P/L
+        </p>
+        <PeriodToggle value={period} onChange={onPeriod} />
+      </div>
+      <p className={`text-lg font-bold font-mono tabular-nums mt-1.5 leading-none ${
+        loading ? "text-slate-500" : plColor(netPl)
+      }`}>
+        {loading ? "…" : fmtPl(netPl)}
+      </p>
+      <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+        {error
+          ? error
+          : loading
+            ? "Loading Alpaca…"
+            : `Alpaca ${paper ? "paper" : "live"}${since ? ` · since ${formatSinceLabel(since)}` : " account"}`}
+      </p>
+      <div className="w-full mt-auto">
+        {!loading && !error && <PnlBarChart buckets={buckets} />}
+      </div>
+    </div>
+  );
 }
 
 function fmtHold(ms) {
@@ -195,7 +271,7 @@ function computeOpenBookMetrics(orders, liveQuotes) {
 }
 
 /** Semicircle needle gauge. `t` is 0 (left) … 1 (right). */
-function ArcGauge({ label, valueText, valueClass, sub, t, minLabel, maxLabel, track, zeroT, title }) {
+function ArcGauge({ label, valueText, valueClass, sub, t, minLabel, maxLabel, track, zeroT, title, action }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const cx = 80;
   const cy = 78;
@@ -219,11 +295,14 @@ function ArcGauge({ label, valueText, valueClass, sub, t, minLabel, maxLabel, tr
   return (
     <div
       className="rounded-xl border border-slate-700/70 bg-slate-900/50 px-3 pt-3 pb-2.5 flex flex-col items-center min-w-0"
-      title={title}
+      title={action ? undefined : title}
     >
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 self-start">
-        {label}
-      </p>
+      <div className="flex items-center justify-between w-full gap-1 min-h-[18px]">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 truncate" title={action ? title : undefined}>
+          {label}
+        </p>
+        {action}
+      </div>
       <svg viewBox="0 0 160 96" className="w-full max-w-[200px] -mt-1" aria-hidden="true">
         <defs>
           <linearGradient id={`g-${uid}`} x1="0%" y1="0%" x2="100%" y2="0%">
@@ -277,62 +356,127 @@ function ArcGauge({ label, valueText, valueClass, sub, t, minLabel, maxLabel, tr
   );
 }
 
-export function OpenTradesGauges({ orders, closedOrders = [], liveQuotes = {} }) {
+export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], liveQuotes = {} }) {
+  const [netPeriod, setNetPeriod] = useState("day");
+  const [alpacaHist, setAlpacaHist] = useState(null);
+  const [alpacaErr, setAlpacaErr] = useState(null);
+  const [alpacaLoading, setAlpacaLoading] = useState(true);
+  const [dayHist, setDayHist] = useState(null);
+  const [dayErr, setDayErr] = useState(null);
+  const [dayLoading, setDayLoading] = useState(true);
+
+  const since = useMemo(
+    () => historySinceParam(netPeriod, allOrders.length ? allOrders : [...orders, ...closedOrders]),
+    [netPeriod, allOrders, orders, closedOrders],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setAlpacaLoading(true);
+    alpacaApi.portfolioHistory(netPeriod, since)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.data?.ok) {
+          setAlpacaHist(r.data);
+          setAlpacaErr(null);
+        } else {
+          setAlpacaHist(null);
+          setAlpacaErr(r.data?.error || "Alpaca history unavailable");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAlpacaHist(null);
+          setAlpacaErr("Could not load Alpaca P/L");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAlpacaLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [netPeriod, since]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDayLoading(true);
+    alpacaApi.portfolioHistory("day")
+      .then((r) => {
+        if (cancelled) return;
+        if (r.data?.ok) {
+          setDayHist(r.data);
+          setDayErr(null);
+        } else {
+          setDayHist(null);
+          setDayErr(r.data?.error || "Alpaca day P/L unavailable");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDayHist(null);
+          setDayErr("Could not load Alpaca day P/L");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDayLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const metrics = useMemo(
     () => computeOpenBookMetrics(orders, liveQuotes),
     [orders, liveQuotes],
   );
-  const day = useMemo(
-    () => computeDayPl(closedOrders),
-    [closedOrders],
+  const alpacaNet = useMemo(
+    () => historyToNet(alpacaHist, netPeriod),
+    [alpacaHist, netPeriod],
   );
+  const dayNet = useMemo(
+    () => historyToNet(dayHist, "day"),
+    [dayHist],
+  );
+  const dayPl = dayNet.netPl;
 
   if (!orders.length) return null;
 
-  const absPl = Math.abs(metrics.pl ?? 0);
-  const plMin = metrics.risk > 0 ? -metrics.risk : -Math.max(absPl, 1);
-  const plMax = metrics.reward > 0 ? metrics.reward : Math.max(metrics.risk, absPl, 1);
-  const plT = metrics.pl == null ? 0.5 : (metrics.pl - plMin) / (plMax - plMin || 1);
-
-  const dayAbs = Math.abs(day.realized);
+  const dayAbs = Math.abs(dayPl ?? 0);
   const dayScale = Math.max(dayAbs, 1);
-  const dayT = (day.realized - (-dayScale)) / (2 * dayScale);
+  const dayT = dayPl == null ? 0.5 : (dayPl - (-dayScale)) / (2 * dayScale);
 
   const holdScale = Math.max(metrics.longestHoldMs || 0, HOLD_WARN_MS);
   const holdT = metrics.avgHoldMs == null ? 0 : metrics.avgHoldMs / holdScale;
   const holdHot = metrics.avgHoldMs != null && metrics.avgHoldMs >= HOLD_WARN_MS;
 
   const winT = metrics.count ? metrics.winners / metrics.count : 0;
-  const sideSub = `${metrics.longs} long · ${metrics.shorts} short`;
 
   return (
     <div className="px-4 pt-4 pb-3 border-b border-slate-800/60">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <ArcGauge
-          label="Open P/L"
-          valueText={fmtPl(metrics.pl)}
-          valueClass={plColor(metrics.pl)}
-          sub={`${metrics.count} open · ${sideSub}`}
-          t={plT}
-          minLabel={metrics.risk > 0 ? `-${fmt$(metrics.risk, 0)} risk` : "loss"}
-          maxLabel={metrics.reward > 0 ? `+${fmt$(metrics.reward, 0)} tgt` : "gain"}
-          zeroT={(0 - plMin) / (plMax - plMin || 1)}
-          title="Unrealized P/L across all open trades. Needle is scaled from total stop risk to total target reward."
+        <NetPlCard
+          netPl={alpacaNet.netPl}
+          period={netPeriod}
+          onPeriod={setNetPeriod}
+          buckets={alpacaNet.buckets}
+          loading={alpacaLoading}
+          error={alpacaErr}
+          paper={alpacaHist?.paper}
+          since={alpacaHist?.since}
         />
         <ArcGauge
           label="Day P/L"
-          valueText={fmtPl(day.realized)}
-          valueClass={plColor(day.realized)}
+          valueText={dayLoading ? "…" : fmtPl(dayPl)}
+          valueClass={dayLoading ? "text-slate-500" : plColor(dayPl)}
           sub={
-            day.realizedCount > 0
-              ? `${day.realizedCount} closed today · ${day.wins}W / ${day.losses}L`
-              : "No closes today"
+            dayErr
+              ? dayErr
+              : dayLoading
+                ? "Loading Alpaca…"
+                : `Alpaca ${dayHist?.paper ? "paper" : "live"} · today`
           }
           t={dayT}
           minLabel={`-${fmt$(dayScale, 0)}`}
           maxLabel={`+${fmt$(dayScale, 0)}`}
           zeroT={0.5}
-          title="Realized P/L from trades closed today (US/Eastern). Open trades are not included."
+          title="Account day P/L from Alpaca GET /v2/account/portfolio/history (1D, regular hours). Local trade rows are not used."
         />
         <ArcGauge
           label="Avg Hold"
@@ -390,7 +534,7 @@ function tradeInBounds(isLong, livePx, stopPx, targetPx) {
 function OpenTradeCard({ order, quote, onDetail, onChart, daysOpen }) {
   const isLong = order.direction === "long";
   const isPaper = order.paper_mode;
-  const pl = order.unrealized_pl != null ? Number(order.unrealized_pl) : null;
+  const pl = ticketPl(order, quote);
   const plPos = pl != null && pl > 0;
   const plNeg = pl != null && pl < 0;
   const fillPx = order.filled_avg_price ?? order.entry_price;

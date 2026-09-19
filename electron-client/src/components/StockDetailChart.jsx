@@ -11,9 +11,11 @@ import Highcharts from "highcharts/highstock";
 import HighchartsReact from "highcharts-react-official";
 import { stockApi, alpacaApi, preferencesApi } from "../api/client";
 import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
+import { useEquityMarketOpen } from "../hooks/useEquityMarketOpen";
 import { Loader2, AlertCircle, Target, X } from "lucide-react";
 import { etStringToUtcMs } from "../utils/timeUtils";
 import { deriveRiskQty, qtyFromInput, qtyNumber } from "../utils/qtyInput";
+import { blockEquityOrders, equityMarketClosedMessage } from "../utils/equityMarketHours";
 import OpenOrderMenu from "./OpenOrderMenu";
 
 Highcharts.setOptions({ lang: { rangeSelectorZoom: "" } });
@@ -777,6 +779,8 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
   // ── Live bid/ask — fetched when a drawing is active (no polling cache) ───────
   const hasDrawing = rr !== null;
   const { quote: liveQuote, refetch: refetchQuote } = useFreshAlpacaQuote(ticker, hasDrawing);
+  const { isOpen: equityMarketOpen, nextOpen: equityNextOpen } = useEquityMarketOpen();
+  const blockNewEquity = blockEquityOrders(ticker, equityMarketOpen);
 
   // ── Click-to-place entry ─────────────────────────────────────────────────────
   // directionRef.current is always the live direction value — no stale closure risk.
@@ -1154,6 +1158,8 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 <OpenOrderMenu
                   ticker={ticker}
+                  disabled={blockNewEquity}
+                  disabledTitle={equityMarketClosedMessage(equityNextOpen)}
                   onSelect={(type) => { setOrderType(type); setOrderResult(null); }}
                 />
               </div>
@@ -1482,6 +1488,12 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                     </div>
                   )}
 
+                  {blockNewEquity && !orderResult && (
+                    <div className="mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium bg-amber-900/40 border border-amber-500/40 text-amber-200">
+                      {equityMarketClosedMessage(equityNextOpen)}
+                    </div>
+                  )}
+
                   {orderResult && (
                     <div className={`mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium ${
                       orderResult.ok
@@ -1513,9 +1525,13 @@ export default function StockDetailChart({ ticker, barTime = null, threshold = n
                     </button>
                     {!orderResult?.ok && (
                       <button
-                        disabled={orderSubmitting || (!isMarket && hasLevelError)}
+                        disabled={orderSubmitting || (!isMarket && hasLevelError) || blockNewEquity}
                         onClick={async () => {
                           setOrderResult(null);
+                          if (blockNewEquity) {
+                            setOrderResult({ ok: false, message: equityMarketClosedMessage(equityNextOpen) });
+                            return;
+                          }
                           if (!isMarket) {
                             if (isLong && rr.stop >= entryPrice) {
                               setOrderResult({ ok: false, message: "Stop loss must be below the entry price for a Long trade." });

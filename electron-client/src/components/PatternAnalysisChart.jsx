@@ -21,6 +21,8 @@ import "highcharts/highcharts-more";
 import HighchartsReact from "highcharts-react-official";
 import { chartApi, alpacaApi, preferencesApi, boxApi, stockApi } from "../api/client";
 import { useFreshAlpacaQuote } from "../hooks/useFreshAlpacaQuote";
+import { useEquityMarketOpen } from "../hooks/useEquityMarketOpen";
+import { blockEquityOrders, equityMarketClosedMessage } from "../utils/equityMarketHours";
 import {
   Loader2, AlertCircle, Target, X, RefreshCw,
   ChevronLeft, ChevronRight, Square,
@@ -878,6 +880,8 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
   // ── Live quote while drawing — fresh fetch when drawing starts (no polling) ─
   const hasDrawing = rr !== null;
   const { quote: liveQuote, refetch: refetchQuote } = useFreshAlpacaQuote(ticker, hasDrawing);
+  const { isOpen: equityMarketOpen, nextOpen: equityNextOpen } = useEquityMarketOpen();
+  const blockNewEquity = blockEquityOrders(ticker, equityMarketOpen);
 
   // ── Determine active OHLCV/studies (replay vs full) ───────────────────────
   const activeOhlcv   = useMemo(() => {
@@ -1460,6 +1464,8 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                 <div className="ml-auto">
                   <OpenOrderMenu
                     ticker={ticker}
+                    disabled={blockNewEquity}
+                    disabledTitle={equityMarketClosedMessage(equityNextOpen)}
                     onSelect={(type) => { setOrderType(type); setOrderResult(null); }}
                   />
                 </div>
@@ -1780,6 +1786,11 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                 </p>
               </div>
               {hasErr && !orderResult && <div className="mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium bg-red-900/40 border border-red-500/40 text-red-300">Stop must be below entry price.</div>}
+              {blockNewEquity && !orderResult && (
+                <div className="mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium bg-amber-900/40 border border-amber-500/40 text-amber-200">
+                  {equityMarketClosedMessage(equityNextOpen)}
+                </div>
+              )}
               {orderResult && <div className={`mx-4 mb-2 rounded-lg px-3 py-2 text-xs font-medium ${orderResult.ok?"bg-emerald-900/40 border border-emerald-500/40 text-emerald-300":"bg-red-900/40 border border-red-500/40 text-red-300"}`}>
                 {orderResult.ok ? <><span className="font-bold">Order placed!</span>{orderResult.orderId&&<span className="block text-[11px] mt-0.5 truncate font-mono">ID: {orderResult.orderId}</span>}</> : orderResult.message}
               </div>}
@@ -1789,8 +1800,12 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
                   {orderResult?.ok ? "Close" : "Cancel"}
                 </button>
                 {!orderResult?.ok && (
-                  <button disabled={orderSubmitting || hasErr}
+                  <button disabled={orderSubmitting || hasErr || blockNewEquity}
                     onClick={async () => {
+                      if (blockNewEquity) {
+                        setOrderResult({ ok: false, message: equityMarketClosedMessage(equityNextOpen) });
+                        return;
+                      }
                       const qty = qtyNumber(rr.qty);
                       if (!qty) {
                         setOrderResult({ ok: false, message: "Quantity must be greater than zero." });

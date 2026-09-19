@@ -1,11 +1,14 @@
 /**
  * AnalyticsPanel — trading performance analytics dashboard.
- * Receives `orders` (already synced) and `loading` from AdminPanel.
+ * P&L curve is Alpaca portfolio history (same feed as My Trades Net P/L).
+ * Distribution charts still use local closed-trade rows.
  */
 import React, { useMemo, useRef, useEffect, useState } from "react";
 import Highcharts from "highcharts";
 import HighchartsReact from "highcharts-react-official";
 import { BarChart2 } from "lucide-react";
+import { alpacaApi } from "../api/client";
+import { formatSinceLabel, historySinceParam, historyToCurve } from "../utils/alpacaPortfolio";
 import { entrySlippagePerShare, executionFromTrade } from "../utils/tradeExecution";
 
 // ── Highcharts dark theme ─────────────────────────────────────────────────────
@@ -64,6 +67,34 @@ function SectionHeader({ title, sub }) {
   );
 }
 
+const NET_PERIODS = [
+  { id: "day", label: "Day" },
+  { id: "week", label: "Week" },
+  { id: "month", label: "Month" },
+  { id: "all", label: "All" },
+];
+
+function PeriodToggle({ value, onChange }) {
+  return (
+    <span className="flex items-center rounded border border-slate-700/70 overflow-hidden shrink-0">
+      {NET_PERIODS.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => onChange(p.id)}
+          className={`px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide transition ${
+            value === p.id
+              ? "bg-brand-500/20 text-brand-400"
+              : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+          }`}
+        >
+          {p.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 function ChartBox({ title, children, className = "", fill = false, containerRef }) {
   return (
     <div className={`bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 flex flex-col ${fill ? "flex-1 min-h-0" : ""} ${className}`}>
@@ -87,6 +118,10 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
 
   const pnlChartRef = useRef(null);
   const [pnlChartHeight, setPnlChartHeight] = useState(null);
+  const [pnlPeriod, setPnlPeriod] = useState("all");
+  const [alpacaHist, setAlpacaHist] = useState(null);
+  const [alpacaErr, setAlpacaErr] = useState(null);
+  const [alpacaLoading, setAlpacaLoading] = useState(showPnl);
 
   const closed = useMemo(() =>
     orders
@@ -94,6 +129,38 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
       .sort((a, b) => new Date(a.synced_at) - new Date(b.synced_at)),
     [orders]
   );
+
+  const since = useMemo(() => historySinceParam(pnlPeriod, orders), [pnlPeriod, orders]);
+
+  useEffect(() => {
+    if (!showPnl) return undefined;
+    if (loading && !orders.length) return undefined;
+    let cancelled = false;
+    setAlpacaLoading(true);
+    alpacaApi.portfolioHistory(pnlPeriod, since)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.data?.ok) {
+          setAlpacaHist(r.data);
+          setAlpacaErr(null);
+        } else {
+          setAlpacaHist(null);
+          setAlpacaErr(r.data?.error || "Alpaca history unavailable");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAlpacaHist(null);
+          setAlpacaErr("Could not load Alpaca P/L");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAlpacaLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showPnl, pnlPeriod, since, loading, orders.length]);
+
+  const alpacaCurve = useMemo(() => historyToCurve(alpacaHist), [alpacaHist]);
 
   useEffect(() => {
     if (!pnlFill) {
@@ -108,26 +175,22 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [pnlFill, loading, closed.length]);
+  }, [pnlFill, alpacaLoading, alpacaCurve.points.length]);
 
-  // ── Cumulative P&L + drawdown chart ─────────────────────────────────────────
+  // ── Cumulative P&L + drawdown chart (Alpaca portfolio history) ─────────────
   const cumulativeOpts = useMemo(() => {
-    if (!closed.length) return null;
-    let cum = 0, peak = 0;
-    const cumData = [], ddData = [];
-    closed.forEach((o, i) => {
-      cum  += Number(o.unrealized_pl);
-      if (cum > peak) peak = cum;
-      cumData.push([i, parseFloat(cum.toFixed(2))]);
-      ddData.push([i, parseFloat((cum - peak).toFixed(2))]);
-    });
+    const points = alpacaCurve.points;
+    if (!points.length) return null;
+    const cumData = points.map((p) => [p.ms, parseFloat(p.pl.toFixed(2))]);
+    const ddData = points.map((p) => [p.ms, parseFloat((p.drawdown ?? 0).toFixed(2))]);
     return {
+      time: { timezone: "America/New_York" },
       chart:  {
         height: pnlFill && pnlChartHeight ? pnlChartHeight : 220,
         type: "line",
         marginTop: 10,
       },
-      xAxis:  { visible: false },
+      xAxis:  { type: "datetime" },
       yAxis: [
         { title: { text: null }, labels: { formatter() { return fmt$(this.value, 0); } } },
         { title: { text: null }, labels: { formatter() { return fmt$(this.value, 0); }, style: { color: "#f87171" } }, opposite: true, max: 0 },
@@ -139,12 +202,16 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
       legend: { enabled: true, align: "right", verticalAlign: "top" },
       tooltip: {
         shared: true,
+        xDateFormat: "%Y-%m-%d %H:%M ET",
         formatter() {
-          return this.points.map(p => `<b>${p.series.name}</b>: ${fmt$(p.y)}`).join("<br>");
+          const when = new Date(this.x).toLocaleString("en-US", { timeZone: "America/New_York" });
+          return [`<span class="text-slate-400">${when}</span>`]
+            .concat(this.points.map(p => `<b>${p.series.name}</b>: ${fmt$(p.y)}`))
+            .join("<br>");
         },
       },
     };
-  }, [closed, pnlFill, pnlChartHeight]);
+  }, [alpacaCurve, pnlFill, pnlChartHeight]);
 
   // ── P&L distribution histogram ────────────────────────────────────────────────
   const plHistOpts = useMemo(() => {
@@ -201,8 +268,8 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
     };
   }, [closed]);
 
-  // ── Empty / loading states ─────────────────────────────────────────────────
-  if (loading) {
+  // Distribution still needs local closed rows. P&L Analysis does not.
+  if (showDistribution && !showPnl && loading) {
     return (
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-center h-48 text-slate-400 text-sm">
@@ -212,7 +279,7 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
       </div>
     );
   }
-  if (!closed.length) {
+  if (showDistribution && !showPnl && !closed.length) {
     return (
       <div className="flex flex-col gap-4">
         <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-10 text-center">
@@ -225,23 +292,45 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
     );
   }
 
-  const netPL = closed.reduce((s, o) => s + Number(o.unrealized_pl), 0);
+  const periodLabel = NET_PERIODS.find((p) => p.id === pnlPeriod)?.label || "All";
+  const sourceLabel = alpacaHist == null
+    ? "Alpaca"
+    : alpacaHist.paper
+      ? "Alpaca paper"
+      : "Alpaca live";
+  const pnlSub = alpacaErr
+    ? alpacaErr
+    : alpacaLoading
+      ? "Loading Alpaca…"
+      : `${sourceLabel} · ${periodLabel}${alpacaHist?.since ? ` · since ${formatSinceLabel(alpacaHist.since)}` : ""} · Net ${fmt$(alpacaCurve.netPl)}`;
 
   return (
     <div className={`flex flex-col gap-6 ${pnlFill ? "flex-1 min-h-0 h-full" : ""}`}>
 
       {showPnl && (
       <div className={`flex flex-col gap-4 ${pnlFill ? "flex-1 min-h-0" : ""}`}>
-        <SectionHeader
-          title="P&L Analysis"
-          sub={`${closed.length} closed trade${closed.length !== 1 ? "s" : ""} · Net ${fmt$(netPL)}`}
-        />
+        <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-800/60">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-200">P&L Analysis</h3>
+            <p className="text-xs text-slate-400 mt-0.5">{pnlSub}</p>
+          </div>
+          <PeriodToggle value={pnlPeriod} onChange={setPnlPeriod} />
+        </div>
 
         <ChartBox
           title="Cumulative P&L + Drawdown Overlay"
           fill={pnlFill}
           containerRef={pnlFill ? pnlChartRef : undefined}
         >
+          {alpacaLoading && !cumulativeOpts && (
+            <p className="text-slate-400 text-sm text-center py-10">Loading Alpaca P&L…</p>
+          )}
+          {alpacaErr && !cumulativeOpts && (
+            <p className="text-slate-400 text-sm text-center py-10">{alpacaErr}</p>
+          )}
+          {!alpacaLoading && !alpacaErr && !cumulativeOpts && (
+            <p className="text-slate-500 text-xs text-center py-10">No Alpaca portfolio history for this period</p>
+          )}
           {cumulativeOpts && (!pnlFill || pnlChartHeight != null) && (
             <HighchartsReact
               highcharts={Highcharts}

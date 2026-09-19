@@ -210,6 +210,10 @@ export const alpacaApi = {
     return syncOrdersInFlight;
   },
   openTickers:          ()               => api.get("/api/broker/alpaca/orders/open-tickers"),
+  portfolioHistory:     (period = "day", since = null) => api.get("/api/broker/alpaca/portfolio-history", {
+    params: { period, ...(since ? { since } : {}) },
+  }),
+  positions:            () => api.get("/api/broker/alpaca/positions"),
 };
 
 // ── User preferences (per-user key/value store) ───────────────────────────────
