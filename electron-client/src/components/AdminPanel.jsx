@@ -650,6 +650,15 @@ export default function AdminPanel({ user }) {
             </div>
           )}
 
+          {ordersFilter === "open" && !ordersError && (
+            <OpenTradesGauges
+              orders={tabOrders}
+              closedOrders={visibleOrders.filter((o) => isRealizedClose(o))}
+              allOrders={visibleOrders}
+              liveQuotes={liveQuotes}
+            />
+          )}
+
           {ordersLoading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-slate-400 text-sm">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -657,34 +666,26 @@ export default function AdminPanel({ user }) {
             </div>
           ) : ordersError ? (
             <div className="px-5 py-6 text-sm text-red-400">{ordersError}</div>
-          ) : visibleOrders.length === 0 ? (
+          ) : ordersFilter === "open" && tabOrders.length === 0 ? (
             <div className="px-5 py-10 text-center text-slate-500 text-sm">
-              No orders placed yet. Open the chart and place a bracket order to get started.
+              No open trades.
             </div>
           ) : tabOrders.length === 0 ? (
             <div className="px-5 py-10 text-center text-slate-500 text-sm">
-              {ordersFilter === "closed" && closedSymbolQuery.trim()
+              {closedSymbolQuery.trim()
                 ? `No closed trades matching "${closedSymbolQuery.trim().toUpperCase()}".`
-                : `No ${ordersFilter} trades.`}
+                : "No closed trades."}
             </div>
           ) : (
             <>
               {ordersFilter === "open" ? (
-                <>
-                  <OpenTradesGauges
-                    orders={tabOrders}
-                    closedOrders={visibleOrders.filter((o) => isRealizedClose(o))}
-                    allOrders={visibleOrders}
-                    liveQuotes={liveQuotes}
-                  />
-                  <OpenTradesCards
-                    orders={pagedOpenOrders}
-                    liveQuotes={liveQuotes}
-                    onDetail={openDetail}
-                    onChart={setReviewOrder}
-                    daysOpenFn={tradingDaysOpen}
-                  />
-                </>
+                <OpenTradesCards
+                  orders={pagedOpenOrders}
+                  liveQuotes={liveQuotes}
+                  onDetail={openDetail}
+                  onChart={setReviewOrder}
+                  daysOpenFn={tradingDaysOpen}
+                />
               ) : (
                 <>
                   {/* ── Closed trades headers ── */}

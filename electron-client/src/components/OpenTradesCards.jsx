@@ -436,8 +436,6 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
   );
   const dayPl = dayNet.netPl;
 
-  if (!orders.length) return null;
-
   const dayAbs = Math.abs(dayPl ?? 0);
   const dayScale = Math.max(dayAbs, 1);
   const dayT = dayPl == null ? 0.5 : (dayPl - (-dayScale)) / (2 * dayScale);
@@ -482,7 +480,11 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
           label="Avg Hold"
           valueText={fmtHold(metrics.avgHoldMs)}
           valueClass={holdHot ? "text-yellow-400" : "text-slate-200"}
-          sub={metrics.longestHoldMs != null ? `longest ${fmtHold(metrics.longestHoldMs)}` : "Time in trade"}
+          sub={
+            metrics.longestHoldMs != null
+              ? `longest ${fmtHold(metrics.longestHoldMs)}`
+              : orders.length ? "Time in trade" : "No open trades"
+          }
           t={holdT}
           minLabel="now"
           maxLabel={fmtHold(holdScale)}
@@ -505,7 +507,7 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
                   ? "text-yellow-400"
                   : "text-red-400"
           }
-          sub={`${metrics.winners} up · ${metrics.losers} down`}
+          sub={orders.length ? `${metrics.winners} up · ${metrics.losers} down` : "No open trades"}
           t={winT}
           minLabel="0%"
           maxLabel="100%"
