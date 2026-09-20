@@ -203,7 +203,7 @@ const SORT_OPTIONS = [
 ];
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function PatternAnalysis({ onSelectTicker, openChartRequest, onConsumedOpenChartRequest }) {
+export default function PatternAnalysis({ onSelectTicker }) {
   const [filters, setFilters]     = useState(DEFAULT_FILTERS);
   const [sortBy,  setSortBy]      = useState("default");
   const [sortDir, setSortDir]     = useState("asc");
@@ -269,13 +269,6 @@ export default function PatternAnalysis({ onSelectTicker, openChartRequest, onCo
       symbolSearchTimerRef.current = null;
     }
   }
-
-  // Sidebar watchlist → open Pattern Analysis chart modal (source patternanalysis)
-  useEffect(() => {
-    if (!openChartRequest?.ticker || openChartRequest.key == null) return;
-    setChartModal({ ticker: openChartRequest.ticker });
-    onConsumedOpenChartRequest?.();
-  }, [openChartRequest?.key, openChartRequest?.ticker, onConsumedOpenChartRequest]);
 
   // Compute chart area height when modal opens: modal is 95vh, header ~50px
   useEffect(() => {

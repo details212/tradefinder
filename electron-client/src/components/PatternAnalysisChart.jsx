@@ -298,7 +298,7 @@ function buildOptions(ticker, ohlcv, volume, studies, showPanes, rsiCrossUpTs) {
         redraw() {
           if (_ignoreNextBoxRedraw) { _ignoreNextBoxRedraw = false; return; }
           // Zoom / pan triggered redraw — reposition boxes using latest data
-          renderBoxes(this, _boxesRef.current, _onDeleteBox.current, _onWLBox.current);
+          renderBoxes(this, _boxesRef.current, _onDeleteBox.current);
         },
       },
     },
@@ -625,14 +625,13 @@ let _ignoreNextBoxRedraw = false;
 // Stable refs updated by the component so chart events can reach them
 const _boxesRef   = { current: [] };
 const _onDeleteBox = { current: () => {} };
-const _onWLBox     = { current: () => {} };
 
 function clearBoxElems() {
   _boxElems.forEach(el => { try { el.destroy(); } catch (_) {} });
   _boxElems = [];
 }
 
-function renderBoxes(chart, boxes, onDelete, onWatchlist) {
+function renderBoxes(chart, boxes, onDelete) {
   clearBoxElems();
   if (!chart || !boxes?.length) return;
 
@@ -662,14 +661,6 @@ function renderBoxes(chart, boxes, onDelete, onWatchlist) {
       .add();
     _boxElems.push(xBtn);
     xBtn.element.addEventListener("click", e => { e.stopPropagation(); onDelete(box.id); });
-
-    // "+ WL" — top-left, watchlist shortcut
-    const wlBtn = chart.renderer.text("+ WL", left + 4, top + 13)
-      .attr({ zIndex: 6, cursor: "pointer" })
-      .css({ color: "#facc15", fontSize: "10px", fontWeight: "bold" })
-      .add();
-    _boxElems.push(wlBtn);
-    wlBtn.element.addEventListener("click", e => { e.stopPropagation(); onWatchlist(box); });
 
     // Price label bottom-left
     const priceLabel = chart.renderer
@@ -861,21 +852,8 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
     });
   }, []);
 
-  // ── Add box to watchlist ──────────────────────────────────────────────────
-  const handleBoxToWatchlist = useCallback((box) => {
-    const threshold = box.y1;                                   // top = breakout level
-    const bar_time  = new Date(box.x2).toISOString().slice(0, 10);
-    stockApi.addToWatchlist(ticker, { bias: "long", threshold, bar_time, source: "patternanalysis" })
-      .then(() => {
-        // Sidebar listens for this (same as axios interceptor); explicit here so WL from chart SVG always refreshes
-        window.dispatchEvent(new CustomEvent("tf:watchlist-changed"));
-      })
-      .catch(err => console.error("[BoxWL] add failed", err));
-  }, [ticker]);
-
   // Keep module-level refs current for the Highcharts redraw event
   _onDeleteBox.current = handleDeleteBox;
-  _onWLBox.current     = handleBoxToWatchlist;
 
   // ── Live quote while drawing — fresh fetch when drawing starts (no polling) ─
   const hasDrawing = rr !== null;
@@ -1034,8 +1012,8 @@ export default function PatternAnalysisChart({ ticker, height, onClose }) {
     updatePaneLabels(chart, showPanes);
     applyRR(chart, rr);
     expandYAxisForRR(chart, rr);
-    renderBoxes(chart, boxesRef.current, handleDeleteBox, handleBoxToWatchlist);
-  }, [chartOptions, showOverlay, showPanes, rr, handleDeleteBox, handleBoxToWatchlist]);
+    renderBoxes(chart, boxesRef.current, handleDeleteBox);
+  }, [chartOptions, showOverlay, showPanes, rr, handleDeleteBox]);
 
   // ── Signal VP effect once chart is mounted ────────────────────────────────
   useEffect(() => {

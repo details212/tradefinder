@@ -77,7 +77,6 @@ function clamp01(v) {
 }
 
 const NET_PERIODS = [
-  { id: "day", label: "Day" },
   { id: "week", label: "Week" },
   { id: "month", label: "Month" },
   { id: "all", label: "All" },
@@ -168,7 +167,7 @@ function PnlBarChart({ buckets }) {
   );
 }
 
-function NetPlCard({ netPl, period, onPeriod, buckets, loading, error, paper, since, idleDay }) {
+function NetPlCard({ netPl, period, onPeriod, buckets, loading, error, paper, since }) {
   return (
     <div
       className="rounded-xl border border-slate-700/70 bg-slate-900/50 px-3 pt-3 pb-2 flex flex-col min-w-0 overflow-visible"
@@ -189,9 +188,7 @@ function NetPlCard({ netPl, period, onPeriod, buckets, loading, error, paper, si
           ? error
           : loading
             ? "Loading Alpaca…"
-            : idleDay
-              ? "No trades today"
-              : `Alpaca ${paper ? "paper" : "live"}${since ? ` · since ${formatSinceLabel(since)}` : " account"}`}
+            : `Alpaca ${paper ? "paper" : "live"}${since ? ` · since ${formatSinceLabel(since)}` : " account"}`}
       </p>
       <div className="w-full mt-auto">
         {!loading && !error && <PnlBarChart buckets={buckets} />}
@@ -367,7 +364,7 @@ function ArcGauge({ label, valueText, valueClass, sub, t, minLabel, maxLabel, tr
 }
 
 export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], liveQuotes = {} }) {
-  const [netPeriod, setNetPeriod] = useState("day");
+  const [netPeriod, setNetPeriod] = useState("week");
   const [alpacaHist, setAlpacaHist] = useState(null);
   const [alpacaErr, setAlpacaErr] = useState(null);
   const [alpacaLoading, setAlpacaLoading] = useState(true);
@@ -394,12 +391,6 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
 
   useEffect(() => {
     let cancelled = false;
-    if (netPeriod === "day" && !tradedToday) {
-      setAlpacaHist(null);
-      setAlpacaErr(null);
-      setAlpacaLoading(false);
-      return undefined;
-    }
     setAlpacaLoading(true);
     alpacaApi.portfolioHistory(netPeriod, since, until)
       .then((r) => {
@@ -422,7 +413,7 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
         if (!cancelled) setAlpacaLoading(false);
       });
     return () => { cancelled = true; };
-  }, [netPeriod, since, until, tradedToday]);
+  }, [netPeriod, since, until]);
 
   useEffect(() => {
     let cancelled = false;
@@ -460,10 +451,10 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
     () => computeOpenBookMetrics(orders, liveQuotes),
     [orders, liveQuotes],
   );
-  const alpacaNet = useMemo(() => {
-    if (netPeriod === "day" && !tradedToday) return { netPl: 0, buckets: [] };
-    return historyToNet(alpacaHist, netPeriod, until);
-  }, [alpacaHist, netPeriod, until, tradedToday]);
+  const alpacaNet = useMemo(
+    () => historyToNet(alpacaHist, netPeriod, until),
+    [alpacaHist, netPeriod, until],
+  );
   const dayNet = useMemo(
     () => historyToNet(dayHist, "day"),
     [dayHist],
@@ -492,7 +483,6 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
           error={alpacaErr}
           paper={alpacaHist?.paper}
           since={alpacaHist?.since}
-          idleDay={netPeriod === "day" && !tradedToday}
         />
         <ArcGauge
           label="Day P/L"

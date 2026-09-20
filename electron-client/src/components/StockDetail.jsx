@@ -4,7 +4,7 @@ import { fetchAlpacaQuote } from "../utils/fetchAlpacaQuote";
 import StockDetailChart from "./StockDetailChart";
 import TechnicalChart from "./TechnicalChart";
 import {
-  TrendingUp, TrendingDown, Star, StarOff, ExternalLink,
+  TrendingUp, TrendingDown, ExternalLink,
   Loader2, X, Newspaper, BarChart2, DollarSign, Activity,
   Building2, MapPin, Users, Calendar,
 } from "lucide-react";
@@ -41,22 +41,11 @@ function fmtPct(n) {
 }
 
 // ── Overview Tab ──────────────────────────────────────────────────────────────
-function OverviewTab({ ticker, quote, details, news, watchlist, defaultInterval, barTime, threshold }) {
+function OverviewTab({ ticker, quote, details, news }) {
   const price = quote?.price ?? quote?.last ?? null;
   const change = null;
   const changePct = null;
   const isUp = null;
-
-  const toggleWatchlist = async () => {
-    try {
-      if (watchlist.includes(ticker)) {
-        await stockApi.removeFromWatchlist(ticker);
-      } else {
-        await stockApi.addToWatchlist(ticker, { source: "stocks" });
-      }
-      // Watchlist sidebar refreshes via `tf:watchlist-changed` (axios interceptor)
-    } catch {}
-  };
 
   return (
     <div className="space-y-5">
@@ -69,12 +58,6 @@ function OverviewTab({ ticker, quote, details, news, watchlist, defaultInterval,
                 onError={(e) => (e.currentTarget.style.display = "none")} />
             )}
             <h2 className="text-xl font-bold text-white">{ticker}</h2>
-            <button onClick={toggleWatchlist}
-              className={`transition ${watchlist.includes(ticker) ? "text-yellow-400 hover:text-yellow-300" : "text-slate-500 hover:text-yellow-400"}`}>
-              {watchlist.includes(ticker)
-                ? <Star className="w-4 h-4 fill-current" />
-                : <StarOff className="w-4 h-4" />}
-            </button>
           </div>
           <p className="text-sm text-slate-400">{details?.name}</p>
         </div>
@@ -92,7 +75,7 @@ function OverviewTab({ ticker, quote, details, news, watchlist, defaultInterval,
       </div>
 
       {/* Chart */}
-      <StockDetailChart ticker={ticker} barTime={barTime} threshold={threshold} />
+      <StockDetailChart ticker={ticker} />
 
       {/* Company info */}
       {details && (
@@ -343,7 +326,7 @@ function TechnicalTab({ ticker }) {
 }
 
 // ── Main StockDetail ──────────────────────────────────────────────────────────
-export default function StockDetail({ ticker, onClose, watchlist, defaultInterval, barTime, threshold }) {
+export default function StockDetail({ ticker, onClose }) {
   const [activeTab, setActiveTab] = useState("Overview");
   const [quote, setQuote] = useState(null);
   const [details, setDetails] = useState(null);
@@ -404,9 +387,7 @@ export default function StockDetail({ ticker, onClose, watchlist, defaultInterva
       {!loading && !error && (
         <div className="flex-1 overflow-y-auto p-5">
           {activeTab === "Overview" && (
-            <OverviewTab ticker={ticker} quote={quote} details={details} news={news}
-              watchlist={watchlist}
-              defaultInterval={defaultInterval} barTime={barTime} threshold={threshold} />
+            <OverviewTab ticker={ticker} quote={quote} details={details} news={news} />
           )}
           {activeTab === "Financials" && <FinancialsTab ticker={ticker} />}
           {activeTab === "Dividends" && <DividendsTab ticker={ticker} />}

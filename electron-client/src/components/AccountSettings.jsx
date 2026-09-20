@@ -1906,7 +1906,7 @@ function DangerZoneSection() {
     try {
       await authApi.resetHistory();
       setPhase("done");
-      setStatus({ type: "success", message: "Account history has been cleared. All trades, watchlist items, and chart boxes have been removed." });
+      setStatus({ type: "success", message: "Account history has been cleared. All trades and chart boxes have been removed." });
     } catch (err) {
       setPhase("idle");
       setStatus({ type: "error", message: err.response?.data?.error ?? "Failed to reset history. Please try again." });
@@ -1924,7 +1924,7 @@ function DangerZoneSection() {
         <div>
           <p className="text-sm font-medium text-slate-200 mb-1">Reset Account History</p>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Permanently deletes all trade orders, watchlist items, chart boxes, login history,
+            Permanently deletes all trade orders, chart boxes, login history,
             and cached market data associated with your account. Your username, email, password,
             broker credentials, and preferences are kept intact.
           </p>
@@ -1948,8 +1948,8 @@ function DangerZoneSection() {
             <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-red-900/30 border border-red-700/50">
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
               <p className="text-xs text-red-300 leading-relaxed">
-                <span className="font-semibold">This cannot be undone.</span> All trade history,
-                watchlist entries, and chart boxes will be permanently deleted. Are you sure?
+                <span className="font-semibold">This cannot be undone.</span> All trade history
+                and chart boxes will be permanently deleted. Are you sure?
               </p>
             </div>
             <div className="flex items-center gap-3">

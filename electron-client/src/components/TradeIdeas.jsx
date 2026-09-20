@@ -5,7 +5,7 @@ import { deriveRiskQty } from "../utils/qtyInput";
 import {
   Lightbulb, TrendingUp, TrendingDown, RefreshCw,
   ChevronRight, AlertCircle, Loader2, ArrowUpRight,
-  Star, StarOff, X, Info, Zap,
+  X, Info, Zap,
 } from "lucide-react";
 import ModalChart from "./ModalChart";
 import LorentzianStatsPopover from "./LorentzianStatsPopover";
@@ -187,18 +187,18 @@ function rowDateKey(row) {
   return null;
 }
 
-/** Returns the best threshold price for the watchlist from a result row. */
+/** Returns the best threshold price from a result row. */
 function rowThreshold(row) {
   return row.first_entry ?? row.close ?? row.entry_price ?? null;
 }
 
-/** Returns the best bar-time for the watchlist signal marker from a result row. */
+/** Returns the best bar-time for the chart signal marker from a result row. */
 function rowBarTime(row) {
   return row.first_signal_time ?? row.bar_time ?? row.entry_time ?? null;
 }
 
-/** ISO string for POST /watchlist (server accepts ISO or unix; avoids non-string types). */
-function barTimeForWatchlistApi(row) {
+/** ISO string for order placement (server accepts ISO or unix; avoids non-string types). */
+function barTimeForOrderApi(row) {
   const t = rowBarTime(row);
   if (t == null || t === "") return null;
   if (typeof t === "number") return new Date(t).toISOString();
@@ -617,7 +617,7 @@ function InfoPopover({ popover, isLong: strategyIsLong, onMouseEnter, onMouseLea
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRequest, onConsumedOpenChartRequest }) {
+export default function TradeIdeas({ onSelectTicker, openChartRequest, onConsumedOpenChartRequest }) {
   const [strategies,     setStrategies]     = useState([]);
   const [loadingList,    setLoadingList]     = useState(true);
   const [activeStrategy, setActiveStrategy] = useState(null);
@@ -625,7 +625,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
   const [columns,        setColumns]        = useState([]);
   const [loadingResult,  setLoadingResult]  = useState(false);
   const [error,          setError]          = useState(null);
-  const [wlLoading,      setWlLoading]      = useState({});
   const [quickOpenLoading, setQuickOpenLoading] = useState({});   // ticker → bool while order is submitting
   const [quickOpenResult,  setQuickOpenResult]  = useState({});   // ticker → { ok, message } (fades out)
   const [riskPrefs,      setRiskPrefs]      = useState(null);    // { risk_mode, risk_value } from Account Settings
@@ -725,7 +724,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
         qty,
         entry_price:     entryPrice ?? null,
         bias,
-        bar_time:        barTimeForWatchlistApi(row),
+        bar_time:        barTimeForOrderApi(row),
         threshold:       rowThreshold(row),
         trade_idea_name: strategy?.name ?? null,
       });
@@ -751,7 +750,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     setChartHeight(Math.floor(window.innerHeight * 0.95) - 56);
   }, [chartModal]);
 
-  // Sidebar watchlist → open Trade Ideas chart modal (source tradeideas)
+  // Live stream → open Trade Ideas chart modal
   useEffect(() => {
     if (!openChartRequest?.ticker || openChartRequest.key == null) return;
     setChartModal({
@@ -761,20 +760,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
     });
     onConsumedOpenChartRequest?.();
   }, [openChartRequest?.key, openChartRequest?.ticker, openChartRequest?.barTime, openChartRequest?.threshold, onConsumedOpenChartRequest]);
-
-  const toggleWatchlist = useCallback(async (ticker, meta = {}) => {
-    setWlLoading((prev) => ({ ...prev, [ticker]: true }));
-    try {
-      if (watchlist.includes(ticker)) {
-        await stockApi.removeFromWatchlist(ticker);
-      } else {
-        await stockApi.addToWatchlist(ticker, meta);
-      }
-      // Watchlist sidebar refreshes via `tf:watchlist-changed` (axios interceptor)
-    } catch { /* ignore */ } finally {
-      setWlLoading((prev) => ({ ...prev, [ticker]: false }));
-    }
-  }, [watchlist]);
 
   const handleInfoEnter = useCallback((e, ticker, rowLong) => {
     clearTimeout(hideTimerRef.current);
@@ -1210,9 +1195,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                       </React.Fragment>
                     ))}
                     <th className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-                      Watch
-                    </th>
-                    <th className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
                       Info
                     </th>
                   </tr>
@@ -1231,7 +1213,7 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                     <React.Fragment key={`${row.ticker}-${rowDate}-${i}`}>
                       {showDayBreak && (
                         <tr key={`break-${rowDate}`} className="bg-slate-800/70">
-                          <td colSpan={columns.length + (scalpPlEnabled ? 3 : 2)} className="py-2 text-center text-xs font-semibold text-slate-400 tracking-wider uppercase">
+                          <td colSpan={columns.length + (scalpPlEnabled ? 2 : 1)} className="py-2 text-center text-xs font-semibold text-slate-400 tracking-wider uppercase">
                             {dateLabel}
                           </td>
                         </tr>
@@ -1316,23 +1298,6 @@ export default function TradeIdeas({ onSelectTicker, watchlist = [], openChartRe
                         </React.Fragment>
                         );
                       })}
-                      <td className="px-3 py-2">
-                        <button
-                          onClick={() => toggleWatchlist(row.ticker, {
-                            bias:      row.signal_direction?.toLowerCase() ?? activeStrategy?.direction?.toLowerCase() ?? null,
-                            threshold: rowThreshold(row),
-                            bar_time:  barTimeForWatchlistApi(row),
-                            source:    "tradeideas",
-                          })}
-                          disabled={wlLoading[row.ticker]}
-                          title={watchlist.includes(row.ticker) ? "Remove from watchlist" : "Add to watchlist"}
-                          className="transition"
-                        >
-                          {watchlist.includes(row.ticker)
-                            ? <Star    className="w-4 h-4 text-yellow-400 fill-current hover:text-yellow-300" />
-                            : <StarOff className="w-4 h-4 text-slate-600 hover:text-yellow-400" />}
-                        </button>
-                      </td>
                       <td className="px-3 py-2">
                         {(() => {
                           const rowLong  = rowIsLong(row, activeStrategy);

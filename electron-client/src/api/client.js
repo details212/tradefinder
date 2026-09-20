@@ -26,21 +26,8 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Successful watchlist mutations → sidebar can refresh without prop drilling
 api.interceptors.response.use(
-  (response) => {
-    try {
-      const url = response.config?.url || "";
-      const method = (response.config?.method || "").toLowerCase();
-      // POST/DELETE …/watchlist/<ticker> — exclude GET /api/stocks/watchlist (list)
-      const wlMutate =
-        url.includes("/api/stocks/watchlist/") && (method === "post" || method === "delete");
-      if (wlMutate) {
-        window.dispatchEvent(new CustomEvent("tf:watchlist-changed"));
-      }
-    } catch (_) { /* ignore */ }
-    return response;
-  },
+  (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem("tf_token");
@@ -136,11 +123,6 @@ export const stockApi = {
 
   // Market
   marketStatus: () => api.get("/api/stocks/market-status"),
-
-  // Watchlist
-  getWatchlist: () => api.get("/api/stocks/watchlist"),
-  addToWatchlist: (ticker, data = {}) => api.post(`/api/stocks/watchlist/${ticker}`, data),
-  removeFromWatchlist: (ticker) => api.delete(`/api/stocks/watchlist/${ticker}`),
 };
 
 // ── Trade Ideas ───────────────────────────────────────────────────────────────

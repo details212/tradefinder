@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries, createSeriesMarkers, LineStyle } from "lightweight-charts";
+import { createChart, ColorType, CrosshairMode, CandlestickSeries, HistogramSeries } from "lightweight-charts";
 import { stockApi } from "../api/client";
 import { Loader2, Radio } from "lucide-react";
 
@@ -42,7 +42,7 @@ function fmtET(unixSec) {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function StockChart({ ticker, defaultInterval, barTime, threshold, height = 480 }) {
+export default function StockChart({ ticker, defaultInterval, height = 480 }) {
   const [range, setRange] = useState(
     () => INTERVALS.find((i) => i.label === defaultInterval) ?? INTERVALS[2]
   );
@@ -111,18 +111,6 @@ export default function StockChart({ ticker, defaultInterval, barTime, threshold
       wickDownColor: "#ef4444",
     });
 
-    // Threshold / resistance horizontal ray
-    if (threshold != null) {
-      candleSeries.createPriceLine({
-        price:            Number(threshold),
-        color:            "#ff00ff",
-        lineWidth:        1,
-        lineStyle:        LineStyle.Dashed,
-        axisLabelVisible: true,
-        title:            `Threshold $${Number(threshold).toFixed(2)}`,
-      });
-    }
-
     // Volume as a histogram in its own price scale, pinned to the bottom 20%
     const volSeries = chart.addSeries(HistogramSeries, {
       color:       "rgba(100,116,139,0.5)",
@@ -173,21 +161,6 @@ export default function StockChart({ ticker, defaultInterval, barTime, threshold
             color: b.c >= b.o ? "rgba(34,197,94,0.6)" : "rgba(239,68,68,0.6)",
           }))
         );
-        // Watchlist signal marker — find closest bar to barTime
-        if (barTime && bars.length > 0) {
-          const targetMs = new Date(barTime).getTime();
-          const closest  = bars.reduce((prev, curr) =>
-            Math.abs(curr.t - targetMs) < Math.abs(prev.t - targetMs) ? curr : prev
-          );
-          createSeriesMarkers(candleSeries, [{
-            time:     closest.t / 1000,
-            position: "aboveBar",
-            color:    "#ff00ff",
-            shape:    "arrowDown",
-            size:     2,
-            text:     "⚑ Signal",
-          }]);
-        }
 
         // Default zoom: last 2 weeks ending at the most recent bar
         if (bars.length > 0) {
