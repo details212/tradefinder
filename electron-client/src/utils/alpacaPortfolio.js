@@ -89,19 +89,25 @@ export function hasTradeOnYmd(orders, ymd) {
   return false;
 }
 
+/** Eastern civil date `n` weekdays (Mon–Fri) before `now`. Ignores market holidays. */
+function tradingDaysAgoYmd(n, now = Date.now()) {
+  let cur = etYmd(now);
+  let count = 0;
+  while (count < n) {
+    const dt = new Date(Date.UTC(cur.y, cur.m - 1, cur.d - 1));
+    cur = { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+    const dow = etWeekday(cur);
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return ymdKey(cur);
+}
+
 function periodStartYmdEt(period, now = Date.now()) {
   const today = etYmd(now);
   if (period === "month") return ymdKey({ y: today.y, m: today.m, d: 1 });
-  if (period === "week") {
-    const dow = etWeekday(today);
-    const daysFromMon = dow === 0 ? 6 : dow - 1;
-    const dt = new Date(Date.UTC(today.y, today.m - 1, today.d - daysFromMon));
-    return ymdKey({
-      y: dt.getUTCFullYear(),
-      m: dt.getUTCMonth() + 1,
-      d: dt.getUTCDate(),
-    });
-  }
+  // "Week" is a rolling last-10-trading-day window, not the calendar week —
+  // newest bar on the right, oldest on the left, regardless of what weekday it is today.
+  if (period === "week") return tradingDaysAgoYmd(10, now);
   return null;
 }
 
@@ -116,6 +122,10 @@ export function historySinceParam(period, orders) {
   if (period === "day") return null;
   const start = periodStartYmdEt(period);
   if (!start) return null;
+  // "Week" (last 10 trading days) is always an explicit window, not just a
+  // floor — otherwise it would fall back to Alpaca's native calendar-week
+  // period instead of the rolling 10-trading-day range.
+  if (period === "week") return oldest > start ? oldest : start;
   return oldest > start ? oldest : null;
 }
 
@@ -151,13 +161,27 @@ function walkHistory(hist, onPoint) {
   const stamps = hist?.timestamps || [];
   const pls = hist?.profit_loss || [];
   const eqs = hist?.equity || [];
+  // Alpaca's profit_loss is `equity - base_value` — it is NOT adjusted for
+  // deposits/withdrawals. Each entry in `cashflow` is a per-bucket amount by
+  // activity type (CSD deposit +, CSW withdrawal -, etc.), same length as
+  // timestamps. Subtract the running total so "P/L" reflects trading only,
+  // not cash moved in/out of the account.
+  const cashflowArrays = hist?.cashflow && typeof hist.cashflow === "object"
+    ? Object.values(hist.cashflow)
+    : [];
   const n = Math.min(stamps.length, pls.length);
+  let cumCash = 0;
   for (let i = 0; i < n; i++) {
     const ms = alpacaTsMs(stamps[i]);
-    const pl = pls[i] == null ? null : Number(pls[i]);
-    if (ms == null || pl == null || Number.isNaN(pl)) continue;
+    const plRaw = pls[i] == null ? null : Number(pls[i]);
+    if (ms == null || plRaw == null || Number.isNaN(plRaw)) continue;
     const eqRaw = eqs[i] == null ? null : Number(eqs[i]);
     const equity = eqRaw == null || Number.isNaN(eqRaw) ? null : eqRaw;
+    for (const arr of cashflowArrays) {
+      const v = arr?.[i];
+      if (v != null && Number.isFinite(Number(v))) cumCash += Number(v);
+    }
+    const pl = plRaw - cumCash;
     onPoint({ i, n, ms, pl, equity });
   }
 }

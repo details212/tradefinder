@@ -9,12 +9,9 @@ import { alpacaApi } from "../api/client";
 import { exitPrice } from "../utils/alpacaPrices";
 import {
   formatSinceLabel,
-  hasTradeOnYmd,
   historySinceParam,
   historyToNet,
   historyUntilParam,
-  isRegularEquitySessionYmd,
-  todaySessionYmd,
 } from "../utils/alpacaPortfolio";
 import { parseTs } from "../utils/closedTradeAudit";
 import { ticketPl } from "../utils/ticketPl";
@@ -108,9 +105,23 @@ function PnlBarChart({ buckets }) {
   if (!buckets?.length) return null;
   const max = Math.max(...buckets.map((b) => Math.abs(b.value)), 1);
   const tip = hover != null ? buckets[hover] : null;
+  const total = buckets.reduce((sum, b) => sum + (Number.isFinite(b.value) ? b.value : 0), 0);
+  const statusText = total > 100
+    ? "Your Makeing Money"
+    : total < -100
+      ? "Your Loosing Money"
+      : "Unstable Trading";
+  const statusClass = total > 100
+    ? "text-emerald-400"
+    : total < -100
+      ? "text-red-400"
+      : "text-yellow-400";
 
   return (
     <div className="w-full mt-1.5" role="img" aria-label="Net P/L bar chart">
+      <p className="text-sm text-slate-500 mb-1 text-center">
+        Account Review: <span className={`font-mono font-bold ${statusClass}`}>{statusText}</span>
+      </p>
       <div
         className="relative flex items-stretch gap-px w-full h-12"
         onMouseLeave={() => setHover(null)}
@@ -170,11 +181,11 @@ function PnlBarChart({ buckets }) {
 function NetPlCard({ netPl, period, onPeriod, buckets, loading, error, paper, since }) {
   return (
     <div
-      className="rounded-xl border border-slate-700/70 bg-slate-900/50 px-3 pt-3 pb-2 flex flex-col min-w-0 overflow-visible"
+      className="h-full rounded-xl border border-slate-700/70 bg-slate-900/50 px-3 pt-3 pb-2 flex flex-col min-w-0 overflow-visible"
     >
       <div className="flex items-center justify-between gap-1 min-h-[18px]">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 truncate">
-          Net P/L
+          10 Day Net P/L
         </p>
         <PeriodToggle value={period} onChange={onPeriod} />
       </div>
@@ -368,9 +379,6 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
   const [alpacaHist, setAlpacaHist] = useState(null);
   const [alpacaErr, setAlpacaErr] = useState(null);
   const [alpacaLoading, setAlpacaLoading] = useState(true);
-  const [dayHist, setDayHist] = useState(null);
-  const [dayErr, setDayErr] = useState(null);
-  const [dayLoading, setDayLoading] = useState(true);
 
   const sinceOrders = useMemo(
     () => (allOrders.length ? allOrders : [...orders, ...closedOrders]),
@@ -384,10 +392,6 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
     () => historyUntilParam(netPeriod, sinceOrders),
     [netPeriod, sinceOrders],
   );
-  const tradedToday = useMemo(() => {
-    const today = todaySessionYmd();
-    return isRegularEquitySessionYmd(today) && hasTradeOnYmd(sinceOrders, today);
-  }, [sinceOrders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -415,56 +419,6 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
     return () => { cancelled = true; };
   }, [netPeriod, since, until]);
 
-  useEffect(() => {
-    if (!tradedToday) {
-      setDayHist(null);
-      setDayErr(null);
-      setDayLoading(false);
-      return undefined;
-    }
-
-    let cancelled = false;
-    let firstLoad = true;
-
-    const load = () => {
-      if (firstLoad) setDayLoading(true);
-      alpacaApi.portfolioHistory("day")
-        .then((r) => {
-          if (cancelled) return;
-          if (r.data?.ok) {
-            setDayHist(r.data);
-            setDayErr(null);
-          } else {
-            setDayHist(null);
-            setDayErr(r.data?.error || "Alpaca day P/L unavailable");
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setDayHist(null);
-            setDayErr("Could not load Alpaca day P/L");
-          }
-        })
-        .finally(() => {
-          if (!cancelled && firstLoad) {
-            setDayLoading(false);
-            firstLoad = false;
-          }
-        });
-    };
-
-    load();
-    // `tradedToday` only flips false -> true once per session (on the day's
-    // first trade) and never changes again, so without a periodic refetch
-    // here the gauge would freeze at whatever Alpaca reported at that one
-    // moment - stale for the rest of the day as positions keep moving.
-    const id = setInterval(load, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [tradedToday]);
-
   const metrics = useMemo(
     () => computeOpenBookMetrics(orders, liveQuotes),
     [orders, liveQuotes],
@@ -473,15 +427,6 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
     () => historyToNet(alpacaHist, netPeriod, until),
     [alpacaHist, netPeriod, until],
   );
-  const dayNet = useMemo(
-    () => historyToNet(dayHist, "day"),
-    [dayHist],
-  );
-  const dayPl = tradedToday ? dayNet.netPl : 0;
-
-  const dayAbs = Math.abs(dayPl ?? 0);
-  const dayScale = Math.max(dayAbs, 1);
-  const dayT = dayPl == null ? 0.5 : (dayPl - (-dayScale)) / (2 * dayScale);
 
   const holdScale = Math.max(metrics.longestHoldMs || 0, HOLD_WARN_MS);
   const holdT = metrics.avgHoldMs == null ? 0 : metrics.avgHoldMs / holdScale;
@@ -492,35 +437,18 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
   return (
     <div className="px-4 pt-4 pb-3 border-b border-slate-800/60">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <NetPlCard
-          netPl={alpacaNet.netPl}
-          period={netPeriod}
-          onPeriod={setNetPeriod}
-          buckets={alpacaNet.buckets}
-          loading={alpacaLoading}
-          error={alpacaErr}
-          paper={alpacaHist?.paper}
-          since={alpacaHist?.since}
-        />
-        <ArcGauge
-          label="Day P/L"
-          valueText={dayLoading ? "…" : fmtPl(dayPl)}
-          valueClass={dayLoading ? "text-slate-500" : plColor(dayPl)}
-          sub={
-            dayErr
-              ? dayErr
-              : dayLoading
-                ? "Loading Alpaca…"
-                : tradedToday
-                  ? `Alpaca ${dayHist?.paper ? "paper" : "live"} · today`
-                  : "No trades today"
-          }
-          t={dayT}
-          minLabel={`-${fmt$(dayScale, 0)}`}
-          maxLabel={`+${fmt$(dayScale, 0)}`}
-          zeroT={0.5}
-          title="Account day P/L from Alpaca GET /v2/account/portfolio/history (1D, regular hours). Local trade rows are not used."
-        />
+        <div className="col-span-2 h-full">
+          <NetPlCard
+            netPl={alpacaNet.netPl}
+            period={netPeriod}
+            onPeriod={setNetPeriod}
+            buckets={alpacaNet.buckets}
+            loading={alpacaLoading}
+            error={alpacaErr}
+            paper={alpacaHist?.paper}
+            since={alpacaHist?.since}
+          />
+        </div>
         <ArcGauge
           label="Avg Hold"
           valueText={fmtHold(metrics.avgHoldMs)}
