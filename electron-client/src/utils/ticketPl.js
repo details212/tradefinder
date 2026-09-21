@@ -24,21 +24,27 @@ function signedPl(direction, qty, entry, exit) {
 export function ticketPl(order, quote, position) {
   if (!order) return null;
   const qty = num(order.qty);
-  const fill = num(order.filled_avg_price) ?? num(order.entry_price);
-  const closed = isRealizedClose(order) || order.is_open === false || order.is_open === 0;
+  const fill = num(order.filled_avg_price);
+  // isRealizedClose() already excludes dead (never-filled) orders, so this
+  // branch can trust that the entry genuinely filled.
+  const closed = isRealizedClose(order);
 
   if (closed) {
+    if (fill == null) return null; // no real entry fill — nothing to realize
     const exit = num(order.exit_price);
     const computed = signedPl(order.direction, qty, fill, exit);
     if (computed != null) return computed;
     return null;
   }
 
+  // Still open: fall back to the intended/limit price only for a live mark
+  // estimate — never for a realized (closed) P/L figure.
+  const liveFill = fill ?? num(order.entry_price);
   const live =
     exitPrice(order.direction, quote) ??
     num(position?.current_price) ??
     num(order.current_price);
-  const fromMark = signedPl(order.direction, qty, fill, live);
+  const fromMark = signedPl(order.direction, qty, liveFill, live);
   if (fromMark != null) return fromMark;
 
   const posPl = num(position?.unrealized_pl);

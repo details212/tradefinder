@@ -8,6 +8,7 @@ import PatternAnalysis from "./PatternAnalysis";
 import NewTrade from "./NewTrade";
 import AccountSettings from "./AccountSettings";
 import BrokerageSettings from "./BrokerageSettings";
+import ExchangePanel from "./ExchangePanel";
 import AdminPanel from "./AdminPanel";
 import LeaderBoard from "./LeaderBoard";
 import SubscriptionPanel from "./SubscriptionPanel";
@@ -27,6 +28,7 @@ import {
   Home,
   Settings,
   Building2,
+  BarChart2,
   PlusCircle,
   TrendingUp,
   Trophy,
@@ -388,6 +390,17 @@ export default function Dashboard({ user, onLogout }) {
             Main
           </button>
           <button
+            onClick={() => setActiveView("exchange")}
+            className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+              activeView === "exchange"
+                ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+            }`}
+          >
+            <BarChart2 className="w-4 h-4" />
+            Exchange
+          </button>
+          <button
             onClick={() => { setActiveView("leaderboard"); setSelectedTicker(null); }}
             className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${
               activeView === "leaderboard"
@@ -516,6 +529,8 @@ export default function Dashboard({ user, onLogout }) {
               <AccountSettings user={user} />
             ) : activeView === "brokerage" ? (
               <BrokerageSettings />
+            ) : activeView === "exchange" ? (
+              <ExchangePanel onOpenBrokerage={() => setActiveView("brokerage")} />
             ) : activeView === "leaderboard" ? (
               <LeaderBoard />
             ) : activeView === "datadownload" ? (

@@ -196,41 +196,59 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
     return () => ro.disconnect();
   }, [pnlFill, alpacaLoading, alpacaCurve.points.length]);
 
-  // ── Cumulative P&L + drawdown chart (Alpaca portfolio history) ─────────────
+  // ── Cumulative P&L chart (Alpaca portfolio history) ─────────────────────────
+  // Single line, colored by sign (green above zero, red below). Max drawdown
+  // is called out as a plain stat instead of an overlapping second series —
+  // a dual-axis overlay was reading as two unrelated charts to users.
   const cumulativeOpts = useMemo(() => {
     const points = alpacaCurve.points;
     if (!points.length) return null;
     const cumData = points.map((p) => [p.ms, parseFloat(p.pl.toFixed(2))]);
-    const ddData = points.map((p) => [p.ms, parseFloat((p.drawdown ?? 0).toFixed(2))]);
     return {
       time: { timezone: "America/New_York" },
       chart:  {
         height: pnlFill && pnlChartHeight ? pnlChartHeight : 220,
-        type: "line",
+        type: "area",
         marginTop: 10,
       },
       xAxis:  { type: "datetime" },
-      yAxis: [
-        { title: { text: null }, labels: { formatter() { return fmt$(this.value, 0); } } },
-        { title: { text: null }, labels: { formatter() { return fmt$(this.value, 0); }, style: { color: "#f87171" } }, opposite: true, max: 0 },
-      ],
-      series: [
-        { name: "Cum. P&L", data: cumData, color: "#34d399", lineWidth: 2, marker: { enabled: false }, yAxis: 0 },
-        { name: "Drawdown", data: ddData, type: "area", color: "#f87171", fillOpacity: 0.12, lineWidth: 1, marker: { enabled: false }, yAxis: 1 },
-      ],
-      legend: { enabled: true, align: "right", verticalAlign: "top" },
+      yAxis:  {
+        title: { text: null },
+        labels: { formatter() { return fmt$(this.value, 0); } },
+        plotLines: [{ value: 0, color: "#334155", width: 1, zIndex: 2 }],
+      },
+      series: [{
+        name: "Cumulative P&L",
+        data: cumData,
+        lineWidth: 2,
+        marker: { enabled: false },
+        threshold: 0,
+        zoneAxis: "y",
+        zones: [
+          { value: 0, color: "#f87171", fillColor: "rgba(248,113,113,0.12)" },
+          { color: "#34d399", fillColor: "rgba(52,211,153,0.12)" },
+        ],
+      }],
+      legend: { enabled: false },
       tooltip: {
-        shared: true,
         xDateFormat: "%Y-%m-%d %H:%M ET",
         formatter() {
           const when = new Date(this.x).toLocaleString("en-US", { timeZone: "America/New_York" });
-          return [`<span class="text-slate-400">${when}</span>`]
-            .concat(this.points.map(p => `<b>${p.series.name}</b>: ${fmt$(p.y)}`))
-            .join("<br>");
+          return `<span class="text-slate-400">${when}</span><br><b>P&L</b>: ${fmt$(this.y)}`;
         },
       },
     };
   }, [alpacaCurve, pnlFill, pnlChartHeight]);
+
+  const maxDrawdown = useMemo(() => {
+    const points = alpacaCurve.points;
+    if (!points.length) return null;
+    let worst = points[0];
+    for (const p of points) {
+      if ((p.drawdown ?? 0) < (worst.drawdown ?? 0)) worst = p;
+    }
+    return worst.drawdown ? worst : null;
+  }, [alpacaCurve]);
 
   // ── P&L distribution histogram ────────────────────────────────────────────────
   const plHistOpts = useMemo(() => {
@@ -331,13 +349,18 @@ export default function AnalyticsPanel({ orders, loading, section = "all", foote
         <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-800/60">
           <div>
             <h3 className="text-sm font-semibold text-slate-200">P&L Analysis</h3>
-            <p className="text-xs text-slate-400 mt-0.5">{pnlSub}</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {pnlSub}
+              {maxDrawdown && (
+                <span className="text-red-400"> · Max drawdown {fmt$(maxDrawdown.drawdown)}</span>
+              )}
+            </p>
           </div>
           <PeriodToggle value={pnlPeriod} onChange={setPnlPeriod} />
         </div>
 
         <ChartBox
-          title="Cumulative P&L + Drawdown Overlay"
+          title="Cumulative P&L"
           fill={pnlFill}
           containerRef={pnlFill ? pnlChartRef : undefined}
         >

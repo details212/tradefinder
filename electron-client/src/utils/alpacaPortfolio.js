@@ -210,24 +210,23 @@ export function historyToNet(hist, period, untilYmd = null) {
   return { netPl: lastPl, buckets };
 }
 
-/** Cumulative P/L + dollar drawdown from the same Alpaca series. */
+/**
+ * Cumulative P/L + dollar drawdown from the same Alpaca series.
+ * Drawdown tracks the plotted cumulative P/L itself (peak-to-trough of `pl`),
+ * not raw account equity — equity also moves with cash/margin/short proceeds
+ * unrelated to trading P/L, which made the drawdown line show swings far
+ * larger than the P/L curve it was drawn next to.
+ */
 export function historyToCurve(hist, untilYmd = null) {
   const points = [];
   let lastPl = null;
-  let peakEq = null;
   let peakPl = 0;
 
   walkHistory(hist, ({ ms, pl, equity }) => {
     if (untilYmd && ymdKey(etYmd(ms)) > untilYmd) return;
     lastPl = pl;
-    let drawdown;
-    if (equity != null) {
-      if (peakEq == null || equity > peakEq) peakEq = equity;
-      drawdown = equity - peakEq;
-    } else {
-      if (pl > peakPl) peakPl = pl;
-      drawdown = pl - peakPl;
-    }
+    if (pl > peakPl) peakPl = pl;
+    const drawdown = pl - peakPl;
     points.push({ ms, pl, equity, drawdown });
   });
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { alpacaApi } from "../api/client";
 import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
 import { entrySlippagePerShare, adverseSlipColor, executionFromTrade, compactTicker } from "../utils/tradeExecution";
-import { isRealizedClose, exitMethodLabel } from "../utils/closedTradeAudit";
+import { isRealizedClose, isDeadOrder, exitMethodLabel } from "../utils/closedTradeAudit";
 import { ticketPl, withTicketPl } from "../utils/ticketPl";
 import TradeReviewModal from "./TradeReviewModal";
 import OpenTradesCards, { OpenTradesGauges } from "./OpenTradesCards";
@@ -402,13 +402,6 @@ export default function AdminPanel({ user }) {
   const OPEN_ORDERS_PER_PAGE   = 24;
   const CLOSED_ORDERS_PER_PAGE = 20;
 
-  // Hide unfilled dead orders
-  const DEAD_STATUSES = new Set(["canceled", "expired", "rejected", "done_for_day"]);
-  const isDeadOrder = (o) => {
-    if (!DEAD_STATUSES.has(o.status)) return false;
-    if (o.exit_method || o.closed_at || o.filled_avg_price != null) return false;
-    return true;
-  };
   const openOrderTickers = useMemo(() => {
     const s = new Set();
     for (const o of orders) {

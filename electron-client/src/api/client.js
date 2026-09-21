@@ -158,6 +158,7 @@ export const settingsApi = {
 // GET    /api/broker/alpaca         → { api_key: { configured, masked }, api_secret: { configured, masked }, paper_mode }
 // PUT    /api/broker/alpaca         → { api_key?, api_secret?, paper_mode? }  (omit a field to leave it unchanged)
 // GET    /api/broker/alpaca/test    → { ok, paper, account_id, status, buying_power, portfolio_value, currency }
+// GET    /api/broker/alpaca/account → { ok, paper, base_url, account, configurations, clock, positions }
 // POST   /api/broker/alpaca/order   → place bracket order; returns { message, order, alpaca_raw }
 // GET    /api/broker/alpaca/orders  → list persisted orders for current user (newest first)
 //          optional ?ticker=AAPL to filter
@@ -168,6 +169,7 @@ export const alpacaApi = {
   get:        ()            => api.get("/api/broker/alpaca"),
   save:       (data)        => api.put("/api/broker/alpaca", data),
   test:       ()            => api.get("/api/broker/alpaca/test"),
+  account:    ()            => api.get("/api/broker/alpaca/account"),
   quote:      (ticker)      => api.get(`/api/broker/alpaca/quote/${ticker}`),
   quotes:     (tickers)     => api.get("/api/broker/alpaca/quotes", {
     params: { tickers: Array.isArray(tickers) ? tickers.join(",") : tickers },

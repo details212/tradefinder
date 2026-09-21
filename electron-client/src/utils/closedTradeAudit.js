@@ -41,14 +41,22 @@ const EXIT_SLIP_ERR_PCT   = 0.0035;
 const STALE_PL_RATIO      = 0.50;
 
 export function isDeadOrder(o) {
-  if (!DEAD_STATUSES.has(o.status)) return false;
-  if (o.exit_method || o.closed_at || o.filled_avg_price != null) return false;
-  return true;
+  if (!o || !DEAD_STATUSES.has(o.status)) return false;
+  // The entry itself never filled, so no position ever existed — any exit_price /
+  // exit_method / closed_at stamped on this row (e.g. from a shared-position
+  // flatten bug) is phantom and must not be treated as a real close.
+  return o.filled_avg_price == null;
 }
 
-/** Realized close — do not rely on is_open alone (crypto sync can leave it true). */
+/**
+ * Realized close — do not rely on is_open alone (crypto sync can leave it true).
+ * A dead order (canceled/expired/rejected with no real fill) can never be a
+ * realized close, even if stray exit_price/exit_method/closed_at fields got
+ * stamped on it — there was never a real position to realize P/L from.
+ */
 export function isRealizedClose(o) {
   if (!o) return false;
+  if (isDeadOrder(o)) return false;
   if (o.exit_method || o.closed_at || o.exit_price != null) return true;
   return o.is_open === false || o.is_open === 0;
 }
