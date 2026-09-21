@@ -832,7 +832,7 @@ function AutoCloseBeyondTpSection() {
 // ── Close all trades before the session ends (server-side) ───────────────────
 const PREF_CLOSE_ALL_BEFORE_SESSION_END = "close_all_before_session_end";
 
-function CloseAllTradesSection({ scalpEnabled }) {
+function CloseAllTradesSection() {
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -849,11 +849,8 @@ function CloseAllTradesSection({ scalpEnabled }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const locked = !enabled && !scalpEnabled;
-
   async function handleToggle() {
     const next = !enabled;
-    if (next && !scalpEnabled) return;
     setSaving(true);
     setStatus(null);
     try {
@@ -888,7 +885,7 @@ function CloseAllTradesSection({ scalpEnabled }) {
               type="button"
               role="switch"
               aria-checked={enabled}
-              disabled={saving || locked}
+              disabled={saving}
               onClick={handleToggle}
               className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/50 disabled:opacity-50 ${
                 enabled ? "bg-brand-600" : "bg-slate-600"
@@ -901,11 +898,6 @@ function CloseAllTradesSection({ scalpEnabled }) {
               />
             </button>
           </div>
-          {locked && (
-            <p className="text-[11px] text-amber-500/90 leading-relaxed">
-              Requires "Scalp Profit / Loss" (below) to be enabled first.
-            </p>
-          )}
           <p className="text-[11px] text-slate-600 leading-relaxed">
             Does not account for market holidays or early-close days — the check always fires at
             3:45 PM ET on weekdays.
@@ -1002,7 +994,7 @@ const PREF_SCALP_ENABLED = "scalp_pl_enabled";
 const PREF_SCALP_PROFIT  = "scalp_profit_amt";
 const PREF_SCALP_LOSS    = "scalp_loss_amt";
 
-function ScalpProfitLossSection({ onEnabledChange }) {
+function ScalpProfitLossSection() {
   const [enabled, setEnabled] = useState(false);
   const [profit, setProfit]   = useState("25");
   const [loss, setLoss]       = useState("25");
@@ -1027,9 +1019,6 @@ function ScalpProfitLossSection({ onEnabledChange }) {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
-  // Report live enabled state up — "Close all trades" gates on this.
-  useEffect(() => { onEnabledChange?.(enabled); }, [enabled, onEnabledChange]);
 
   const profitNum = parseFloat(profit);
   const lossNum   = parseFloat(loss);
@@ -1992,10 +1981,6 @@ export default function AccountSettings({ user, onUserUpdated }) {
   const [account,  setAccount]  = useState(null);
   const [acctLoad, setAcctLoad] = useState(true);
   const [acctErr,  setAcctErr]  = useState(null);
-  // Lifted so "Close all trades" can gate on Scalp Profit / Loss's live state
-  // without a stale fetch from its own mount.
-  const [scalpPlEnabled, setScalpPlEnabled] = useState(false);
-
   const loadAccount = useCallback(() => {
     setAcctLoad(true);
     setAcctErr(null);
@@ -2039,9 +2024,9 @@ export default function AccountSettings({ user, onUserUpdated }) {
           onRefresh={loadAccount}
         />
         <AutoCloseBeyondTpSection />
-        <CloseAllTradesSection scalpEnabled={scalpPlEnabled} />
+        <CloseAllTradesSection />
         <CloseAllTradesBeforeWeekendSection />
-        <ScalpProfitLossSection onEnabledChange={setScalpPlEnabled} />
+        <ScalpProfitLossSection />
         <CloseNonClientAlpacaSection />
         <LiveStreamSettingsSection />
         <TradeIdeasSection />

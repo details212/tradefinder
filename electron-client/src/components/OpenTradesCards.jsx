@@ -416,35 +416,53 @@ export function OpenTradesGauges({ orders, closedOrders = [], allOrders = [], li
   }, [netPeriod, since, until]);
 
   useEffect(() => {
-    let cancelled = false;
     if (!tradedToday) {
       setDayHist(null);
       setDayErr(null);
       setDayLoading(false);
       return undefined;
     }
-    setDayLoading(true);
-    alpacaApi.portfolioHistory("day")
-      .then((r) => {
-        if (cancelled) return;
-        if (r.data?.ok) {
-          setDayHist(r.data);
-          setDayErr(null);
-        } else {
-          setDayHist(null);
-          setDayErr(r.data?.error || "Alpaca day P/L unavailable");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDayHist(null);
-          setDayErr("Could not load Alpaca day P/L");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setDayLoading(false);
-      });
-    return () => { cancelled = true; };
+
+    let cancelled = false;
+    let firstLoad = true;
+
+    const load = () => {
+      if (firstLoad) setDayLoading(true);
+      alpacaApi.portfolioHistory("day")
+        .then((r) => {
+          if (cancelled) return;
+          if (r.data?.ok) {
+            setDayHist(r.data);
+            setDayErr(null);
+          } else {
+            setDayHist(null);
+            setDayErr(r.data?.error || "Alpaca day P/L unavailable");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setDayHist(null);
+            setDayErr("Could not load Alpaca day P/L");
+          }
+        })
+        .finally(() => {
+          if (!cancelled && firstLoad) {
+            setDayLoading(false);
+            firstLoad = false;
+          }
+        });
+    };
+
+    load();
+    // `tradedToday` only flips false -> true once per session (on the day's
+    // first trade) and never changes again, so without a periodic refetch
+    // here the gauge would freeze at whatever Alpaca reported at that one
+    // moment - stale for the rest of the day as positions keep moving.
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [tradedToday]);
 
   const metrics = useMemo(
