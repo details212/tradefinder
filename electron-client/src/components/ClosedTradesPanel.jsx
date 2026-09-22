@@ -62,6 +62,7 @@ function plCls(v) {
 function fmtWhen(ms) {
   if (!ms) return "—";
   return new Date(ms).toLocaleString("en-US", {
+    timeZone: "America/New_York",
     month: "short",
     day: "numeric",
     hour: "2-digit",

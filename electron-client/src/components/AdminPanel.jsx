@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { alpacaApi } from "../api/client";
 import { useFreshAlpacaQuotes } from "../hooks/useFreshAlpacaQuotes";
 import { entrySlippagePerShare, adverseSlipColor, executionFromTrade, compactTicker } from "../utils/tradeExecution";
-import { isRealizedClose, isDeadOrder, exitMethodLabel } from "../utils/closedTradeAudit";
+import { isRealizedClose, isDeadOrder, exitMethodLabel, parseTs } from "../utils/closedTradeAudit";
 import { ticketPl, withTicketPl } from "../utils/ticketPl";
 import TradeReviewModal from "./TradeReviewModal";
 import OpenTradesCards, { OpenTradesGauges } from "./OpenTradesCards";
@@ -84,9 +84,23 @@ function closedTradeExportRow(o) {
     o.exit_method ? exitMethodLabel(o.exit_method) : "",
     o.exit_price != null ? Number(o.exit_price) : "",
     o.status ?? "",
-    o.created_at ?? "",
-    o.closed_at ?? o.synced_at ?? "",
+    fmtCsvEasternDate(parseTs(o.created_at)),
+    fmtCsvEasternDate(parseTs(o.closed_at) ?? parseTs(o.synced_at)),
   ];
+}
+
+/** "Opened"/"Closed" CSV columns — Eastern time, not a raw naive-UTC string. */
+function fmtCsvEasternDate(ms) {
+  if (ms == null) return "";
+  return new Date(ms).toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 const CLOSED_EXPORT_HEADERS = [
@@ -96,9 +110,10 @@ const CLOSED_EXPORT_HEADERS = [
 ];
 
 function downloadClosedTradesCsv(orders, symbolQuery = "") {
+  const closedMs = (o) => parseTs(o.closed_at) ?? parseTs(o.synced_at) ?? parseTs(o.created_at) ?? 0;
   const rows = orders
     .slice()
-    .sort((a, b) => new Date(b.closed_at ?? b.synced_at ?? b.created_at ?? 0) - new Date(a.closed_at ?? a.synced_at ?? a.created_at ?? 0))
+    .sort((a, b) => closedMs(b) - closedMs(a))
     .map(closedTradeExportRow);
   const lines = [
     CLOSED_EXPORT_HEADERS.map(csvEscape).join(","),
@@ -696,7 +711,10 @@ export default function AdminPanel({ user }) {
                   {/* ── Closed trades rows ── */}
                   <div className="divide-y divide-slate-800/40">
                     {tabOrders
-                      .slice().sort((a, b) => new Date(b.closed_at ?? b.synced_at ?? b.created_at ?? 0) - new Date(a.closed_at ?? a.synced_at ?? a.created_at ?? 0))
+                      .slice().sort((a, b) =>
+                        (parseTs(b.closed_at) ?? parseTs(b.synced_at) ?? parseTs(b.created_at) ?? 0) -
+                        (parseTs(a.closed_at) ?? parseTs(a.synced_at) ?? parseTs(a.created_at) ?? 0)
+                      )
                       .slice(ordersPage * CLOSED_ORDERS_PER_PAGE, (ordersPage + 1) * CLOSED_ORDERS_PER_PAGE)
                       .map(o => {
                         const isLong    = o.direction === "long";
@@ -720,8 +738,16 @@ export default function AdminPanel({ user }) {
                         const rColor    = rResult == null ? "text-slate-500" : rResult > 0 ? "text-emerald-400" : "text-red-400";
 
                         const statusColor = o.status === "filled" ? "text-emerald-400" : o.status === "canceled" || o.status === "expired" ? "text-slate-400" : "text-yellow-400";
-                        const date = o.closed_at ?? o.synced_at ?? o.created_at;
-                        const dateStr = date ? new Date(date).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+                        const dateMs = parseTs(o.closed_at) ?? parseTs(o.synced_at) ?? parseTs(o.created_at);
+                        const dateStr = dateMs != null
+                          ? new Date(dateMs).toLocaleString("en-US", {
+                              timeZone: "America/New_York",
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "—";
 
                         return (
                           <div key={o.id} className="grid grid-cols-[1.4fr_0.5fr_0.5fr_0.4fr_0.9fr_1fr_0.5fr_0.8fr_0.7fr_1fr_0.8fr_0.9fr_1.4fr] gap-3 px-5 py-3 hover:bg-slate-800/30 transition items-center">
